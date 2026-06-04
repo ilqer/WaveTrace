@@ -8,6 +8,8 @@
 #include "core/CsiFrame.hpp"
 #include "core/Errors.hpp"
 #include "core/Types.hpp"
+#include "hardware/FrameParser.hpp"
+#include "hardware/NodeAggregator.hpp"
 
 namespace py = pybind11;
 using namespace wavetrace;
@@ -59,4 +61,31 @@ PYBIND11_MODULE(_wavetrace, m) {
       .def_readwrite("timestamp", &Label::timestamp)
       .def_readwrite("bbox", &Label::bbox)
       .def_readwrite("keypoints", &Label::keypoints);
+
+  // Phase 2 — hardware ingest.
+  py::class_<FrameParser>(m, "FrameParser")
+      .def(py::init<uint16_t, uint16_t>(), py::arg("num_antennas"), py::arg("num_subcarriers"))
+      .def_property_readonly("num_antennas", &FrameParser::numAntennas)
+      .def_property_readonly("num_subcarriers", &FrameParser::numSubcarriers)
+      .def(
+          "parse",
+          [](FrameParser& self,
+             py::array_t<uint8_t, py::array::c_style | py::array::forcecast> raw, double timestamp,
+             int32_t nodeId) -> const CsiFrame& {
+            py::buffer_info info = raw.request();
+            return self.parse(static_cast<const uint8_t*>(info.ptr),
+                              static_cast<size_t>(info.size), timestamp, nodeId);
+          },
+          py::arg("raw"), py::arg("timestamp") = 0.0, py::arg("node_id") = -1,
+          // Returns the parser's reused CsiFrame (same object each call); tie its lifetime to the
+          // parser and keep `raw` alive for the duration of the decode.
+          py::return_value_policy::reference_internal, py::keep_alive<0, 2>(),
+          "Decode one raw int8 [imag,real] frame into the reused CsiFrame (returned). O(n).");
+
+  py::class_<NodeAggregator>(m, "NodeAggregator")
+      .def(py::init<>())
+      .def("submit", &NodeAggregator::submit, py::arg("frame"))
+      .def_property_readonly("num_nodes", &NodeAggregator::numNodes)
+      .def("synced", &NodeAggregator::synced, py::arg("tolerance"),
+           "Latest frame per node within `tolerance` s of the newest submit (copies). O(m).");
 }

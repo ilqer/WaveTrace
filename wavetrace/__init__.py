@@ -6,6 +6,8 @@ Phase 1 re-exports the native core types from the `_wavetrace` extension so call
 
 from ._wavetrace import (
     CsiFrame,
+    FrameParser,
+    NodeAggregator,
     Label,
     RecognitionResult,
     WaveTraceError,
@@ -14,6 +16,8 @@ from ._wavetrace import (
 
 __all__ = [
     "CsiFrame",
+    "FrameParser",
+    "NodeAggregator",
     "Label",
     "RecognitionResult",
     "WaveTraceError",
