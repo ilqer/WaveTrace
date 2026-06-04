@@ -1,0 +1,70 @@
+"""Synthetic CSI generator for DSP unit tests — no hardware required.
+
+Builds a CsiFrame stream with a known ground truth:
+  - static multipath channel  H0[a][k] = A·e^{jψ}      (distinct per antenna)
+  - a periodic motion that modulates phase per subcarrier (proxy for the per-subcarrier
+    frequency spread that makes the subcarrier-ratio method sensitive to motion)
+  - a common-mode hardware clock offset (CFO) shared by all subcarriers — must cancel under
+    conjugate-multiply / subcarrier-ratio (REFERENCE_DIGEST §2.2)
+  - complex Gaussian noise
+
+This validates the DSP pipeline only. It cannot fake posture/weapon signatures — recognition
+models train on real camera-labeled recordings (plan.md Phase 5). All signal parameters are
+explicit (no baked-in dimensions): they depend on the still-undecided sensor hardware (§3).
+"""
+
+import numpy as np
+
+from wavetrace import CsiFrame
+
+
+def generateStream(
+    *,
+    numAntennas: int,
+    numSubcarriers: int,
+    sampleRateHz: float,
+    numFrames: int,
+    perturbationHz: float,
+    perturbationDepth: float,
+    cfoHz: float,
+    noiseStd: float,
+    seed: int | None = None,
+) -> tuple[list[CsiFrame], dict]:
+    """Generate a CsiFrame stream plus its ground truth. O(numFrames · numAntennas · numSubcarriers)."""
+    rng = np.random.default_rng(seed)
+
+    amp = rng.uniform(0.5, 1.5, size=(numAntennas, numSubcarriers))
+    psi = rng.uniform(-np.pi, np.pi, size=(numAntennas, numSubcarriers))
+    h0 = (amp * np.exp(1j * psi)).astype(np.complex64)
+
+    # Per-subcarrier motion sensitivity in [-1, 1]; the *difference* between two subcarriers is
+    # what carries the periodic motion into angle(s_i · conj(s_j)).
+    scale = np.linspace(-1.0, 1.0, numSubcarriers) if numSubcarriers > 1 else np.zeros(1)
+
+    times = np.arange(numFrames) / sampleRateHz
+    frames: list[CsiFrame] = []
+    for idx in range(numFrames):
+        t = times[idx]
+        motionPhase = perturbationDepth * scale * np.sin(2 * np.pi * perturbationHz * t)
+        cfoPhase = 2 * np.pi * cfoHz * t  # common-mode → cancels in the subcarrier ratio
+        rot = np.exp(1j * (motionPhase + cfoPhase)).astype(np.complex64)  # (numSubcarriers,)
+        noise = (
+            rng.normal(0.0, noiseStd, (numAntennas, numSubcarriers))
+            + 1j * rng.normal(0.0, noiseStd, (numAntennas, numSubcarriers))
+        ).astype(np.complex64)
+        grid = (h0 * rot[None, :] + noise).astype(np.complex64)
+
+        frame = CsiFrame(numAntennas, numSubcarriers)
+        frame.timestamp = float(t)
+        frame.grid[:, :] = grid  # zero-copy write into the native buffer
+        frames.append(frame)
+
+    groundTruth = {
+        "perturbation_hz": perturbationHz,
+        "cfo_hz": cfoHz,
+        "sample_rate_hz": sampleRateHz,
+        "num_frames": numFrames,
+        "num_antennas": numAntennas,
+        "num_subcarriers": numSubcarriers,
+    }
+    return frames, groundTruth

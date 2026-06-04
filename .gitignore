@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Build
+build/
+dist/
+_skbuild/
+*.so
+*.dylib
+
+# Native extension landing spot (built by scikit-build-core)
+wavetrace/_wavetrace*.so
+wavetrace/_wavetrace*.dylib
+
+# Models (quantized weights, added in Phase 6)
+models/
+
+# Recorded CSI + camera datasets (Phase 5)
+data/
+
+# Generated knowledge graph (regenerable via `graphify`)
+graphify-out/
+
+# Local reference / analysis notes (not part of the shipped repo)
+PROJECT_ANALYSIS.md
+math_student_friendly.md
+wifi_sensing_explainer.md
+REFERENCE_DIGEST.md
+plan.md
+CLAUDE.md
+MINDMAP.md
+
+# IDE
+.idea/
+
+# Local Claude Code settings (per-machine permissions)
+.claude/settings.local.json
+
+# macOS
+.DS_Store

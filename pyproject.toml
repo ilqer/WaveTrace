@@ -1,0 +1,25 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "wavetrace"
+version = "0.1.0"
+description = "WiFi-CSI sensing pipeline: posture & weapon recognition, camera-supervised, CSI-only at deploy."
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.scikit-build]
+# Build the _wavetrace extension into the wavetrace package.
+wheel.packages = ["wavetrace"]
+cmake.build-type = "Release"
+
+[tool.pytest.ini_options]
+# Intentional PascalCase test files (CLAUDE.md naming): discover Test*.py.
+python_files = "Test*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+testpaths = ["tests"]
