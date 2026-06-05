@@ -4,6 +4,10 @@ Builds a CsiFrame stream with a known ground truth:
   - static multipath channel  H0[a][k] = A·e^{jψ}      (distinct per antenna)
   - a periodic motion that modulates phase per subcarrier (proxy for the per-subcarrier
     frequency spread that makes the subcarrier-ratio method sensitive to motion)
+  - an OPTIONAL periodic amplitude envelope (breathing-like) modulating |H| per subcarrier — so
+    amplitude/PSD/turbulence features (Phase 4) have meaningful synthetic data. The per-subcarrier
+    depth varies, so the cross-subcarrier pattern changes over time and the modulation survives the
+    per-frame mean normalization a GainLock would apply. Off by default (amplitudeDepth=0).
   - a common-mode hardware clock offset (CFO) shared by all subcarriers — must cancel under
     conjugate-multiply / subcarrier-ratio (REFERENCE_DIGEST §2.2)
   - complex Gaussian noise
@@ -28,6 +32,8 @@ def generateStream(
     perturbationDepth: float,
     cfoHz: float,
     noiseStd: float,
+    amplitudeHz: float = 0.0,
+    amplitudeDepth: float = 0.0,
     seed: int | None = None,
 ) -> tuple[list[CsiFrame], dict]:
     """Generate a CsiFrame stream plus its ground truth. O(numFrames · numAntennas · numSubcarriers)."""
@@ -40,6 +46,10 @@ def generateStream(
     # Per-subcarrier motion sensitivity in [-1, 1]; the *difference* between two subcarriers is
     # what carries the periodic motion into angle(s_i · conj(s_j)).
     scale = np.linspace(-1.0, 1.0, numSubcarriers) if numSubcarriers > 1 else np.zeros(1)
+    # Per-subcarrier amplitude-modulation depth in [0.5, 1.5] (deterministic, no rng draw so existing
+    # seeded streams are unchanged). Distinct per subcarrier -> the cross-subcarrier shape varies in
+    # time, so turbulence/amplitude features see real signal even after per-frame mean normalization.
+    ampScale = np.linspace(0.5, 1.5, numSubcarriers) if numSubcarriers > 1 else np.ones(1)
 
     times = np.arange(numFrames) / sampleRateHz
     frames: list[CsiFrame] = []
@@ -48,11 +58,13 @@ def generateStream(
         motionPhase = perturbationDepth * scale * np.sin(2 * np.pi * perturbationHz * t)
         cfoPhase = 2 * np.pi * cfoHz * t  # common-mode → cancels in the subcarrier ratio
         rot = np.exp(1j * (motionPhase + cfoPhase)).astype(np.complex64)  # (numSubcarriers,)
+        # |H| envelope: 1 + depth·sens·sin(2π f t), kept > 0 for sane depths (amplitudeDepth·1.5 < 1).
+        ampEnv = (1.0 + amplitudeDepth * ampScale * np.sin(2 * np.pi * amplitudeHz * t)).astype(np.float32)
         noise = (
             rng.normal(0.0, noiseStd, (numAntennas, numSubcarriers))
             + 1j * rng.normal(0.0, noiseStd, (numAntennas, numSubcarriers))
         ).astype(np.complex64)
-        grid = (h0 * rot[None, :] + noise).astype(np.complex64)
+        grid = (h0 * ampEnv[None, :] * rot[None, :] + noise).astype(np.complex64)
 
         frame = CsiFrame(numAntennas, numSubcarriers)
         frame.timestamp = float(t)
@@ -61,6 +73,8 @@ def generateStream(
 
     groundTruth = {
         "perturbation_hz": perturbationHz,
+        "amplitude_hz": amplitudeHz,
+        "amplitude_depth": amplitudeDepth,
         "cfo_hz": cfoHz,
         "sample_rate_hz": sampleRateHz,
         "num_frames": numFrames,
