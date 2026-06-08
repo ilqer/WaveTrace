@@ -11,10 +11,13 @@ import pytest
 from wavetrace import (
     CsiFrame,
     FeatureExtractor,
+    InterCarrierExtractor,
     Preprocessor,
     WaveTraceError,
     doppler_features,
     fft,
+    inter_carrier_phase_stats,
+    inter_carrier_stats,
     nine_features,
     power_spectrum,
 )
@@ -68,6 +71,103 @@ def test_nine_features_constant_window():
     assert mean == pytest.approx(3.0) and mx == pytest.approx(3.0) and mn == pytest.approx(3.0)
     assert std == pytest.approx(0.0) and iqr == pytest.approx(0.0)
     assert mad == pytest.approx(0.0) and wl == pytest.approx(0.0) and skew == pytest.approx(0.0)
+
+
+# --- Per-packet inter-subcarrier dispersion (REFERENCE §0B weapon discriminator) -------------
+
+def test_inter_carrier_stats_matches_numpy():
+    rng = np.random.default_rng(7)
+    x = rng.standard_normal(52).astype(np.float32)  # 52 = ESP32 HT20 data subcarriers
+    mean, var = inter_carrier_stats(x)
+    assert mean == pytest.approx(float(np.mean(x.astype(np.float64))), rel=1e-5)
+    assert var == pytest.approx(float(np.var(x.astype(np.float64), ddof=1)), rel=1e-4)  # sample (M-1)
+
+
+def test_inter_carrier_stats_metal_lower_variance():
+    # The §0B discriminator DIRECTION: a flat metal reflector reflects all subcarriers evenly -> LOW
+    # inter-carrier variance; the diffuse human body -> HIGH. Magnitudes are constructed directly (the
+    # synthetic fixture deliberately cannot fake a weapon signature — plan.md Phase 5).
+    rng = np.random.default_rng(8)
+    flat = (np.full(52, 5.0) + rng.standard_normal(52) * 0.05).astype(np.float32)     # metal-like
+    diffuse = (5.0 + rng.standard_normal(52) * 2.0).astype(np.float32)                # body-like
+    _, var_flat = inter_carrier_stats(flat)
+    _, var_diffuse = inter_carrier_stats(diffuse)
+    assert var_flat < var_diffuse
+
+
+def test_inter_carrier_stats_edge_cases():
+    mean, var = inter_carrier_stats(np.full(30, 2.5, dtype=np.float32))  # constant -> zero variance
+    assert mean == pytest.approx(2.5) and var == pytest.approx(0.0)
+    mean1, var1 = inter_carrier_stats(np.array([4.0], dtype=np.float32))  # single -> no (M-1) blowup
+    assert mean1 == pytest.approx(4.0) and var1 == pytest.approx(0.0)
+
+
+# --- Per-frame inter-subcarrier PHASE dispersion (phase counterpart of sigma2[p]) ------------
+
+def test_inter_carrier_phase_stats_recovers_slope():
+    # A linear phase ramp across subcarriers = a pure group-delay (ToF) slope: the fit recovers the
+    # slope and the non-linear residual is ~0 (coherent, metal-like).
+    k = 52
+    slope_true = 0.2  # rad/subcarrier
+    phase = (slope_true * np.arange(k) + 1.3).astype(np.float32)  # ramp + constant offset
+    # wrap into (-pi, pi] so the unwrap-across-subcarriers path is exercised
+    wrapped = np.angle(np.exp(1j * phase)).astype(np.float32)
+    slope, resid = inter_carrier_phase_stats(wrapped)
+    assert slope == pytest.approx(slope_true, abs=1e-3)
+    assert resid == pytest.approx(0.0, abs=1e-3)
+
+
+def test_inter_carrier_phase_stats_coherent_vs_diffuse():
+    # The discriminator DIRECTION: a coherent reflector -> near-linear phase -> LOW residual; the
+    # diffuse body -> scattered phase -> HIGH residual.
+    rng = np.random.default_rng(11)
+    k = 52
+    ramp = 0.15 * np.arange(k)
+    coherent = np.angle(np.exp(1j * (ramp + rng.standard_normal(k) * 0.02))).astype(np.float32)
+    diffuse = np.angle(np.exp(1j * (ramp + rng.standard_normal(k) * 1.5))).astype(np.float32)
+    _, resid_coherent = inter_carrier_phase_stats(coherent)
+    _, resid_diffuse = inter_carrier_phase_stats(diffuse)
+    assert resid_coherent < resid_diffuse
+
+
+def test_inter_carrier_phase_stats_edge_cases():
+    slope, resid = inter_carrier_phase_stats(np.array([0.5], dtype=np.float32))  # k<2 -> zeros
+    assert slope == pytest.approx(0.0) and resid == pytest.approx(0.0)
+
+
+# --- Streaming inter-subcarrier amplitude-dispersion extractor (windows sigma2[p]) -----------
+
+def test_inter_carrier_extractor_cadence_and_shape():
+    W, H = 8, 2
+    ice = InterCarrierExtractor(W, H)
+    assert ice.output_size == 27  # 3 series (mu|sigma2|cv) x 9 features
+    rng = np.random.default_rng(12)
+    emits = [i for i in range(20)
+             if ice.push((5.0 + rng.standard_normal(52) * 0.5).astype(np.float32))]
+    assert emits[0] == W - 1
+    assert all((e - emits[0]) % H == 0 for e in emits)
+    assert ice.features.shape == (27,)
+
+
+def test_inter_carrier_extractor_matches_nine_features():
+    # The windowed extractor must equal nine_features over the per-packet {mu, sigma2, cv} series.
+    rng = np.random.default_rng(13)
+    W, H, K = 16, 4, 52
+    frames = (5.0 + rng.standard_normal((W, K)) * 0.5).astype(np.float32)
+    mu, sig2, cv = [], [], []
+    ice = InterCarrierExtractor(W, H)
+    emitted = False
+    for row in frames:
+        emitted = ice.push(np.ascontiguousarray(row))
+        m, v = inter_carrier_stats(np.ascontiguousarray(row))
+        mu.append(m)
+        sig2.append(v)
+        cv.append(np.sqrt(v) / m if m > 1e-12 else 0.0)
+    assert emitted
+    got = ice.features.reshape(3, 9)
+    for series_idx, series in enumerate((mu, sig2, cv)):
+        ref = nine_features(np.asarray(series, dtype=np.float32))
+        assert np.allclose(got[series_idx], ref, rtol=1e-4, atol=1e-5)
 
 
 # --- PSD + Doppler recover the injected motion frequency (phase path) -------------------------

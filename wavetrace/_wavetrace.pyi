@@ -112,6 +112,16 @@ def nine_features(window: npt.NDArray[np.float32]) -> list[float]:
     """REFERENCE §2.9 nine features [mean,std,max,min,IQR,skew,lag1,MAD,WL] over one window."""
     ...
 
+def inter_carrier_stats(mags: npt.NDArray[np.float32]) -> tuple[float, float]:
+    """Per-packet inter-subcarrier (mu, sigma2) over subcarrier magnitudes (REFERENCE §0B weapon
+    discriminator: metal -> lower sigma2). Sample variance (M-1)."""
+    ...
+
+def inter_carrier_phase_stats(phase: npt.NDArray[np.float32]) -> tuple[float, float]:
+    """Per-frame inter-subcarrier phase (slope, residual_std): unwrap across subcarriers, fit the
+    linear ToF slope, return slope + RMS non-linear residual (coherent metal -> lower residual)."""
+    ...
+
 def power_spectrum(x: npt.NDArray[np.float32], nfft: int = 0) -> npt.NDArray[np.float32]:
     """PSD (detrend + Hann + zero-pad to nfft) over nfft/2+1 bins; nfft=0 -> nextPow2(max(n,64))."""
     ...
@@ -139,6 +149,57 @@ class FeatureExtractor:
     @property
     def features(self) -> npt.NDArray[np.float32]:
         """Zero-copy view of the latest emitted vector (length 9*num_series, reused each emit)."""
+        ...
+
+class InterCarrierExtractor:
+    """Windows the per-packet inter-subcarrier amplitude stats {mu, sigma2, cv} into a 27-feature
+    block (3 series x §2.9 nine features). Push RAW magnitudes (NOT gain-locked)."""
+
+    def __init__(self, window: int, hop: int) -> None: ...
+    @property
+    def window(self) -> int: ...
+    @property
+    def hop(self) -> int: ...
+    @property
+    def output_size(self) -> int: ...
+    def reset(self) -> None: ...
+    def push(self, mags: npt.NDArray[np.float32]) -> bool:
+        """Push one frame's RAW subcarrier magnitudes; True when a 27-feature block was emitted."""
+        ...
+    @property
+    def features(self) -> npt.NDArray[np.float32]:
+        """Zero-copy view of the latest 27-feature block (mu|sigma2|cv x 9), reused each emit."""
+        ...
+
+class PresenceSegmenter:
+    """Streaming presence / active-segment detector (variance gate with hysteresis; Option-A
+    stand-in for LOF). Push antenna-collapsed per-frame magnitudes; flags active segments and their
+    [start, end) bounds. Auto-triggers presence + bounds the weapon head's voting window."""
+
+    def __init__(
+        self, window: int, enter_cv: float, exit_cv: float, min_active_len: int = 1
+    ) -> None: ...
+    @property
+    def window(self) -> int: ...
+    @property
+    def active(self) -> bool: ...
+    @property
+    def activity(self) -> float:
+        """Last windowed coefficient of variation (sigma/mu) of the mean channel energy."""
+        ...
+    @property
+    def segment_closed(self) -> bool: ...
+    @property
+    def last_segment_start(self) -> int: ...
+    @property
+    def last_segment_end(self) -> int: ...
+    @property
+    def current_start(self) -> int:
+        """Start frame of the in-progress segment (valid only while active)."""
+        ...
+    def reset(self) -> None: ...
+    def push(self, mags: npt.NDArray[np.float32]) -> bool:
+        """Push one frame's antenna-collapsed subcarrier magnitudes; True if inside an active segment."""
         ...
 
 class SpectrogramBuilder:

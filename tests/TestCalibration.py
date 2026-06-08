@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from wavetrace import CsiFrame
-from wavetrace.Calibration import Calibration, CalibrationResult
+from wavetrace.Calibration import Calibration, CalibrationResult, reflection_signature
 
 
 def _quietBaseline(A, S, F, informative, seed):
@@ -70,3 +70,42 @@ def test_calibration_ready_flag():
 def test_calibration_empty_raises():
     with pytest.raises(ValueError):
         Calibration().finalize()
+
+
+# --- Baseline reflection reference (REFERENCE §0B material/dielectric signature) --------------
+
+def test_reflection_signature_baseline_is_neutral():
+    # A frame at the baseline mean -> mag_ratio ~ 1 and phase_delta ~ 0 (empty room vs empty room).
+    A, S, F = 2, 16, 100
+    frames, _ = _quietBaseline(A, S, F, informative=7, seed=6)
+    cal = Calibration(baseline_packets=F)
+    for fr in frames:
+        cal.observe(fr)
+    res = cal.finalize()
+    assert res.baseline_mag.shape == (S,)
+    assert res.baseline_diff.shape == (S - 1,)
+
+    # A frame whose per-subcarrier magnitudes equal the stored baseline mean -> ratio 1 everywhere.
+    ref = CsiFrame(A, S)
+    ref.grid[:, :] = res.baseline_mag.astype(np.complex64)
+    mag_ratio, _ = reflection_signature(np.asarray(ref.grid), res)
+    assert np.allclose(mag_ratio, 1.0, atol=1e-4)             # same magnitude -> ratio 1
+
+
+def test_reflection_signature_detects_attenuation():
+    # A metal object attenuating part of the band -> mag_ratio < 1 on the affected subcarriers.
+    A, S, F = 1, 16, 100
+    frames, baseMag = _quietBaseline(A, S, F, informative=7, seed=7)
+    cal = Calibration(baseline_packets=F)
+    for fr in frames:
+        cal.observe(fr)
+    res = cal.finalize()
+
+    subj = CsiFrame(A, S)
+    g = np.asarray(frames[0].grid).copy()
+    g[:, 4:8] *= 0.4                                          # object attenuates subcarriers 4..7
+    subj.grid[:, :] = g
+    mag_ratio, phase_delta = reflection_signature(np.asarray(subj.grid), res)
+    assert mag_ratio[4:8].mean() < 0.6                        # clear attenuation dip
+    assert mag_ratio[10:].mean() == pytest.approx(1.0, abs=0.2)  # untouched band stays ~1
+    assert phase_delta.shape == (S - 1,)

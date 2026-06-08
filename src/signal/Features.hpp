@@ -88,6 +88,85 @@ inline void nineFeatures(const float* x, size_t n, float* scratch, float* out) {
   out[8] = static_cast<float>(wl);
 }
 
+// --- Per-packet inter-subcarrier dispersion (REFERENCE §0B — weapon discriminator) ----------
+
+struct InterCarrierStat {
+  float mean;      // mu[p]      = mean amplitude across subcarriers at one packet
+  float variance;  // sigma2[p]  = sample variance (M-1) across subcarriers; metal -> LOWER
+};
+
+// Per-packet dispersion of the K subcarrier magnitudes at ONE frame (Yousaf 2025 Eq.3-4 / LUMS Eq.3-4,
+// REFERENCE §0B). A flat metal reflector reflects all subcarriers evenly -> sigma2 is SMALLER than for
+// the diffuse human body, so this is the documented concealed-metal discriminator (and the cheapest
+// threshold head). It is the TRANSPOSE of nineFeatures (which is per-subcarrier across time) and equals
+// the espectre "spatial turbulence" scalar (§2.8 MVS), so one primitive serves Stage-A presence and
+// Stage-E weapon. Run it over ALL valid subcarriers, not the NBVI subset (NBVI selects on time-variance,
+// orthogonal to this cross-subcarrier reduction). Sample variance (M-1) matches the papers. Two-pass
+// (stable, §2.8). O(K), no allocation.
+inline InterCarrierStat interCarrierStats(const float* mags, size_t k) {
+  if (k == 0) return {0.0f, 0.0f};
+  double mean = 0.0;
+  for (size_t i = 0; i < k; ++i) mean += static_cast<double>(mags[i]);
+  mean /= static_cast<double>(k);
+  if (k == 1) return {static_cast<float>(mean), 0.0f};
+  double var = 0.0;
+  for (size_t i = 0; i < k; ++i) {
+    const double d = static_cast<double>(mags[i]) - mean;
+    var += d * d;
+  }
+  var /= static_cast<double>(k - 1);  // sample variance (M-1), matches Yousaf/LUMS
+  return {static_cast<float>(mean), static_cast<float>(var)};
+}
+
+// --- Per-frame inter-subcarrier PHASE dispersion (phase counterpart of sigma2[p]) ------------
+
+struct InterCarrierPhaseStat {
+  float slope;        // least-squares phase slope across subcarriers (rad/subcarrier) ~ group delay (ToF)
+  float residualStd;  // RMS phase after removing the linear ToF slope; a coherent flat reflector ->
+                      // LOWER residual, the diffuse human body -> HIGHER (scattered phase)
+};
+
+// Inter-subcarrier phase dispersion at ONE frame: unwrap the phase across subcarriers, fit a line
+// (the linear term is the group-delay/ToF slope), and return the slope + the RMS of the non-linear
+// residual. A metal reflector reflects coherently -> near-linear phase across the band -> small
+// residual; the diffuse human body scatters -> large residual. This is the PHASE analogue of
+// interCarrierStats (Wi-Metal is phase-based: phase resolves mm-level path-length change, so the
+// slope is the delay term compressed sensing later super-resolves). `phase` = per-subcarrier phase at
+// one frame (e.g. std::arg of each H[k], or a Preprocessor differential-phase row). `scratch` holds
+// >= k floats (the unwrapped phase). O(k), no allocation beyond the caller's scratch.
+inline InterCarrierPhaseStat interCarrierPhaseStats(const float* phase, size_t k, float* scratch) {
+  if (k < 2) return {0.0f, 0.0f};
+  constexpr float PI = 3.14159265358979323846f;
+  constexpr float TWO_PI = 2.0f * PI;
+  // Unwrap across subcarriers so the linear slope is not corrupted by 2*pi jumps.
+  scratch[0] = phase[0];
+  for (size_t i = 1; i < k; ++i) {
+    float d = phase[i] - phase[i - 1];
+    while (d > PI) d -= TWO_PI;
+    while (d < -PI) d += TWO_PI;
+    scratch[i] = scratch[i - 1] + d;
+  }
+  // Least-squares line y = a*x + b over x = 0..k-1 (closed form).
+  const double n = static_cast<double>(k);
+  double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+  for (size_t i = 0; i < k; ++i) {
+    const double x = static_cast<double>(i), y = static_cast<double>(scratch[i]);
+    sumX += x;
+    sumY += y;
+    sumXX += x * x;
+    sumXY += x * y;
+  }
+  const double denom = n * sumXX - sumX * sumX;  // > 0 for k >= 2
+  const double a = (n * sumXY - sumX * sumY) / denom;
+  const double b = (sumY - a * sumX) / n;
+  double sse = 0.0;
+  for (size_t i = 0; i < k; ++i) {
+    const double r = static_cast<double>(scratch[i]) - (a * static_cast<double>(i) + b);
+    sse += r * r;
+  }
+  return {static_cast<float>(a), static_cast<float>(std::sqrt(sse / n))};
+}
+
 // --- Frequency domain: PSD + Doppler (REFERENCE §2.6) ---------------------------------------
 
 // Power spectral density of a real series via the §2.6 recipe: detrend (subtract mean), Hann
@@ -206,6 +285,70 @@ public:
 
 private:
   size_t c_, window_, hop_;
+  size_t sinceEmit_ = 0;
+  std::vector<RingBuffer<float>> rings_;
+  std::vector<float> win_, scratch_, output_;
+};
+
+// --- Streaming inter-subcarrier amplitude-dispersion extractor (windows sigma2[p]) -----------
+
+// Turns the per-packet inter-subcarrier amplitude statistic into a classifier-ready feature block —
+// the change that makes the §0B weapon discriminator usable by a head (the signal is in how
+// sigma2[p] BEHAVES over the ~1.3 s window, not in one packet). Each frame's K subcarrier magnitudes
+// are reduced to {mu[p], sigma2[p], cv[p]=std/mu}; each scalar is buffered as a series and, once
+// `window` frames are in, the §2.9 nineFeatures of each series are emitted every `hop` frames
+// (output length 27 = 3*9, order: mu | sigma2 | cv).
+// INPUT CONTRACT: push RAW per-frame magnitudes (NOT gain-locked / mean-normalized) — a per-frame
+// mean lock cancels the cross-subcarrier flatness that IS the metal signature; cv[p] is the
+// gain-invariant series to prefer if a gain lock is unavoidable. Run over ALL valid subcarriers, not
+// the NBVI subset (NBVI ranks on time-variance, orthogonal to this cross-subcarrier reduction).
+// Per-frame push O(K); emit O(window log window) only every hop. Zero hot-path allocation.
+class InterCarrierExtractor {
+public:
+  static constexpr size_t NUM_SERIES = 3;  // 0 mu, 1 sigma2, 2 cv
+  static constexpr size_t FEATURES_PER_SERIES = 9;
+
+  InterCarrierExtractor(size_t window, size_t hop) : window_(window), hop_(hop) {
+    if (window == 0 || hop == 0) {
+      throw WaveTraceError("InterCarrierExtractor: window, hop must be non-zero");
+    }
+    rings_.reserve(NUM_SERIES);
+    for (size_t i = 0; i < NUM_SERIES; ++i) rings_.emplace_back(window_);
+    win_.assign(window_, 0.0f);
+    scratch_.assign(window_, 0.0f);
+    output_.assign(NUM_SERIES * FEATURES_PER_SERIES, 0.0f);
+  }
+
+  size_t window() const { return window_; }
+  size_t hop() const { return hop_; }
+  size_t outputSize() const { return output_.size(); }
+  const float* data() const { return output_.data(); }
+
+  // Push one frame's K subcarrier magnitudes; True when a feature block was emitted (see data()).
+  bool push(const float* mags, size_t k) {
+    const InterCarrierStat s = interCarrierStats(mags, k);
+    const float cv = (s.mean > 1e-12f) ? std::sqrt(s.variance) / s.mean : 0.0f;
+    rings_[0].push(s.mean);
+    rings_[1].push(s.variance);
+    rings_[2].push(cv);
+    ++sinceEmit_;
+    if (rings_[0].size() < window_ || sinceEmit_ < hop_) return false;
+    sinceEmit_ = 0;
+    for (size_t i = 0; i < NUM_SERIES; ++i) {
+      rings_[i].copyOrdered(win_.data());  // chronological (lag-1/WL need order)
+      nineFeatures(win_.data(), window_, scratch_.data(), &output_[i * FEATURES_PER_SERIES]);
+    }
+    return true;
+  }
+
+  void reset() {
+    for (auto& r : rings_) r.clear();
+    sinceEmit_ = 0;
+    std::fill(output_.begin(), output_.end(), 0.0f);
+  }
+
+private:
+  size_t window_, hop_;
   size_t sinceEmit_ = 0;
   std::vector<RingBuffer<float>> rings_;
   std::vector<float> win_, scratch_, output_;

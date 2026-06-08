@@ -12,6 +12,7 @@
 #include "hardware/NodeAggregator.hpp"
 #include "signal/Features.hpp"
 #include "signal/GainLock.hpp"
+#include "signal/PresenceSegment.hpp"
 #include "signal/Preprocess.hpp"
 #include "signal/Spectrogram.hpp"
 #include "signal/SubcarrierSelect.hpp"
@@ -213,6 +214,32 @@ PYBIND11_MODULE(_wavetrace, m) {
       "REFERENCE §2.9 nine features [mean,std,max,min,IQR,skew,lag1,MAD,WL] over one window.");
 
   m.def(
+      "inter_carrier_stats",
+      [](py::array_t<float, py::array::c_style | py::array::forcecast> mags) {
+        py::buffer_info info = mags.request();
+        const InterCarrierStat s = interCarrierStats(static_cast<const float*>(info.ptr),
+                                                     static_cast<size_t>(info.size));
+        return py::make_tuple(s.mean, s.variance);
+      },
+      py::arg("mags"),
+      "Per-packet inter-subcarrier (mu, sigma2) over subcarrier magnitudes (REFERENCE §0B weapon "
+      "discriminator: metal -> lower sigma2). Sample variance (M-1).");
+
+  m.def(
+      "inter_carrier_phase_stats",
+      [](py::array_t<float, py::array::c_style | py::array::forcecast> phase) {
+        py::buffer_info info = phase.request();
+        const size_t k = static_cast<size_t>(info.size);
+        std::vector<float> scratch(k);
+        const InterCarrierPhaseStat s =
+            interCarrierPhaseStats(static_cast<const float*>(info.ptr), k, scratch.data());
+        return py::make_tuple(s.slope, s.residualStd);
+      },
+      py::arg("phase"),
+      "Per-frame inter-subcarrier phase (slope, residual_std): unwrap across subcarriers, fit the "
+      "linear ToF slope, return slope + RMS non-linear residual (coherent metal -> lower residual).");
+
+  m.def(
       "power_spectrum",
       [](py::array_t<float, py::array::c_style | py::array::forcecast> x, size_t nfft) {
         py::buffer_info info = x.request();
@@ -276,6 +303,55 @@ PYBIND11_MODULE(_wavetrace, m) {
             return py::array_t<float>({len}, {elem}, f.data(), self);
           },
           "Zero-copy view of the latest emitted feature vector (length 9*num_series).");
+
+  py::class_<InterCarrierExtractor>(m, "InterCarrierExtractor")
+      .def(py::init<size_t, size_t>(), py::arg("window"), py::arg("hop"))
+      .def_property_readonly("window", &InterCarrierExtractor::window)
+      .def_property_readonly("hop", &InterCarrierExtractor::hop)
+      .def_property_readonly("output_size", &InterCarrierExtractor::outputSize)
+      .def("reset", &InterCarrierExtractor::reset)
+      .def(
+          "push",
+          [](InterCarrierExtractor& self,
+             py::array_t<float, py::array::c_style | py::array::forcecast> mags) {
+            py::buffer_info info = mags.request();
+            return self.push(static_cast<const float*>(info.ptr), static_cast<size_t>(info.size));
+          },
+          py::arg("mags"),
+          "Push one frame's RAW subcarrier magnitudes (NOT gain-locked); True when a 27-feature "
+          "block (mu|sigma2|cv x 9) was emitted (see `features`).")
+      .def_property_readonly(
+          "features",
+          [](py::object self) -> py::array {
+            InterCarrierExtractor& f = self.cast<InterCarrierExtractor&>();
+            const auto len = static_cast<py::ssize_t>(f.outputSize());
+            const auto elem = static_cast<py::ssize_t>(sizeof(float));
+            // Zero-copy float32 view of the reused output (length 27, same buffer each emit).
+            return py::array_t<float>({len}, {elem}, f.data(), self);
+          },
+          "Zero-copy view of the latest emitted feature block (length 27 = 3*9: mu|sigma2|cv).");
+
+  py::class_<PresenceSegmenter>(m, "PresenceSegmenter")
+      .def(py::init<size_t, float, float, size_t>(), py::arg("window"), py::arg("enter_cv"),
+           py::arg("exit_cv"), py::arg("min_active_len") = 1)
+      .def_property_readonly("window", &PresenceSegmenter::window)
+      .def_property_readonly("active", &PresenceSegmenter::active)
+      .def_property_readonly("activity", &PresenceSegmenter::activity)
+      .def_property_readonly("segment_closed", &PresenceSegmenter::segmentClosed)
+      .def_property_readonly("last_segment_start", &PresenceSegmenter::lastSegmentStart)
+      .def_property_readonly("last_segment_end", &PresenceSegmenter::lastSegmentEnd)
+      .def_property_readonly("current_start", &PresenceSegmenter::currentStart)
+      .def("reset", &PresenceSegmenter::reset)
+      .def(
+          "push",
+          [](PresenceSegmenter& self,
+             py::array_t<float, py::array::c_style | py::array::forcecast> mags) {
+            py::buffer_info info = mags.request();
+            return self.push(static_cast<const float*>(info.ptr), static_cast<size_t>(info.size));
+          },
+          py::arg("mags"),
+          "Push one frame's antenna-collapsed subcarrier magnitudes; True if now inside an active "
+          "segment (windowed-CV gate with hysteresis). Check segment_closed for a just-closed [start,end).");
 
   py::class_<SpectrogramBuilder>(m, "SpectrogramBuilder")
       .def(py::init<size_t, size_t, size_t>(), py::arg("num_subcarriers"), py::arg("time_steps"),
