@@ -47,6 +47,30 @@ def conjugate_multiply(in_frame: CsiFrame, out_frame: CsiFrame) -> None:
     """Geometry-adaptive conjugate multiply (cancels CFO/SFO); out_frame is reshaped + filled."""
     ...
 
+def combined_channel_difference(in_frame: CsiFrame, out_frame: CsiFrame) -> None:
+    """Antenna-difference H[a]-H[0] (nulls common environment, amplifies material scattering;
+    in-baggage Eq.3). REQUIRES >=2 antennas on one radio; out_frame is reshaped + filled."""
+    ...
+
+def reconstruct_complex_csi(csi: npt.NDArray[np.complex64]) -> npt.NDArray[np.complex64]:
+    """Sanitized complex CSI for one frame: remove the linear STO/CFO phase ramp across subcarriers,
+    keep ABSOLUTE residual phase + magnitude (in-baggage material discriminator)."""
+    ...
+
+def reflection_null(
+    h1: npt.NDArray[np.complex64],
+    h2: npt.NDArray[np.complex64],
+    baseline_h1: npt.NDArray[np.complex64],
+    baseline_h2: npt.NDArray[np.complex64],
+) -> npt.NDArray[np.complex64]:
+    """Beta-null reflection: out = h1 + beta*h2, beta=-baseline_h1/baseline_h2 (nulls empty-room
+    LOS+static, leaving the object's pure reflection; in-baggage Eq.4). REQUIRES 2 paths."""
+    ...
+
+def block_average_decimate(x: npt.NDArray[np.float32], factor: int) -> npt.NDArray[np.float32]:
+    """Non-overlapping block-average decimation (LUMS): mean every `factor` samples -> n/factor."""
+    ...
+
 def hampel(window: npt.NDArray[np.float32], current: float, k: float = 5.0) -> float:
     """Median if `current` is an outlier vs `window` (k*1.4826*MAD), else `current`."""
     ...

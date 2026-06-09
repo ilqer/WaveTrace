@@ -100,6 +100,10 @@ PYBIND11_MODULE(_wavetrace, m) {
   // streaming Preprocessor.
   m.def("conjugate_multiply", &conjugateMultiply, py::arg("in_frame"), py::arg("out_frame"),
         "Geometry-adaptive conjugate multiply (cancels CFO/SFO) into out_frame (reshaped). O(n).");
+  m.def("combined_channel_difference", &combinedChannelDifference, py::arg("in_frame"),
+        py::arg("out_frame"),
+        "Antenna-difference combined channel H[a]-H[0] into out_frame (nulls the common environment, "
+        "amplifies material scattering; in-baggage Eq.3). REQUIRES >=2 antennas on one radio. O(n).");
   m.def(
       "hampel",
       [](py::array_t<float, py::array::c_style | py::array::forcecast> window, float current,
@@ -238,6 +242,62 @@ PYBIND11_MODULE(_wavetrace, m) {
       py::arg("phase"),
       "Per-frame inter-subcarrier phase (slope, residual_std): unwrap across subcarriers, fit the "
       "linear ToF slope, return slope + RMS non-linear residual (coherent metal -> lower residual).");
+
+  m.def(
+      "reconstruct_complex_csi",
+      [](py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> csi) {
+        py::buffer_info info = csi.request();
+        const size_t k = static_cast<size_t>(info.size);
+        py::array_t<std::complex<float>> out(static_cast<py::ssize_t>(k));
+        py::buffer_info oi = out.request();
+        std::vector<float> scratch(k);
+        reconstructComplexCsi(static_cast<const std::complex<float>*>(info.ptr), k,
+                              static_cast<std::complex<float>*>(oi.ptr), scratch.data());
+        return out;
+      },
+      py::arg("csi"),
+      "Sanitized complex CSI for one frame: remove the linear STO/CFO phase ramp across subcarriers "
+      "and keep the ABSOLUTE residual phase + magnitude (in-baggage material discriminator). O(k).");
+
+  m.def(
+      "reflection_null",
+      [](py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> h1,
+         py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> h2,
+         py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> baseline_h1,
+         py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> baseline_h2) {
+        py::buffer_info i1 = h1.request(), i2 = h2.request();
+        py::buffer_info b1 = baseline_h1.request(), b2 = baseline_h2.request();
+        const size_t k = static_cast<size_t>(i1.size);
+        if (static_cast<size_t>(i2.size) != k || static_cast<size_t>(b1.size) != k ||
+            static_cast<size_t>(b2.size) != k)
+          throw WaveTraceError("reflection_null: all four arrays must have equal length");
+        py::array_t<std::complex<float>> out(static_cast<py::ssize_t>(k));
+        py::buffer_info oi = out.request();
+        reflectionNull(static_cast<const std::complex<float>*>(i1.ptr),
+                       static_cast<const std::complex<float>*>(i2.ptr),
+                       static_cast<const std::complex<float>*>(b1.ptr),
+                       static_cast<const std::complex<float>*>(b2.ptr), k,
+                       static_cast<std::complex<float>*>(oi.ptr));
+        return out;
+      },
+      py::arg("h1"), py::arg("h2"), py::arg("baseline_h1"), py::arg("baseline_h2"),
+      "Beta-null reflection isolation: out = h1 + beta*h2, beta=-baseline_h1/baseline_h2 (nulls the "
+      "empty-room LOS+static, leaving the object's pure reflection; in-baggage Eq.4). REQUIRES 2 paths.");
+
+  m.def(
+      "block_average_decimate",
+      [](py::array_t<float, py::array::c_style | py::array::forcecast> x, size_t factor) {
+        py::buffer_info info = x.request();
+        const size_t n = static_cast<size_t>(info.size);
+        const size_t m = (factor > 0) ? n / factor : 0;
+        py::array_t<float> out(static_cast<py::ssize_t>(m));
+        py::buffer_info oi = out.request();
+        blockAverageDecimate(static_cast<const float*>(info.ptr), n, factor,
+                             static_cast<float*>(oi.ptr));
+        return out;
+      },
+      py::arg("x"), py::arg("factor"),
+      "Non-overlapping block-average decimation (LUMS): mean every `factor` samples -> n/factor. O(n).");
 
   m.def(
       "power_spectrum",

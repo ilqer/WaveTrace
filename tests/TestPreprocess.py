@@ -11,11 +11,32 @@ from wavetrace import (
     CsiFrame,
     FrameError,
     Preprocessor,
+    combined_channel_difference,
     conjugate_multiply,
     hampel,
     unwrap_step,
 )
 from fixtures.SyntheticCsi import generateStream
+
+
+# --- combined_channel_difference: nulls the common environment (in-baggage material feature) ---
+
+def test_combined_channel_difference_subtracts_antenna_zero():
+    rng = np.random.default_rng(7)
+    A, S = 3, 6
+    H = (rng.uniform(0.5, 1.5, (A, S)) * np.exp(1j * rng.uniform(-np.pi, np.pi, (A, S)))).astype(np.complex64)
+    in_frame = CsiFrame(A, S)
+    in_frame.grid[:, :] = H
+    out = CsiFrame(1, 1)
+    combined_channel_difference(in_frame, out)
+    assert out.grid.shape == (A - 1, S)  # antenna-difference -> (A-1) x S
+    expected = (H[1:, :] - H[0, :]).astype(np.complex64)
+    assert np.allclose(out.grid, expected, atol=1e-5)
+
+
+def test_combined_channel_difference_requires_two_antennas():
+    with pytest.raises(FrameError):
+        combined_channel_difference(CsiFrame(1, 8), CsiFrame(1, 1))
 
 
 # --- conjugate_multiply: cancels common-mode clock drift ------------------------------------

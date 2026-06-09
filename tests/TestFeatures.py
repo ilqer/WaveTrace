@@ -14,13 +14,81 @@ from wavetrace import (
     InterCarrierExtractor,
     Preprocessor,
     WaveTraceError,
+    block_average_decimate,
     doppler_features,
     fft,
     inter_carrier_phase_stats,
     inter_carrier_stats,
     nine_features,
     power_spectrum,
+    reconstruct_complex_csi,
+    reflection_null,
 )
+
+
+# --- reconstruct_complex_csi: strips the linear STO ramp, keeps absolute material phase ------
+
+def test_reconstruct_complex_csi_removes_linear_ramp_keeps_material():
+    k = 30
+    idx = np.arange(k)
+    mag = (2.0 + 0.1 * np.sin(idx)).astype(np.float64)        # nontrivial magnitude (must survive)
+    ramp = 0.5 * idx - 1.2                                    # unknown STO/CFO linear phase ramp
+    material = 0.3 * np.cos(0.7 * idx)                        # nonlinear residual = material signature
+    phase = ramp + material
+    h = (mag * np.exp(1j * phase)).astype(np.complex64)
+
+    out = reconstruct_complex_csi(h)
+
+    # magnitude is preserved
+    assert np.allclose(np.abs(out), mag, atol=1e-4)
+    # the linear component is removed; the residual equals phase minus its own least-squares line
+    coeffs = np.polyfit(idx, phase, 1)
+    expected_resid = phase - np.polyval(coeffs, idx)
+    assert np.allclose(np.angle(out), expected_resid, atol=1e-3)
+
+
+def test_reconstruct_complex_csi_pure_ramp_becomes_real():
+    k = 16
+    idx = np.arange(k)
+    h = (1.5 * np.exp(1j * (0.3 * idx + 0.7))).astype(np.complex64)  # pure linear ramp, no material
+    out = reconstruct_complex_csi(h)
+    assert np.allclose(np.angle(out), 0.0, atol=1e-4)  # nothing left after removing the line
+    assert np.allclose(np.abs(out), 1.5, atol=1e-4)
+
+
+# --- reflection_null: cancels the empty room, leaves the object's reflection -----------------
+
+def test_reflection_null_cancels_empty_room():
+    k = 16
+    rng = np.random.default_rng(3)
+    hb1 = (rng.standard_normal(k) + 1j * rng.standard_normal(k)).astype(np.complex64)
+    hb2 = (rng.standard_normal(k) + 1j * rng.standard_normal(k)).astype(np.complex64)
+    # empty room (h == baseline): out = hb1 + (-hb1/hb2)*hb2 = 0
+    empty = reflection_null(hb1, hb2, hb1, hb2)
+    assert np.allclose(empty, 0.0, atol=1e-4)
+    # an object perturbs path 1 -> the null no longer holds -> nonzero residual
+    obj = reflection_null(hb1 + (0.5 + 0.5j), hb2, hb1, hb2)
+    assert np.abs(obj).mean() > 1e-2
+
+
+def test_reflection_null_length_mismatch_raises():
+    a = np.ones(8, dtype=np.complex64)
+    with pytest.raises(WaveTraceError):
+        reflection_null(a, a, a, np.ones(7, dtype=np.complex64))
+
+
+# --- block_average_decimate: non-overlapping block means (LUMS) ------------------------------
+
+def test_block_average_decimate_block_means():
+    x = np.arange(100, dtype=np.float32)
+    out = block_average_decimate(x, 20)
+    assert out.shape == (5,)
+    assert np.allclose(out, [9.5, 29.5, 49.5, 69.5, 89.5])
+
+
+def test_block_average_decimate_drops_remainder():
+    out = block_average_decimate(np.arange(105, dtype=np.float32), 20)
+    assert out.shape == (5,)  # the trailing 5 samples are dropped
 from fixtures.SyntheticCsi import generateStream
 
 

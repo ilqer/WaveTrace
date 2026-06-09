@@ -43,6 +43,27 @@ inline void conjugateMultiply(const CsiFrame& in, CsiFrame& out) {
   }
 }
 
+// Antenna-difference combined channel (in-baggage CNS'18 Eq.3): out[a-1][k] = H[a][k] - H[0][k].
+// Subtracting two RX antennas on ONE shared-clock radio NULLS the common path (LOS + static
+// furniture) and AMPLIFIES the minute per-antenna scattering difference that separates metal vs
+// liquid — distinct from conjugateMultiply, which cancels clock DRIFT; this cancels the common
+// ENVIRONMENT. REQUIRES >= 2 antennas on one radio (independent ESP32 nodes have separate clocks, so
+// a cross-node difference is meaningless) → hardware-gated: only useful with a multi-antenna RX. O(n).
+inline void combinedChannelDifference(const CsiFrame& in, CsiFrame& out) {
+  const uint16_t A = in.numAntennas();
+  const uint16_t S = in.numSubcarriers();
+  if (A < 2) throw FrameError("combinedChannelDifference: requires >= 2 antennas on one radio");
+  out.reshape(static_cast<uint16_t>(A - 1), S);
+  const CsiFrame::Sample* H = in.data();
+  CsiFrame::Sample* D = out.data();
+  const CsiFrame::Sample* ref = H;  // antenna 0 = common reference
+  for (uint16_t a = 1; a < A; ++a) {
+    const CsiFrame::Sample* row = H + static_cast<size_t>(a) * S;
+    CsiFrame::Sample* outRow = D + static_cast<size_t>(a - 1) * S;
+    for (uint16_t k = 0; k < S; ++k) outRow[k] = row[k] - ref[k];
+  }
+}
+
 // Hampel outlier test on one window: returns `current` unless it deviates beyond k*1.4826*MAD from
 // the window median, in which case it returns the median (REFERENCE_DIGEST §2.4). 1.4826 makes MAD
 // a consistent sigma estimator for Gaussians. scratch must hold >= w floats. O(w) (nth_element).

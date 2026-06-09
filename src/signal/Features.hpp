@@ -167,6 +167,82 @@ inline InterCarrierPhaseStat interCarrierPhaseStats(const float* phase, size_t k
   return {static_cast<float>(a), static_cast<float>(std::sqrt(sse / n))};
 }
 
+// --- Complex-CSI material reconstruction (in-baggage CNS'18 §IV / material-ID) ---------------
+
+// Reconstruct sanitized COMPLEX CSI for one frame (one antenna). Raw CSI phase carries an unknown
+// linear STO/CFO ramp across subcarriers that buries the material signature. Unwrap the phase across
+// the k subcarriers, fit a line by least squares (the slope is the ToF/STO term), SUBTRACT it, and
+// recombine the residual phase with the ORIGINAL magnitude → a drift-free complex value whose
+// clustering in the complex plane separates materials (metal / liquid / none). Unlike the
+// Preprocessor's DIFFERENTIAL phase (conj-mult, which discards absolute phase), this keeps the
+// ABSOLUTE residual phase the paper shows carries the material signature. `in`/`out` length k;
+// `scratch` holds >= k floats (the unwrapped phase). O(k), no allocation beyond the caller's scratch.
+inline void reconstructComplexCsi(const std::complex<float>* in, size_t k, std::complex<float>* out,
+                                  float* scratch) {
+  if (k == 0) return;
+  if (k == 1) {
+    out[0] = in[0];
+    return;
+  }
+  constexpr float PI = 3.14159265358979323846f;
+  constexpr float TWO_PI = 2.0f * PI;
+  scratch[0] = std::arg(in[0]);
+  for (size_t i = 1; i < k; ++i) {  // unwrap across subcarriers so the slope isn't broken by 2*pi
+    float d = std::arg(in[i]) - std::arg(in[i - 1]);
+    while (d > PI) d -= TWO_PI;
+    while (d < -PI) d += TWO_PI;
+    scratch[i] = scratch[i - 1] + d;
+  }
+  // Least-squares line y = a*x + b over x = 0..k-1 (closed form, same fit as interCarrierPhaseStats).
+  const double n = static_cast<double>(k);
+  double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+  for (size_t i = 0; i < k; ++i) {
+    const double x = static_cast<double>(i), y = static_cast<double>(scratch[i]);
+    sumX += x;
+    sumY += y;
+    sumXX += x * x;
+    sumXY += x * y;
+  }
+  const double denom = n * sumXX - sumX * sumX;  // > 0 for k >= 2
+  const double a = (n * sumXY - sumX * sumY) / denom;
+  const double b = (sumY - a * sumX) / n;
+  for (size_t i = 0; i < k; ++i) {  // residual phase recombined with the original magnitude
+    const float resid = scratch[i] - static_cast<float>(a * static_cast<double>(i) + b);
+    out[i] = std::polar(std::abs(in[i]), resid);
+  }
+}
+
+// Beta-null reflection isolation (in-baggage CNS'18 Eq.4): out[i] = h1[i] + beta[i]*h2[i],
+// beta[i] = -hb1[i]/hb2[i] from the EMPTY-ROOM baseline (hb1, hb2 = the two TX→RX paths' quiet CFR).
+// The weight is chosen so the two paths CANCEL when the room is empty → out ≈ 0; when an object
+// appears its reflection no longer cancels, so |out| is the object's PURE reflection (LOS + static
+// multipath nulled at the COMPLEX level — stronger than an amplitude ratio). REQUIRES 2 paths/antennas
+// on one radio. All arrays length k. O(k).
+inline void reflectionNull(const std::complex<float>* h1, const std::complex<float>* h2,
+                           const std::complex<float>* hb1, const std::complex<float>* hb2, size_t k,
+                           std::complex<float>* out) {
+  for (size_t i = 0; i < k; ++i) {
+    const std::complex<float> beta =
+        (std::abs(hb2[i]) > 1e-12f) ? -hb1[i] / hb2[i] : std::complex<float>(0.0f, 0.0f);
+    out[i] = h1[i] + beta * h2[i];
+  }
+}
+
+// Non-overlapping block-average decimation (LUMS GLOBECOM'18 preprocessing): average every `factor`
+// consecutive samples into one → length n/factor. Denoises + shrinks the CNN input (LUMS reduced 5000
+// packets to 250 with factor 20). The trailing remainder (< factor) is dropped. `out` holds
+// >= n/factor floats. Returns the number of output samples. O(n).
+inline size_t blockAverageDecimate(const float* x, size_t n, size_t factor, float* out) {
+  if (factor == 0) return 0;
+  const size_t m = n / factor;
+  for (size_t b = 0; b < m; ++b) {
+    double s = 0.0;
+    for (size_t i = 0; i < factor; ++i) s += static_cast<double>(x[b * factor + i]);
+    out[b] = static_cast<float>(s / static_cast<double>(factor));
+  }
+  return m;
+}
+
 // --- Frequency domain: PSD + Doppler (REFERENCE §2.6) ---------------------------------------
 
 // Power spectral density of a real series via the §2.6 recipe: detrend (subtract mean), Hann
