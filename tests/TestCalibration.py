@@ -72,6 +72,32 @@ def test_calibration_empty_raises():
         Calibration().finalize()
 
 
+def test_calibration_ready_guard_rejects_short_baseline():
+    # Fewer frames than baseline_packets -> finalize refuses (weak reference / NBVI ranking).
+    frames, _ = _quietBaseline(2, 8, 5, informative=3, seed=8)
+    cal = Calibration(baseline_packets=50)
+    for fr in frames:
+        cal.observe(fr)
+    assert not cal.ready
+    with pytest.raises(ValueError):
+        cal.finalize()
+
+
+def test_calibration_without_gain_lock():
+    # use_gain_lock=False: NBVI still runs, reference_scale is NaN, gain_lock access raises.
+    A, S, F = 2, 16, 60
+    frames, _ = _quietBaseline(A, S, F, informative=7, seed=9)
+    cal = Calibration(baseline_packets=F, use_gain_lock=False)
+    for fr in frames:
+        cal.observe(fr)
+    assert cal.ready
+    res = cal.finalize()
+    assert np.isnan(res.reference_scale)
+    assert 7 in res.subcarriers                  # subcarrier selection unaffected
+    with pytest.raises(ValueError):
+        _ = cal.gain_lock                        # disabled -> no lock to hand out
+
+
 # --- Baseline reflection reference (REFERENCE §0B material/dielectric signature) --------------
 
 def test_reflection_signature_baseline_is_neutral():

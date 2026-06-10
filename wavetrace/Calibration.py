@@ -1,9 +1,13 @@
 """Phase 3c — per-session calibration flow.
 
-Calibrate on a QUIET, empty space (REFERENCE_DIGEST §4): collect a baseline of still frames, lock
-the AGC gain (GainLock), and select the informative subcarriers (NBVI). The result feeds the
-deployment pipeline: rescale amplitudes with the locked gain and restrict features to the chosen
-subcarriers. All offline (not the real-time path).
+Calibrate on a QUIET, empty space (REFERENCE_DIGEST §4): collect a baseline of still frames,
+optionally lock the AGC gain (GainLock), and select the informative subcarriers (NBVI). The result
+feeds the deployment pipeline: rescale amplitudes with the locked gain and restrict features to the
+chosen subcarriers. All offline (not the real-time path).
+
+GainLock is OPTIONAL (`use_gain_lock`, gated by Config.signal.gain_lock_enabled): it serves only the
+amplitude / presence feature path. The phase path is scale-invariant and the material features
+(σ²[p], reflection_signature) must NOT consume gain-locked frames — see reflection_signature.
 """
 
 from dataclasses import dataclass
@@ -15,7 +19,7 @@ from wavetrace import CsiFrame, GainLock, select_subcarriers_nbvi
 
 @dataclass
 class CalibrationResult:
-    reference_scale: float       # GainLock reference amplitude level
+    reference_scale: float       # GainLock reference amplitude level (NaN if gain lock disabled)
     subcarriers: list[int]       # NBVI-selected, non-consecutive subcarrier indices
     num_baseline: int            # number of baseline frames used
     baseline_mag: np.ndarray     # mean |H| per subcarrier over the quiet baseline, shape (S,)
@@ -32,8 +36,9 @@ def reflection_signature(grid, result: CalibrationResult):
                          change, and D is the complex quantity compressed sensing super-resolves in the
                          delay domain. CFO is common-mode within a frame so the differential cancels it,
                          making this comparable across captures (raw absolute phase is NOT).
-    `grid` = one subject frame's complex CSI (A x S). Antennas are averaged (magnitude) / complex-fused
-    (differential). Offline. O(A·S)."""
+    `grid` = one subject frame's RAW complex CSI (A x S) — do NOT pass a GainLock.apply'd frame: gain
+    lock rescales every frame to a common mean, which cancels exactly the bulk attenuation mag_ratio
+    measures. Antennas are averaged (magnitude) / complex-fused (differential). Offline. O(A·S)."""
     g = np.asarray(grid)
     amp = np.abs(g).mean(axis=0)                                   # (S,) antenna-averaged |H|
     diff = (g[:, 1:] * np.conj(g[:, :-1])).mean(axis=0)            # (S-1,) CFO-free differential
@@ -56,8 +61,10 @@ class Calibration:
         nbvi_max: int = 12,
         nbvi_alpha: float = 0.75,
         noise_gate_percentile: float = 0.15,
+        use_gain_lock: bool = True,
     ):
-        self._gain = GainLock(baseline_packets)
+        self._baseline_packets = baseline_packets
+        self._gain = GainLock(baseline_packets) if use_gain_lock else None
         self._nbvi_max = nbvi_max
         self._nbvi_alpha = nbvi_alpha
         self._gate = noise_gate_percentile
@@ -66,15 +73,17 @@ class Calibration:
 
     def observe(self, frame: CsiFrame) -> None:
         """Add one quiet-baseline frame. O(n)."""
-        self._gain.observe(frame)
+        if self._gain is not None:
+            self._gain.observe(frame)
         g = np.asarray(frame.grid)
         self._amps.append(np.abs(g).mean(axis=0))               # antenna-averaged |.| per subcarrier
         self._diffs.append((g[:, 1:] * np.conj(g[:, :-1])).mean(axis=0))  # CFO-free differential (S-1,)
 
     @property
     def ready(self) -> bool:
-        """True once enough baseline frames have been collected (per baseline_packets)."""
-        return self._gain.ready
+        """True once enough baseline frames have been collected (per baseline_packets). Counts
+        observed frames directly so it holds whether or not the gain lock is enabled."""
+        return len(self._amps) >= self._baseline_packets
 
     @property
     def num_baseline(self) -> int:
@@ -82,14 +91,29 @@ class Calibration:
 
     @property
     def gain_lock(self) -> GainLock:
-        """The locked GainLock — call .apply(frame) on it during deployment."""
+        """The locked GainLock — call .apply(frame) on it during deployment (amplitude path only)."""
+        if self._gain is None:
+            raise ValueError("Calibration: gain lock disabled (use_gain_lock=False)")
         return self._gain
 
     def finalize(self) -> CalibrationResult:
-        """Lock the gain and run NBVI; returns the calibration result. Offline."""
+        """Lock the gain (if enabled) and run NBVI; returns the calibration result. Offline.
+
+        Guards on `ready`: a too-short quiet baseline yields a weak reference scale / NBVI ranking,
+        so finalize refuses unless baseline_packets frames were observed (raise, don't silently
+        proceed). reference_scale is NaN when the gain lock is disabled."""
         if not self._amps:
             raise ValueError("Calibration: no baseline frames observed")
-        self._gain.finalize()
+        if not self.ready:
+            raise ValueError(
+                f"Calibration: only {len(self._amps)} baseline frames observed, "
+                f"need >= {self._baseline_packets} (collect more, or lower baseline_packets)"
+            )
+        if self._gain is not None:
+            self._gain.finalize()
+            reference_scale = self._gain.reference_scale
+        else:
+            reference_scale = float("nan")
         amp = np.stack(self._amps).astype(np.float32)  # (F, S)
         subc = select_subcarriers_nbvi(
             amp,
@@ -98,7 +122,7 @@ class Calibration:
             noise_gate_percentile=self._gate,
         )
         return CalibrationResult(
-            reference_scale=self._gain.reference_scale,
+            reference_scale=reference_scale,
             subcarriers=list(subc),
             num_baseline=len(self._amps),
             baseline_mag=amp.mean(axis=0),                      # (S,) mean |H| over the baseline
