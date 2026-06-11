@@ -68,6 +68,13 @@ public:
     locked_ = true;
   }
 
+  // Rebuild a locked lock from a persisted reference scale (skips re-observing a baseline). apply()
+  // needs only referenceScale_ + locked_, so a calibration can serialize the scalar and restore.
+  void lockTo(float scale) {
+    referenceScale_ = scale;
+    locked_ = true;
+  }
+
   // Rescale a frame's amplitudes to the locked reference (in place, phase preserved). O(n).
   void apply(CsiFrame& frame) const {
     if (!locked_) throw FrameError("GainLock: finalize() before apply()");

@@ -37,8 +37,42 @@ class SignalConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelConfig:
+    """Recognition-head config (Phase 6). `stage` picks the target (A presence / E weapon, Phase 7);
+    `backend` picks the implementation behind the backend-agnostic head wrapper.
+
+    `k` (NBVI subcarrier count) is dataset-dependent — required, no fabricated default (it comes from
+    the calibration that built the training dataset). window/hop default to the locked P4 cadence.
+    Backends: "mlp" = sklearn MLPClassifier (DEFAULT, locked: native predict_proba for the Phase-7
+    soft vote + weights port to the future numpy-tiny ESP32 head), "svm" = calibrated SVC (the
+    classic CSI-sensing literature head, kept selectable for A/B on real recordings). Weapon-head
+    (P7) additions: "variance" = the σ²[p]-threshold baseline (Yousaf: metal → lower inter-carrier
+    variance), "cnn" = torch 2D-CNN on the CSI image (lazy import; PresenceHead stays sklearn-only)."""
+
+    stage: str                      # "presence" | "weapon"
+    k: int                          # NBVI subcarrier count -> feature dim = 9*k per node
+    backend: str = "mlp"            # "mlp" (default) | "svm" | "variance" (P7) | "cnn" (P7)
+    window: int = 128               # front-end window (frames), locked P4
+    hop: int = 32                   # front-end hop (frames), locked P4
+    fs_tol: float = 0.10            # fs_ok: max relative live-fs deviation before a window is dropped
+    hidden: int = 32                # MLP hidden width (single layer — tiny head, O(1) forward)
+    seed: int = 0                   # backend rng seed (deterministic training/inference)
+
+    def __post_init__(self) -> None:
+        if self.stage not in ("presence", "weapon"):
+            raise ValueError("stage must be 'presence' or 'weapon'")
+        if self.backend not in ("mlp", "svm", "variance", "cnn"):
+            raise ValueError("backend must be one of 'mlp', 'svm', 'variance', 'cnn'")
+        if self.k <= 0 or self.window <= 0 or self.hop <= 0 or self.hidden <= 0:
+            raise ValueError("k, window, hop and hidden must be positive")
+        if not 0.0 < self.fs_tol < 1.0:
+            raise ValueError("fs_tol must be in (0, 1)")
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Top-level config. Grows as phases land (DSP, model, output)."""
 
     capture: CaptureConfig
     signal: SignalConfig = field(default_factory=SignalConfig)
+    model: ModelConfig | None = None  # None until a head is configured (Phase 6+)

@@ -11,6 +11,8 @@ amplitude / presence feature path. The phase path is scale-invariant and the mat
 """
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 
 import numpy as np
 
@@ -128,3 +130,40 @@ class Calibration:
             baseline_mag=amp.mean(axis=0),                      # (S,) mean |H| over the baseline
             baseline_diff=np.stack(self._diffs).mean(axis=0),   # (S-1,) mean CFO-free differential
         )
+
+
+def save_calibration(result: CalibrationResult, out_dir) -> Path:
+    """Serialize a CalibrationResult to out_dir (meta.json + .npy), mirroring save_dataset. O(S)."""
+    p = Path(out_dir)
+    p.mkdir(parents=True, exist_ok=True)
+    np.save(p / "baseline_mag.npy", np.asarray(result.baseline_mag, dtype=np.float32))
+    np.save(p / "baseline_diff.npy", np.asarray(result.baseline_diff, dtype=np.complex64))
+    meta = {
+        "reference_scale": float(result.reference_scale),  # JSON null for NaN -> handled on load
+        "subcarriers": [int(s) for s in result.subcarriers],
+        "num_baseline": int(result.num_baseline),
+    }
+    with open(p / "meta.json", "w") as f:
+        json.dump(meta, f, indent=2)
+    return p
+
+
+def load_calibration(out_dir) -> tuple[CalibrationResult, GainLock | None]:
+    """Round-trip a saved calibration. Returns (result, gain_lock): the GainLock is rebuilt locked
+    from the persisted reference_scale (via lock_to), or None when the lock was disabled (NaN). O(S)."""
+    p = Path(out_dir)
+    with open(p / "meta.json") as f:
+        meta = json.load(f)
+    ref = float(meta["reference_scale"])
+    result = CalibrationResult(
+        reference_scale=ref,
+        subcarriers=[int(s) for s in meta["subcarriers"]],
+        num_baseline=int(meta["num_baseline"]),
+        baseline_mag=np.load(p / "baseline_mag.npy"),
+        baseline_diff=np.load(p / "baseline_diff.npy"),
+    )
+    gain_lock = None
+    if not np.isnan(ref):
+        gain_lock = GainLock(result.num_baseline)
+        gain_lock.lock_to(ref)
+    return result, gain_lock

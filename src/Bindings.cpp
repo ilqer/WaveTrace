@@ -131,6 +131,7 @@ PYBIND11_MODULE(_wavetrace, m) {
       .def(py::init<size_t>(), py::arg("baseline_packets") = 300)
       .def("observe", &GainLock::observe, py::arg("frame"))
       .def("finalize", &GainLock::finalize)
+      .def("lock_to", &GainLock::lockTo, py::arg("scale"))
       .def("apply", &GainLock::apply, py::arg("frame"))
       .def_property_readonly("observed", &GainLock::observed)
       .def_property_readonly("ready", &GainLock::ready)

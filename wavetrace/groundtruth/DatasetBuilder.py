@@ -23,7 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
-from wavetrace import FeatureExtractor, Label, SpectrogramBuilder
+from wavetrace import InterCarrierExtractor, Label
+from wavetrace.Frontend import iter_windows
 from wavetrace.groundtruth.Align import align
 
 
@@ -35,6 +36,12 @@ class Dataset:
     t: np.ndarray                    # (n,) float64 window-END timestamps
     labels: list[Label]             # full Labels (box/keypoints/position preserved)
     meta: dict = field(default_factory=dict)
+    # P6a group ids (one per sample) — the leave-one-session/subject-out eval gate folds on these.
+    session_ids: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=object))
+    subject_ids: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=object))
+    # P7p-a: (n, 27) inter-carrier block (µ|σ²|CV × 9) from RAW magnitudes — the σ²[p] weapon-head
+    # input. None unless built with intercarrier=True (which requires gain_lock=None).
+    X_intercarrier: np.ndarray | None = None
 
 
 def build_dataset(
@@ -47,6 +54,9 @@ def build_dataset(
     hop: int = 32,
     tolerance: float = 0.05,
     class_names=None,
+    session_id: str = "",
+    subject_id: str = "",
+    intercarrier: bool = False,
 ) -> Dataset:
     """Build a labeled dataset from a CSI recording + a label source.
 
@@ -57,27 +67,33 @@ def build_dataset(
     `gain_lock` = the locked GainLock from `calibration`, OR None to skip the per-frame amplitude
     rescale. Pass None for material / weapon datasets (σ²[p], reflection_signature): gain lock
     normalizes every frame to a common mean, erasing the bulk attenuation those features measure.
-    Use it only for the amplitude / presence feature path."""
+    Use it only for the amplitude / presence feature path.
+
+    session_id / subject_id (P6a): group ids of THIS recording, stamped on every sample — the
+    leave-one-session-out / leave-one-subject-out eval gate folds on them (rev-7 #1: never a random
+    within-session split). One recording = one (session, subject); concat datasets to mix groups.
+
+    intercarrier (P7p-a): also emit the (n, 27) `InterCarrierExtractor` block over ALL subcarriers —
+    the σ²[p] weapon-head input. The IC block ALWAYS sees raw (pre-lock) magnitudes (gain lock
+    cancels the cross-subcarrier flatness the metal signature lives in). When gain_lock is also set,
+    a DUAL-BLOCK dataset is produced: IC from raw mags + X_features from locked mags — fusion-ready."""
     subc = np.asarray(calibration_result.subcarriers, dtype=np.intp)
     K = int(subc.size)
-    fe = FeatureExtractor(num_series=K, window=window, hop=hop)
-    sg = SpectrogramBuilder(num_subcarriers=K, time_steps=window, hop=hop)
 
     feats: list[np.ndarray] = []
     imgs: list[np.ndarray] = []
+    ics: list[np.ndarray] = []
     wts: list[float] = []
-    for fr in frames:
-        if gain_lock is not None:
-            gain_lock.apply(fr)  # in-place amplitude rescale to the locked reference (phase preserved)
-        mags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)  # (S,) antenna-averaged
-        vals = np.ascontiguousarray(mags[subc])                            # (K,) NBVI subcarriers
-        emitted = fe.push(vals)
-        sg_emitted = sg.push(vals)  # same window/hop -> emits in lockstep with fe
-        if emitted:
-            assert sg_emitted, "FeatureExtractor / SpectrogramBuilder emit cadence diverged"
-            feats.append(fe.features.copy())   # reused zero-copy buffer -> copy before next emit
-            imgs.append(sg.image.copy())
-            wts.append(float(fr.timestamp))    # window timestamp = END frame (Q5)
+    # shared front-end (wavetrace.Frontend) — the SAME emit loop Cli.run serves on, so the trained
+    # model sees identical features. iter_windows yields reused buffers -> copy each before advancing.
+    for t, features, image, ic in iter_windows(
+        frames, subc, gain_lock, window=window, hop=hop, intercarrier=intercarrier
+    ):
+        feats.append(features.copy())
+        imgs.append(image.copy())
+        if ic is not None:
+            ics.append(ic.copy())
+        wts.append(t)                          # window timestamp = END frame (Q5)
 
     # ----- attach labels --------------------------------------------------------------------------
     if callable(label_source):  # time-style: scripted / location-chip share the CSI clock
@@ -116,8 +132,19 @@ def build_dataset(
                        "p95_abs_dt": stats["p95_abs_dt"]},
         "n_samples": int(y.size),
         "n_dropped": int(stats["dropped"]),
+        "intercarrier": bool(intercarrier),
     }
-    return Dataset(X_features=X_features, X_image=X_image, y=y, t=t, labels=sel_labels, meta=meta)
+    X_ic = None
+    if intercarrier:
+        ic_width = InterCarrierExtractor(window=window, hop=hop).output_size  # fixed (µ|σ²|CV × 9)
+        X_ic = (np.stack([ics[i] for i in sel]).astype(np.float32) if sel
+                else np.empty((0, ic_width), np.float32))
+    return Dataset(
+        X_features=X_features, X_image=X_image, y=y, t=t, labels=sel_labels, meta=meta,
+        session_ids=np.full(y.size, str(session_id), dtype=object),
+        subject_ids=np.full(y.size, str(subject_id), dtype=object),
+        X_intercarrier=X_ic,
+    )
 
 
 def save_dataset(dataset: Dataset, out_dir) -> Path:
@@ -126,6 +153,8 @@ def save_dataset(dataset: Dataset, out_dir) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     np.save(p / "features.npy", dataset.X_features)
     np.save(p / "images.npy", dataset.X_image)
+    if dataset.X_intercarrier is not None:
+        np.save(p / "features_ic.npy", dataset.X_intercarrier)
     with open(p / "manifest.jsonl", "w") as f:
         for i, lab in enumerate(dataset.labels):
             rec = {
@@ -135,6 +164,8 @@ def save_dataset(dataset: Dataset, out_dir) -> Path:
                 "name": lab.name,
                 "bbox": list(lab.bbox) if lab.bbox is not None else None,
                 "keypoints": list(lab.keypoints),
+                "session_id": str(dataset.session_ids[i]) if dataset.session_ids.size else "",
+                "subject_id": str(dataset.subject_ids[i]) if dataset.subject_ids.size else "",
             }
             f.write(json.dumps(rec) + "\n")
     with open(p / "meta.json", "w") as f:
@@ -147,14 +178,20 @@ def load_dataset(out_dir) -> Dataset:
     p = Path(out_dir)
     X_features = np.load(p / "features.npy")
     X_image = np.load(p / "images.npy")
+    ic_path = p / "features_ic.npy"
+    X_ic = np.load(ic_path) if ic_path.exists() else None  # absent in pre-P7 datasets
     with open(p / "meta.json") as f:
         meta = json.load(f)
     labels: list[Label] = []
     ys: list[int] = []
     ts: list[float] = []
+    sess: list[str] = []
+    subj: list[str] = []
     with open(p / "manifest.jsonl") as f:
         for line in f:
             r = json.loads(line)
+            sess.append(r.get("session_id", ""))   # absent in pre-P6 manifests -> ""
+            subj.append(r.get("subject_id", ""))
             lab = Label()
             lab.class_id = r["class_id"]
             lab.name = r["name"]
@@ -173,4 +210,7 @@ def load_dataset(out_dir) -> Dataset:
         t=np.asarray(ts, dtype=np.float64),
         labels=labels,
         meta=meta,
+        session_ids=np.asarray(sess, dtype=object),
+        subject_ids=np.asarray(subj, dtype=object),
+        X_intercarrier=X_ic,
     )
