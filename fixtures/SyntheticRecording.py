@@ -47,13 +47,33 @@ def generatePairedRecording(
     noiseStd: float = 0.01,
     amplitudeHz: float = 0.3,
     amplitudeDepth: float = 0.2,
+    presenceTurbulenceStd: float = 0.0,
+    weaponSignatureDepth: float = 0.0,
+    sessionId: str = "",
+    subjectId: str = "",
     seed: int | None = None,
 ) -> tuple[list, list[dict], dict]:
     """Paired (CSI frames, camera observations, ground truth) on a shared timeline.
 
     presenceSpans / weaponSpans: iterables of (start, end) in TRUE seconds where a person / weapon is
     present. Camera observations are emitted at cameraFps with timestamps skewed by clockOffsetS +
-    N(0, jitterStdS). O(numFrames·A·S + numCameraFrames)."""
+    N(0, jitterStdS). O(numFrames·A·S + numCameraFrames).
+
+    presenceTurbulenceStd (Phase 6a): inside a presence span each frame's grid gets a random
+    per-(antenna, subcarrier) complex jitter (1+N(0,std))·e^{jN(0,std)} — the physical proxy for the
+    dynamic multipath a human body adds, so present windows carry higher amplitude/phase turbulence
+    (std/MAD/waveform-length) than absent ones and a presence head becomes learnable on synthetic
+    data. The jitter varies per subcarrier, so it survives a GainLock's per-frame mean normalization.
+    Drawn from its own rng (seed+2) and only when std > 0, so prior seeded streams stay byte-identical
+    (default off). sessionId/subjectId are stamped into `truth` — the group ids the leave-one-
+    session/subject-out eval gate needs (rev-7 #1).
+
+    weaponSignatureDepth (Phase 7p-a): inside a weapon span each frame's per-antenna magnitude
+    profile is FLATTENED toward its cross-subcarrier mean ((1-d)·|H| + d·mean|H|, phase kept) plus a
+    slight bulk attenuation (×(1-0.15d)) — the proxy for a coherent metal reflection, which lowers
+    the inter-subcarrier σ²[p] (the Yousaf/LUMS weapon discriminator). Deterministic (no rng draws);
+    default off → seeded streams stay byte-identical. ⚠️ Even more artificial than the presence
+    turbulence (a real metal signature is geometry/orientation-dependent) — plumbing only."""
     numFrames = int(round(durationS * sampleRateHz))
     frames, _ = generateStream(
         numAntennas=numAntennas,
@@ -71,6 +91,27 @@ def generatePairedRecording(
 
     presence = [(float(s), float(e)) for s, e in presenceSpans]
     weapon = [(float(s), float(e)) for s, e in weaponSpans]
+
+    # Phase 6a: presence -> SIGNAL modulation. Own rng (seed+2) keeps the CSI/camera streams intact.
+    if presenceTurbulenceStd > 0 and presence:
+        turbRng = np.random.default_rng(None if seed is None else seed + 2)
+        for fr in frames:
+            if _in_spans(fr.timestamp, presence):
+                g = np.asarray(fr.grid)
+                ampJ = turbRng.normal(0.0, presenceTurbulenceStd, g.shape)
+                phJ = turbRng.normal(0.0, presenceTurbulenceStd, g.shape)
+                g *= ((1.0 + ampJ) * np.exp(1j * phJ)).astype(np.complex64)
+
+    # Phase 7p-a: weapon -> σ²[p] signature (flatten toward the per-antenna mean magnitude).
+    if weaponSignatureDepth > 0 and weapon:
+        d = float(weaponSignatureDepth)
+        for fr in frames:
+            if _in_spans(fr.timestamp, weapon):
+                g = np.asarray(fr.grid)
+                mag = np.abs(g)
+                target = ((1.0 - d) * mag + d * mag.mean(axis=1, keepdims=True)) * (1.0 - 0.15 * d)
+                # rescale magnitude, keep phase (guard the near-zero noise cells)
+                g *= (target / np.maximum(mag, 1e-9)).astype(np.complex64)
     # +1 so the camera clock's jitter stream is independent of the CSI noise stream.
     rng = np.random.default_rng(None if seed is None else seed + 1)
     numCam = int(round(durationS * cameraFps))
@@ -102,5 +143,9 @@ def generatePairedRecording(
         "num_camera_frames": numCam,
         "presence_spans": presence,
         "weapon_spans": weapon,
+        "presence_turbulence_std": float(presenceTurbulenceStd),
+        "weapon_signature_depth": float(weaponSignatureDepth),
+        "session_id": str(sessionId),
+        "subject_id": str(subjectId),
     }
     return frames, observations, truth
