@@ -19,6 +19,11 @@ struct Label {
   double timestamp = 0.0;          // seconds, for camera<->CSI alignment
   std::optional<BBox> bbox;        // present only for spatial tasks
   std::vector<float> keypoints;    // flattened (x,y,conf...); empty when none
+  // Camera-supervised occupancy grid: a flattened maskGrid x maskGrid heatmap of object
+  // presence in [0,1] (row-major). It is the BCE/Dice target for the CSI weapon-heatmap head,
+  // so it lives on the square grid the head predicts on. Empty + maskGrid=0 when no mask.
+  std::vector<float> mask;
+  int32_t maskGrid = 0;            // G: side of the square mask grid; 0 = no mask
 };
 
 // Model output for one frame/window. Same optional bbox/keypoints as Label so a head can emit

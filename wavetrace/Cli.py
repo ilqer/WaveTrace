@@ -10,12 +10,14 @@ CSI source today = synthetic (fixtures) or a saved recording; live serial captur
 
 import argparse
 import sys
+import warnings
 
 import numpy as np
 
 from wavetrace.Calibration import Calibration, load_calibration, save_calibration
 from wavetrace.Config import ModelConfig
 from wavetrace.Frontend import iter_windows
+from wavetrace.Localize import Localizer, Tracker, save_localization
 from wavetrace.Source import RecordingSource, SyntheticSource, load_recording, save_recording
 from wavetrace.groundtruth import (
     build_dataset,
@@ -69,6 +71,50 @@ def collect_source(source, calib_dir, out_dir, spans, *, stage="presence", windo
     return save_dataset(ds, out_dir), ds
 
 
+def _spatial_result(t, x_m, y_m, angle_deg, range_m, confidence, located):
+    """A spatial fix -> RecognitionResult on the wire schema: location rides in bbox [x, y, 0, 0]
+    (Publisher.result_to_dict emits it), azimuth + range in keypoints. class_id = 1 when this frame
+    carries a real (measured/confident) fix, 0 when it is a coasted/low-confidence estimate. nan
+    range -> -1 (JSON-safe)."""
+    r = RecognitionResult()
+    r.class_id = 1 if located else 0
+    r.confidence = float(confidence)
+    r.timestamp = float(t)
+    r.bbox = [float(x_m), float(y_m), 0.0, 0.0]
+    r.keypoints = [float(angle_deg), (-1.0 if np.isnan(range_m) else float(range_m))]
+    return r
+
+
+def localize_source(source, out_dir, *, num_antennas, spacing=0.5, method="music", num_sources=1,
+                    num_angles=181, subcarrier_spacing_hz=312.5e3, max_range_m=12.0, num_ranges=64,
+                    range_enabled=True, filter_track=True, publisher=None):
+    """Stream a source through the AoA Localizer: publish the per-frame track as RecognitionResults
+    (Publisher wire schema) and persist the aggregate joint-2-D room map. Returns (path, aggregate
+    Localization). Needs >= 2 RX antennas (2-antenna ESP32 / Pi NIC).
+
+    filter_track (default on): smooth the raw per-frame measurements with a constant-velocity Kalman
+    `Tracker` — predict from motion (no teleporting), fuse each measurement weighted by its confidence,
+    and gate impossible jumps. The PUBLISHED track is the filtered one; the saved room map is the
+    raw aggregate. O(F·(A²S + A·G) + (A·S)³)."""
+    loc = Localizer(num_antennas, spacing=spacing, method=method, num_sources=num_sources,
+                    num_angles=num_angles, subcarrier_spacing_hz=subcarrier_spacing_hz,
+                    max_range_m=max_range_m, num_ranges=num_ranges, range_enabled=range_enabled)
+    tracker = Tracker(range_enabled=range_enabled) if filter_track else None
+    frames = list(source.frames())
+    for l in loc.locate_stream(frames):
+        if publisher is None:
+            continue
+        if tracker is not None:
+            st = tracker.update(l)
+            publisher.publish(_spatial_result(st.timestamp, st.x_m, st.y_m, st.angle_deg, st.range_m,
+                                               st.confidence, st.measured))
+        else:
+            publisher.publish(_spatial_result(l.timestamp, l.x_m, l.y_m, l.peak_angle_deg,
+                                              l.peak_range_m, l.confidence, l.confidence >= 0.5))
+    agg = loc.aggregate(frames)
+    return save_localization(agg, out_dir), agg
+
+
 def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False):
     """Stream a source through the front-end and publish one verdict per window (+ a final soft-vote
     verdict when vote=True). Returns the published RecognitionResults. O(windows)."""
@@ -106,6 +152,12 @@ def _source_from_args(args):
         return RecordingSource(args.recording)
     if args.synthetic:
         from fixtures.SyntheticRecording import generatePairedRecording
+        if _parse_spans(args.weapon) and args.weapon_depth <= 0.0:
+            # weapon spans with depth 0 inject NO signal -> weapon windows are physically identical
+            # to no-weapon ones; the resulting dataset is unlearnable (and WeaponHead.fit will reject
+            # it as single-class). Warn loudly instead of silently producing a dead model (B3).
+            warnings.warn("synthetic --weapon spans set but --weapon-depth is 0: weapon windows will "
+                          "carry no signature (pass --weapon-depth > 0)", stacklevel=2)
         spans = _parse_spans(args.presence)
         frames, _, _ = generatePairedRecording(
             numAntennas=args.antennas, numSubcarriers=args.subcarriers, sampleRateHz=args.fs,
@@ -171,6 +223,26 @@ def main(argv=None) -> int:
     p_tr.add_argument("--feature-mode", default="ic27", dest="feature_mode",
                       choices=["ic27", "fusion", "cnn"], help="weapon stage only")
 
+    p_loc = sub.add_parser("localize", help="AoA spatial heatmap (where) -> track + heatmap dir")
+    _add_source_args(p_loc)
+    p_loc.add_argument("--out", required=True)
+    p_loc.add_argument("--spacing", type=float, default=0.5,
+                       help="ULA element spacing in wavelengths (default 0.5 = lambda/2)")
+    p_loc.add_argument("--method", choices=["music", "bartlett"], default="music")
+    p_loc.add_argument("--num-sources", type=int, default=1, dest="num_sources")
+    p_loc.add_argument("--num-angles", type=int, default=181, dest="num_angles")
+    p_loc.add_argument("--subcarrier-hz", type=float, default=312.5e3, dest="subcarrier_hz",
+                       help="subcarrier spacing for the range axis (HT20/64 = 312.5 kHz)")
+    p_loc.add_argument("--max-range-m", type=float, default=12.0, dest="max_range_m")
+    p_loc.add_argument("--num-ranges", type=int, default=64, dest="num_ranges",
+                       help="range grid resolution of the joint 2-D room map")
+    p_loc.add_argument("--no-range", action="store_true", dest="no_range",
+                       help="azimuth only (skip the joint 2-D range axis)")
+    p_loc.add_argument("--track", default=None,
+                       help="JSONL file for the per-frame localization track (default <out>/track.jsonl)")
+    p_loc.add_argument("--no-filter", action="store_true", dest="no_filter",
+                       help="publish raw per-frame fixes (skip the constant-velocity Kalman tracker)")
+
     p_run = sub.add_parser("run", help="stream inference -> publish verdicts")
     _add_source_args(p_run)
     p_run.add_argument("--calibration", required=True)
@@ -210,6 +282,22 @@ def main(argv=None) -> int:
             _, m = train_weapon(args.datasets, out_dir=args.out, config=cfg,
                                 feature_mode=args.feature_mode)
         print(f"model -> {args.out} ({m})", file=sys.stderr)
+    elif args.mode == "localize":
+        from pathlib import Path
+        track = args.track or str(Path(args.out) / "track.jsonl")
+        Path(args.out).mkdir(parents=True, exist_ok=True)
+        with JsonlPublisher(track, mode="localize") as pub:
+            path, agg = localize_source(
+                _source_from_args(args), args.out, num_antennas=args.antennas, spacing=args.spacing,
+                method=args.method, num_sources=args.num_sources, num_angles=args.num_angles,
+                subcarrier_spacing_hz=args.subcarrier_hz, max_range_m=args.max_range_m,
+                num_ranges=args.num_ranges, range_enabled=not args.no_range,
+                filter_track=not args.no_filter, publisher=pub,
+            )
+        rng = "n/a" if np.isnan(agg.peak_range_m) else f"{agg.peak_range_m:.2f} m"
+        print(f"localization -> {path} (track {track}) | peak az={agg.peak_angle_deg:.1f} deg "
+              f"range={rng} x={agg.x_m:.2f} y={agg.y_m:.2f} conf={agg.confidence:.2f}",
+              file=sys.stderr)
     elif args.mode == "run":
         pub = JsonlPublisher(args.out, mode=args.head_mode)
         with pub:

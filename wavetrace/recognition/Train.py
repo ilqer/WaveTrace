@@ -18,8 +18,23 @@ import numpy as np
 
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth.DatasetBuilder import Dataset, load_dataset
+from wavetrace.recognition.Evaluate import leave_one_group_out
 from wavetrace.recognition.Model import PresenceHead
 from wavetrace.recognition.Weapon import WeaponHead
+
+
+def _logo_metrics(X, y, sess, subj, make_head) -> dict:
+    """Headline leave-one-group-out accuracy over sessions AND subjects, computed only when a group
+    has >= 2 distinct values (a single synthetic session can't be folded — rev-7 #1). Stores the
+    pooled accuracy + majority baseline per axis; absent axes are skipped. Confusion drops out (not
+    JSON-native). O(folds·fit)."""
+    out: dict = {}
+    for axis, groups in (("session", sess), ("subject", subj)):
+        if np.unique(groups).size >= 2:
+            rep = leave_one_group_out(X, y, groups, make_head)
+            out[axis] = {k: rep[k] for k in ("accuracy", "majority_accuracy") if k in rep}
+            out[axis].update({k: rep[k] for k in ("tpr", "fp_rate") if k in rep})
+    return out
 
 
 def concat_datasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -88,6 +103,7 @@ def train_presence(
         "sessions": sorted({str(s) for s in sess}),
         "subjects": sorted({str(s) for s in subj}),
         "train_accuracy": float((head.predict(X) == y).mean()),  # sanity only — see module note
+        "logo": _logo_metrics(X, y, sess, subj, lambda: PresenceHead(config)),  # the HEADLINE number
         "fit_seconds": round(fit_s, 3),
     }
     out = Path(out_dir)
@@ -157,6 +173,7 @@ def train_weapon(
         "sessions": sorted({str(s) for s in sess}),
         "subjects": sorted({str(s) for s in subj}),
         "train_accuracy": float((head.predict(X) == y).mean()),
+        "logo": _logo_metrics(X, y, sess, subj, lambda: WeaponHead(config)),  # the HEADLINE number
         "fit_seconds": round(fit_s, 3),
     }
     out = Path(out_dir)

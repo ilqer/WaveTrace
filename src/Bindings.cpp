@@ -67,7 +67,9 @@ PYBIND11_MODULE(_wavetrace, m) {
       .def_readwrite("name", &Label::name)
       .def_readwrite("timestamp", &Label::timestamp)
       .def_readwrite("bbox", &Label::bbox)
-      .def_readwrite("keypoints", &Label::keypoints);
+      .def_readwrite("keypoints", &Label::keypoints)
+      .def_readwrite("mask", &Label::mask)
+      .def_readwrite("mask_grid", &Label::maskGrid);
 
   // Phase 2 — hardware ingest.
   py::class_<FrameParser>(m, "FrameParser")

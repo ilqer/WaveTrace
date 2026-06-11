@@ -80,6 +80,10 @@ def build_dataset(
     subc = np.asarray(calibration_result.subcarriers, dtype=np.intp)
     K = int(subc.size)
 
+    # materialize once: iter_windows consumes the stream, and the fs estimate below re-indexes
+    # frames[-1] — a bare generator would be exhausted by then (B5).
+    frames = list(frames)
+
     feats: list[np.ndarray] = []
     imgs: list[np.ndarray] = []
     ics: list[np.ndarray] = []

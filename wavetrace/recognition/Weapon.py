@@ -86,6 +86,14 @@ class WeaponHead:
         """Fit on (n, 27) inter-carrier blocks (variance/mlp/svm) or (n, K, window) images (cnn).
         epochs/lr/batch_size apply to the cnn backend only. Offline. Returns self."""
         y = np.asarray(y, dtype=np.int64)
+        classes = np.unique(y)
+        if classes.size < 2:
+            # 1-class data -> a model that only ever predicts that class (silent failure); refuse.
+            # (The synthetic weapon signature is off unless --weapon-depth > 0 — see Cli.py warning.)
+            raise ValueError(
+                f"WeaponHead.fit: training data has a single class {classes.tolist()}; need both "
+                "weapon and no-weapon windows (check weapon label spans / --weapon-depth)"
+            )
         if self.config.backend == "variance":
             self._fit_variance(np.asarray(X, dtype=np.float32), y)
         elif self.config.backend == "cnn":

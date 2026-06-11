@@ -70,6 +70,14 @@ class PresenceHead:
         y = np.asarray(y, dtype=np.int64)
         if X.ndim != 2 or y.ndim != 1 or X.shape[0] != y.shape[0]:
             raise ValueError(f"fit expects X (n, d) and y (n,), got {X.shape} / {y.shape}")
+        classes = np.unique(y)
+        if classes.size < 2:
+            # a 1-class dataset fits a model that can only ever predict that class (the silent failure
+            # behind the all-one-verdict bug) — refuse instead of reporting a meaningless acc 1.0
+            raise ValueError(
+                f"PresenceHead.fit: training data has a single class {classes.tolist()}; need both "
+                "present and absent windows (check collect-data label spans / presence turbulence)"
+            )
         self._pipe.fit(X, y)
         self._fitted = True
         return self

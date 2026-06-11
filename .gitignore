@@ -22,6 +22,12 @@ models/
 # Recorded CSI + camera datasets (Phase 5)
 data/
 
+# CLI run artifacts (capture/calibrate/collect-data/train/localize outputs)
+output/
+
+# Local debugging / throwaway scripts (not collected by pytest — testpaths=["tests"])
+scratch/
+
 # Generated knowledge graph (regenerable via `graphify`)
 graphify-out/
 
