@@ -85,6 +85,13 @@ def nbvi_scores(amp: npt.NDArray[np.float32], alpha: float = 0.75) -> list[float
     """Per-subcarrier NBVI over a baseline (frames x subcarriers) amplitude matrix."""
     ...
 
+def valid_subcarriers(
+    amp: npt.NDArray[np.float32],
+    noise_gate_percentile: float = 0.15,
+) -> list[int]:
+    """ALL subcarriers passing the noise gate, sorted ascending (freq order) — CNN image rows."""
+    ...
+
 def select_subcarriers_nbvi(
     amp: npt.NDArray[np.float32],
     alpha: float = 0.75,
@@ -258,3 +265,5 @@ class Label:
     timestamp: float
     bbox: Optional[list[float]]  # 4 elements (x, y, w, h); set from any 4-sequence
     keypoints: list[float]
+    mask: list[float]            # flattened G×G camera mask (heatmap target); empty unless set
+    mask_grid: int               # grid side G of `mask` (0 when unset)

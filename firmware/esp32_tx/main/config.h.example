@@ -1,0 +1,10 @@
+// TEMPLATE — copy to config.h and fill in your network. config.h is gitignored (holds credentials).
+// WaveTrace TX = STA that joins the RX's SoftAP and floods UDP packets (ESP32-CSI-Tool "active_sta").
+// Each packet is an 802.11 data frame the RX captures CSI from. This board is the placeable illuminator.
+#pragma once
+
+#define AP_SSID   "WaveTrace-RX1"  // must match the RX SoftAP (esp32_rx/main/config.h AP_SSID)
+#define AP_PASS   "<SOFTAP_PASSWORD>"  // must match the RX SoftAP AP_PASS
+#define DEST_IP   "192.168.4.255"    // RX SoftAP gateway address (default ESP-IDF SoftAP IP)
+#define DEST_PORT 5566             // matches RX UDP_PORT
+#define FLOOD_HZ  100              // UDP packets/sec -> ~100 CSI measurements/sec at the RX

@@ -20,6 +20,7 @@ from wavetrace.recognition import (
     binary_rates,
     concat_arrays,
     concat_datasets,
+    evaluate_concealment_gap,
     evaluate_weapon,
     mode_session,
     tier_verdict,
@@ -216,6 +217,32 @@ def test_weapon_eval_gate_passes_on_synthetic(weapon_data):
     assert rep["verdict"]["verdict"] == "PASS"
     assert rep["verdict"]["tpr"] >= 0.95 and rep["verdict"]["fp_rate"] <= 0.10
     assert sorted(f["group"] for f in rep["session"]["folds"]) == ["s0", "s1", "s2", "s3"]
+
+
+def test_concealment_gap_holds_out_concealed_tier(weapon_data):
+    """#7: train on the visible tiers, score the held-out 'concealed' split separately. Tier s3 stands
+    in for truly-concealed; on synthetic the signature carries over, so it must PASS with a small gap,
+    and the concealed set must never leak into the visible LOGO folds."""
+    d = weapon_data
+    cfg = _cfg("variance", k=d["K"])
+    is_concealed = np.asarray(d["sess"]) == "s3"
+    rep = evaluate_concealment_gap(
+        d["X_ic"], d["y"], is_concealed, d["subj"], make_head=lambda: WeaponHead(cfg))
+
+    assert rep["concealed"]["n"] == int(is_concealed.sum())
+    assert {"tpr", "fp_rate", "accuracy"} <= rep["concealed"].keys()
+    assert rep["verdict"] == "PASS"
+    assert rep["concealed"]["tpr"] >= 0.90 and rep["concealed"]["fp_rate"] <= 0.10
+    assert "s3" not in [f["group"] for f in rep["visible"]["folds"]]  # concealed never in visible folds
+    assert isinstance(rep["tpr_gap"], float)
+
+
+def test_concealment_gap_needs_both_splits(weapon_data):
+    d = weapon_data
+    cfg = _cfg("variance", k=d["K"])
+    with pytest.raises(ValueError):
+        evaluate_concealment_gap(d["X_ic"], d["y"], np.zeros(d["y"].size, bool), d["subj"],
+                                 make_head=lambda: WeaponHead(cfg))
 
 
 # ----- 7p-c: torch CNN backend ---------------------------------------------------------------------

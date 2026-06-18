@@ -1,0 +1,30 @@
+#pragma once
+// TEMPLATE — copy to config.h and fill in your network. config.h is gitignored (holds credentials).
+// One unified firmware for every mesh node. The ONLY per-board difference is NODE_ID (build flag,
+// injected by flash.sh). The live node COUNT is discovered at runtime (dynamic ring) — no recompile
+// when boards are added/removed.
+
+#define ROUTER_SSID  "<YOUR_WIFI_SSID>"   // every node is a STA on this AP: backhaul + auto channel lock
+#define ROUTER_PASS  "<YOUR_WIFI_PASSWORD>"
+#define PC_IP        "<YOUR_PC_IP>"        // CSI sink fallback (discovered automatically via health_monitor.py)
+#define DISCOVERY_PORT 9878         // nodes listen here for the PC's broadcast ping
+#define CSI_UDP_PORT 9876           // RX -> PC CSI datagrams (port 5600 is intercepted on macOS)
+#define HEALTH_UDP_PORT 9877        // RX -> PC per-node heartbeat (separate from the CSI stream)
+
+#define RGB_PWR_GPIO 38             // some S3 DevKits need this HIGH to power the WS2812
+
+
+#define MAX_NODES    16             // ring capacity (array sizing); the ACTIVE count is learned live
+#define LIVE_TIMEOUT_MS 1500        // a peer is dropped from the ring if unheard this long
+#define BURST_LEN    10             // ESP-NOW broadcasts a node sends on its turn
+#define BURST_MS     2              // ms between burst frames (needs CONFIG_FREERTOS_HZ=1000).
+                                    // 2 ms is steadier than 1 (less self-collision); still >100 Hz/link at N<=4
+#define TURN_TIMEOUT_MS 300         // current leader (lowest live id) restarts the token if the air goes silent
+#define BATCH_MS     100            // flush the UDP CSI batch at least this often (vs. per-frame = lossy)
+#define HEALTH_MS    2000           // per-node heartbeat period to the PC
+#define STATUS_LED_GPIO 48          // WS2812 onboard RGB (ESP32-S3-DevKitC); set -1 to disable
+
+// No internet on the deployment LAN: run ntp_server.py on the PC (PC_IP) as the shared clock source.
+// Set to a real NTP host instead if the router has internet. If nothing answers, nodes fall back to
+// their own monotonic clock (single-link sensing still fine; cross-node fusion needs this synced).
+#define SNTP_SERVER  PC_IP

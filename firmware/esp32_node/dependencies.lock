@@ -1,0 +1,64 @@
+dependencies:
+  espressif/cmake_utilities:
+    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.5.3
+  espressif/esp_csi_gain_ctrl:
+    component_hash: 2700b6625343916dfb721af42131857b3e387dbbb9cc1df569128525c8b05f8e
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: idf
+      require: private
+      version: '>=4.4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32
+    - esp32s3
+    - esp32s2
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    version: 0.1.5
+  espressif/led_strip:
+    component_hash: 28c6509a727ef74925b372ed404772aeedf11cce10b78c3f69b3c66799095e2d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.5
+  espressif/mdns:
+    component_hash: 291732b5df4d181eb75eba9042799a508c4c124503a0c0573132a0a48d2e3fbe
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.11.2
+  idf:
+    source:
+      type: idf
+    version: 5.3.0
+direct_dependencies:
+- espressif/esp_csi_gain_ctrl
+- espressif/led_strip
+- espressif/mdns
+manifest_hash: 280dba33188c0c18530b605e24b608a2e30568e0dcd49a66c097697d7c260614
+target: esp32s3
+version: 2.0.0

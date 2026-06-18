@@ -57,6 +57,8 @@ class ModelConfig:
     fs_tol: float = 0.10            # fs_ok: max relative live-fs deviation before a window is dropped
     hidden: int = 32                # MLP hidden width (single layer — tiny head, O(1) forward)
     seed: int = 0                   # backend rng seed (deterministic training/inference)
+    frame_average: int = 1          # T2/P10: non-overlapping decimating mean (M=1 = no change)
+    subtract_baseline: bool = False  # T3/P10: subtract quiet-room baseline from image path
 
     def __post_init__(self) -> None:
         if self.stage not in ("presence", "weapon"):

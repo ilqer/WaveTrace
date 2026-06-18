@@ -14,7 +14,7 @@ import pytest
 
 from fixtures.SyntheticCsi import generateStream
 from fixtures.SyntheticRecording import generatePairedRecording
-from wavetrace import CsiFrame, RecognitionResult
+from wavetrace import CsiFrame, Label, RecognitionResult
 from wavetrace.Calibration import Calibration, load_calibration, save_calibration
 from wavetrace.Cli import _serving_plan, calibrate_source, collect_source, run_inference
 from wavetrace.Frontend import iter_windows
@@ -156,6 +156,32 @@ def test_end_to_end_weapon(tmp_path):
     inside = [l["class"] for l in lines if 2.5 <= l["t"] < 7.5]
     outside = [l["class"] for l in lines if l["t"] < 2.5 or l["t"] >= 7.5]
     assert np.mean(inside) > 0.6 and np.mean(outside) < 0.25
+
+
+def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
+    # #5: a camera label source (here a callable producing G×G masks) flows through collect_source and
+    # the heatmap mask + tier survive to the saved dataset — the camera-supervised collection path.
+    frames = _weapon_recording(duration=4.0)
+    calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
+    grid = 4
+
+    def cam_label(t):
+        present = 2.5 <= t <= 7.5
+        lab = Label()
+        lab.class_id = 1 if present else 0
+        lab.name = "weapon" if present else "background"
+        lab.timestamp = float(t)
+        lab.mask = [1.0 if present else 0.0] * (grid * grid)
+        lab.mask_grid = grid
+        return lab
+
+    _, ds = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [],
+                           stage="weapon", window=32, hop=16, labeler=cam_label, tier="concealed")
+    from wavetrace.groundtruth import load_dataset
+    reloaded = load_dataset(tmp_path / "ds")
+    assert reloaded.meta["tier"] == "concealed"
+    assert reloaded.y.size > 0 and all(l.mask_grid == grid for l in reloaded.labels)
+    assert all(len(l.mask) == grid * grid for l in reloaded.labels)
 
 
 def test_end_to_end_presence(tmp_path):

@@ -32,6 +32,8 @@ scratch/
 graphify-out/
 
 # Local reference / analysis notes (not part of the shipped repo)
+fixtures
+.claude
 PROJECT_ANALYSIS.md
 math_student_friendly.md
 wifi_sensing_explainer.md
@@ -39,9 +41,15 @@ REFERENCE_DIGEST.md
 plan.md
 CLAUDE.md
 MINDMAP.md
+STATUS.md
+QUICKSTART.md
 HANDOFF.md
 WaveTrace_Code_Explained_Phases1-4.md
 WaveTrace_Code_Explained_Phases1-4.pdf
+docs/archive/
+
+# Retired scripts kept locally for reference (superseded by web/streamer + CLI)
+archive/
 personalNotes.md
 # IDE
 .idea/

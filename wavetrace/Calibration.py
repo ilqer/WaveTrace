@@ -10,13 +10,13 @@ amplitude / presence feature path. The phase path is scale-invariant and the mat
 (σ²[p], reflection_signature) must NOT consume gain-locked frames — see reflection_signature.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 
 import numpy as np
 
-from wavetrace import CsiFrame, GainLock, select_subcarriers_nbvi
+from wavetrace import CsiFrame, GainLock, select_subcarriers_nbvi, valid_subcarriers
 
 
 @dataclass
@@ -26,6 +26,7 @@ class CalibrationResult:
     num_baseline: int            # number of baseline frames used
     baseline_mag: np.ndarray     # mean |H| per subcarrier over the quiet baseline, shape (S,)
     baseline_diff: np.ndarray    # mean CFO-free differential channel H(k)·conj(H(k-1)), complex, (S-1,)
+    image_subcarriers: list[int] = field(default_factory=list)  # ALL noise-gate-passing subcarriers, ascending — CNN image rows
 
 
 def reflection_signature(grid, result: CalibrationResult):
@@ -47,6 +48,18 @@ def reflection_signature(grid, result: CalibrationResult):
     mag_ratio = amp / np.where(result.baseline_mag > 1e-12, result.baseline_mag, 1e-12)
     phase_delta = np.angle(diff * np.conj(result.baseline_diff))   # wrap-safe in (-pi, pi]
     return mag_ratio.astype(np.float32), phase_delta.astype(np.float32)
+
+
+def image_baseline(result: "CalibrationResult", *, locked: bool) -> np.ndarray:
+    """Quiet-room per-subcarrier baseline in the image path's amplitude basis. O(S).
+
+    When locked=True and a reference scale was set, rescales the raw baseline to the gain-lock basis
+    (each frame is rescaled to reference_scale / frame_mean, so the locked basis baseline =
+    raw_baseline * reference_scale / mean(raw_baseline) — exact, not approximate)."""
+    b = np.asarray(result.baseline_mag, dtype=np.float32)
+    if locked and not np.isnan(float(result.reference_scale)):
+        return b * (float(result.reference_scale) / float(b.mean()))
+    return b.copy()
 
 
 class Calibration:
@@ -123,9 +136,11 @@ class Calibration:
             max_subcarriers=self._nbvi_max,
             noise_gate_percentile=self._gate,
         )
+        img_subc = valid_subcarriers(amp, noise_gate_percentile=self._gate)
         return CalibrationResult(
             reference_scale=reference_scale,
             subcarriers=list(subc),
+            image_subcarriers=list(img_subc),
             num_baseline=len(self._amps),
             baseline_mag=amp.mean(axis=0),                      # (S,) mean |H| over the baseline
             baseline_diff=np.stack(self._diffs).mean(axis=0),   # (S-1,) mean CFO-free differential
@@ -141,6 +156,7 @@ def save_calibration(result: CalibrationResult, out_dir) -> Path:
     meta = {
         "reference_scale": float(result.reference_scale),  # JSON null for NaN -> handled on load
         "subcarriers": [int(s) for s in result.subcarriers],
+        "image_subcarriers": [int(s) for s in result.image_subcarriers],
         "num_baseline": int(result.num_baseline),
     }
     with open(p / "meta.json", "w") as f:
@@ -158,6 +174,7 @@ def load_calibration(out_dir) -> tuple[CalibrationResult, GainLock | None]:
     result = CalibrationResult(
         reference_scale=ref,
         subcarriers=[int(s) for s in meta["subcarriers"]],
+        image_subcarriers=[int(s) for s in meta.get("image_subcarriers", meta["subcarriers"])],
         num_baseline=int(meta["num_baseline"]),
         baseline_mag=np.load(p / "baseline_mag.npy"),
         baseline_diff=np.load(p / "baseline_diff.npy"),

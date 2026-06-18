@@ -4,6 +4,7 @@
 
 from wavetrace.recognition.Evaluate import (
     binary_rates,
+    evaluate_concealment_gap,
     evaluate_presence,
     evaluate_weapon,
     leave_one_group_out,
@@ -11,6 +12,7 @@ from wavetrace.recognition.Evaluate import (
     tier_verdict,
 )
 from wavetrace.recognition.Fusion import fuse
+from wavetrace.recognition.Link import LinkVoter, accuracy_weights, evaluate_link_fusion
 from wavetrace.recognition.Infer import InferenceSession, measure_latency, mode_session
 from wavetrace.recognition.Model import PresenceHead, sklearn_pipeline
 from wavetrace.recognition.Resample import accept_format, fs_ok, resample_uniform
@@ -30,6 +32,7 @@ __all__ = [
     "segmenter_baseline",
     "evaluate_presence",
     "evaluate_weapon",
+    "evaluate_concealment_gap",
     "binary_rates",
     "tier_verdict",
     "InferenceSession",
@@ -37,6 +40,9 @@ __all__ = [
     "mode_session",
     "SegmentVoter",
     "fuse",
+    "LinkVoter",
+    "accuracy_weights",
+    "evaluate_link_fusion",
     "resample_uniform",
     "fs_ok",
     "accept_format",

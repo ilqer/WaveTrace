@@ -1,0 +1,16 @@
+// TEMPLATE — copy to config.h and fill in your network. config.h is gitignored (holds credentials).
+// WaveTrace RX = SoftAP that the dedicated TX floods (ESP32-CSI-Tool "active_ap" pattern).
+// Captures CSI from the TX's data frames and prints the esp-csi CSV over USB serial -> SerialReader.
+#pragma once
+
+#define AP_SSID    "WaveTrace-RX1"  // SoftAP the TX connects to (per-node id for the future mesh)
+#define AP_PASS    "<SOFTAP_PASSWORD>"  // >= 8 chars (WPA2 requirement)
+#define AP_CHANNEL 6                // SoftAP channel (RX is NOT on the router; free choice)
+#define UDP_PORT   5566             // the TX floods packets here; we capture CSI from them
+#define CSI_UDP_PORT 9876           // RX -> PC: parse_batch format (UdpSource listens on this)
+
+// APSTA backhaul: RX joins this router as STA and sends CSI unicast to PC_IP.
+// PC stays on the router; no need to join WaveTrace-RX1.
+#define ROUTER_SSID  "<YOUR_WIFI_SSID>"
+#define ROUTER_PASS  "<YOUR_WIFI_PASSWORD>"
+#define PC_IP        "<YOUR_PC_IP>"

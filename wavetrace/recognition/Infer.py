@@ -40,13 +40,17 @@ class InferenceSession:
     def head(self) -> PresenceHead:
         return self._head
 
-    def predict_window(self, feature_vector) -> tuple[int, float]:
-        """One emitted window's feature vector (d,) -> (class_id, probability). O(1)."""
+    def predict_proba_window(self, feature_vector) -> np.ndarray:
+        """(d,) -> (C,) class probabilities; reuses the same row buffer as predict_window. O(1)."""
         v = np.asarray(feature_vector, dtype=np.float32).ravel()
         if self._row is None or self._row.shape[1] != v.size:
             self._row = np.empty((1, v.size), dtype=np.float32)
         self._row[0, :] = v
-        proba = self._head.predict_proba(self._row)[0]
+        return self._head.predict_proba(self._row)[0]
+
+    def predict_window(self, feature_vector) -> tuple[int, float]:
+        """One emitted window's feature vector (d,) -> (class_id, probability). O(1)."""
+        proba = self.predict_proba_window(feature_vector)
         i = int(np.argmax(proba))
         return int(self._head.classes_[i]), float(proba[i])
 

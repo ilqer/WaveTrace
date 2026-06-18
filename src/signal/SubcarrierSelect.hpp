@@ -12,6 +12,37 @@ namespace wavetrace {
 // low-SNR); NBVI scores each by how much its amplitude varies relative to its level, then we keep a
 // spectrally-diverse (non-consecutive) subset above a low-amplitude noise gate.
 
+// Per-subcarrier baseline means + the low-amplitude noise gate threshold (percentile of means).
+// Fills meansOut with the per-subcarrier mean amplitudes. O(F*S + S log S).
+inline float noiseGate(const float* amp, size_t numFrames, size_t numSubcarriers,
+                       float percentile, std::vector<float>& meansOut) {
+  meansOut.assign(numSubcarriers, 0.0f);
+  for (size_t s = 0; s < numSubcarriers; ++s) {
+    double m = 0.0;
+    for (size_t f = 0; f < numFrames; ++f) m += amp[f * numSubcarriers + s];
+    meansOut[s] = static_cast<float>(m / static_cast<double>(numFrames));
+  }
+  std::vector<float> sortedMeans = meansOut;
+  std::sort(sortedMeans.begin(), sortedMeans.end());
+  size_t gi = static_cast<size_t>(percentile * static_cast<double>(numSubcarriers));
+  if (gi >= numSubcarriers) gi = numSubcarriers - 1;
+  return sortedMeans[gi];
+}
+
+// ALL subcarriers passing the noise gate, sorted ascending (frequency order) — the CNN image
+// rows. NBVI stays the MLP subset; a CNN needs contiguous-frequency rows. O(S log S), offline.
+inline std::vector<uint16_t> validSubcarriers(const float* amp, size_t numFrames,
+                                              size_t numSubcarriers, float noiseGatePercentile) {
+  if (numFrames == 0 || numSubcarriers == 0) return {};
+  std::vector<float> means;
+  const float gate = noiseGate(amp, numFrames, numSubcarriers, noiseGatePercentile, means);
+  std::vector<uint16_t> result;
+  for (size_t s = 0; s < numSubcarriers; ++s) {
+    if (means[s] >= gate) result.push_back(static_cast<uint16_t>(s));
+  }
+  return result;  // already ascending (iterated s=0..S-1)
+}
+
 // Per-subcarrier NBVI over a baseline amplitude matrix (row-major, numFrames x numSubcarriers):
 //   NBVI = alpha*(sigma/mu^2) + (1-alpha)*(sigma/mu)
 // Higher = more informative. Two-pass sigma (stable, REFERENCE §2.8). O(F*S). mu~0 -> score 0.
@@ -50,20 +81,9 @@ inline std::vector<uint16_t> selectSubcarriersNbvi(const float* amp, size_t numF
                                                    size_t numSubcarriers, const NbviParams& p) {
   if (numFrames == 0 || numSubcarriers == 0) return {};
 
-  std::vector<float> means(numSubcarriers, 0.0f);
-  for (size_t s = 0; s < numSubcarriers; ++s) {
-    double m = 0.0;
-    for (size_t f = 0; f < numFrames; ++f) m += amp[f * numSubcarriers + s];
-    means[s] = static_cast<float>(m / static_cast<double>(numFrames));
-  }
+  std::vector<float> means;
+  const float gate = noiseGate(amp, numFrames, numSubcarriers, p.noiseGatePercentile, means);
   const std::vector<float> scores = nbviScores(amp, numFrames, numSubcarriers, p.alpha);
-
-  // Noise gate = percentile of the per-subcarrier mean amplitudes.
-  std::vector<float> sortedMeans = means;
-  std::sort(sortedMeans.begin(), sortedMeans.end());
-  size_t gi = static_cast<size_t>(p.noiseGatePercentile * static_cast<double>(numSubcarriers));
-  if (gi >= numSubcarriers) gi = numSubcarriers - 1;
-  const float gate = sortedMeans[gi];
 
   // Candidates passing the gate, ranked by score desc (stable_sort over ascending indices keeps the
   // lower index on ties -> deterministic).

@@ -1,0 +1,15 @@
+# ESP-IDF build output
+build/
+
+# Auto-downloaded managed components (re-fetched by idf.py from idf_component.yml)
+managed_components/
+
+# Generated sdkconfig (the committed baseline is sdkconfig.defaults)
+sdkconfig
+sdkconfig.old
+
+# clangd / IDE local autocomplete index
+.cache/
+
+# Local Wi-Fi credentials + IP targets — keep a config.h.example template if others will build
+config.h

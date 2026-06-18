@@ -1,0 +1,9 @@
+## Managed components pulled by the IDF component manager at build time.
+## mdns: lets each node advertise wavetraceN.local on the LAN (Bonjour/Avahi).
+dependencies:
+  espressif/mdns: "^1.2.0"
+  ## esp_csi_gain_ctrl: in-chip AGC/FFT gain lock (the decided-primary PHY gain lock, plan Phase-0).
+  ## Wraps the undocumented PHY calls; ships a prebuilt lib for IDF 5.3/esp32s3.
+  espressif/esp_csi_gain_ctrl: "^0.1.5"
+  ## led_strip: onboard WS2812 RGB (GPIO48) status LED — the no-PC/no-USB health indicator.
+  espressif/led_strip: "^2.5.3"

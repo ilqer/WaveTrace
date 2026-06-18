@@ -1,0 +1,5 @@
+# Required for CSI capture — off by default in ESP-IDF menuconfig.
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+# 1000 Hz tick so the burst spacing (vTaskDelay) can reach 1 ms -> 100 Hz+ per-link CSI.
+# Default 100 Hz capped us at ~10 ms spacing. (ESP32-CSI-Tool mandates this too.)
+CONFIG_FREERTOS_HZ=1000

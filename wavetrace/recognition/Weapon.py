@@ -46,11 +46,11 @@ def _torch():
         ) from e
 
 
-def _build_net(torch, hidden: int, num_classes: int):
-    """LUMS-style small 2D-CNN; AdaptiveAvgPool makes it (K, window)-agnostic."""
+def _build_net(torch, hidden: int, num_classes: int, in_channels: int = 1):
+    """LUMS-style small 2D-CNN; AdaptiveAvgPool makes it (K, window)-agnostic. in_channels=N nodes."""
     nn = torch.nn
     return nn.Sequential(
-        nn.Conv2d(1, 8, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+        nn.Conv2d(in_channels, 8, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
         nn.Conv2d(8, 16, 3, padding=1), nn.ReLU(), nn.AdaptiveAvgPool2d((4, 4)),
         nn.Flatten(), nn.Linear(16 * 16, hidden), nn.ReLU(), nn.Linear(hidden, num_classes),
     )
@@ -82,9 +82,11 @@ class WeaponHead:
 
     # ----- fit ------------------------------------------------------------------------------------
 
-    def fit(self, X, y, *, epochs: int = 30, lr: float = 1e-3, batch_size: int = 32) -> "WeaponHead":
+    def fit(self, X, y, *, epochs: int = 30, lr: float = 1e-3, batch_size: int = 32,
+            report=None) -> "WeaponHead":
         """Fit on (n, 27) inter-carrier blocks (variance/mlp/svm) or (n, K, window) images (cnn).
-        epochs/lr/batch_size apply to the cnn backend only. Offline. Returns self."""
+        epochs/lr/batch_size/report apply to the cnn backend only. Offline. Returns self.
+        report: optional callback(epoch_int, {"loss": float}) for live UI training curves."""
         y = np.asarray(y, dtype=np.int64)
         classes = np.unique(y)
         if classes.size < 2:
@@ -97,7 +99,7 @@ class WeaponHead:
         if self.config.backend == "variance":
             self._fit_variance(np.asarray(X, dtype=np.float32), y)
         elif self.config.backend == "cnn":
-            self._fit_cnn(X, y, epochs=epochs, lr=lr, batch_size=batch_size)
+            self._fit_cnn(X, y, epochs=epochs, lr=lr, batch_size=batch_size, report=report)
         else:
             self._pipe.fit(np.asarray(X, dtype=np.float32), y)
         return self
@@ -136,28 +138,33 @@ class WeaponHead:
         self._scale = 1.4826 * mad if mad > 0 else (float(x.std()) or 1.0)  # robust σ for the logistic
         self._classes = classes
 
-    def _fit_cnn(self, X, y, *, epochs, lr, batch_size) -> None:
+    def _fit_cnn(self, X, y, *, epochs, lr, batch_size, report=None) -> None:
         torch = _torch()
-        imgs = self._as_images(np.asarray(X, dtype=np.float32))
-        self._image_shape = imgs.shape[1:]
+        imgs = self._as_images(np.asarray(X, dtype=np.float32))  # (n, C, K, W) — 4-D
+        self._image_shape = imgs.shape[1:]                        # (C, K, W) — always 3-tuple
+        in_channels = imgs.shape[1]
         self._classes = np.unique(y)
-        y_idx = np.searchsorted(self._classes, y)  # logits column i <-> sorted class i
+        y_idx = np.searchsorted(self._classes, y)
         mean, std = float(imgs.mean()), float(imgs.std()) or 1.0
         self._norm = (mean, std)
         torch.manual_seed(self.config.seed)
-        net = _build_net(torch, self.config.hidden, int(self._classes.size))
-        xt = torch.from_numpy((imgs - mean) / std).unsqueeze(1)  # (n, 1, K, window)
+        net = _build_net(torch, self.config.hidden, int(self._classes.size), in_channels=in_channels)
+        xt = torch.from_numpy((imgs - mean) / std)  # (n, C, K, W) — no unsqueeze
         yt = torch.from_numpy(y_idx.astype(np.int64))
         opt = torch.optim.Adam(net.parameters(), lr=lr)
         loss_fn = torch.nn.CrossEntropyLoss()
         gen = torch.Generator().manual_seed(self.config.seed)
         net.train()
-        for _ in range(epochs):
+        for ep in range(epochs):
+            ep_loss = 0.0; nb = 0
             for idx in torch.randperm(xt.shape[0], generator=gen).split(batch_size):
                 opt.zero_grad()
                 loss = loss_fn(net(xt[idx]), yt[idx])
                 loss.backward()
                 opt.step()
+                ep_loss += loss.item(); nb += 1
+            if report is not None:
+                report(ep + 1, {"loss": ep_loss / max(nb, 1)})
         net.eval()
         self._net = net
 
@@ -179,17 +186,20 @@ class WeaponHead:
             return np.stack([1.0 - p_pos, p_pos], axis=1)
         if self.config.backend == "cnn":
             torch = _torch()
-            imgs = (self._as_images(X) - self._norm[0]) / self._norm[1]
+            imgs = (self._as_images(X) - self._norm[0]) / self._norm[1]  # 4-D (n,C,K,W)
             with torch.no_grad():
-                logits = self._net(torch.from_numpy(imgs).unsqueeze(1))
+                logits = self._net(torch.from_numpy(imgs))  # no unsqueeze — already 4-D
                 return torch.softmax(logits, dim=1).numpy()
         return self._pipe.predict_proba(X)
 
     def _as_images(self, X) -> np.ndarray:
-        """Accept (n, K, window) or flattened (n, K·window) (the predict_window seam)."""
-        if X.ndim == 3:
+        """Accept 4-D (n,C,K,W), 3-D (n,K,W)->unsqueeze to (n,1,K,W), or flat (n,K·W)->reshape.
+        Always returns 4-D for _fit_cnn and predict_proba (no unsqueeze at call sites)."""
+        if X.ndim == 4:
             return np.ascontiguousarray(X)
-        shape = self._image_shape or (self.config.k, self.config.window)
+        if X.ndim == 3:
+            return np.ascontiguousarray(X[:, np.newaxis, :, :])  # (n, 1, K, W)
+        shape = self._image_shape or (1, self.config.k, self.config.window)
         return np.ascontiguousarray(X.reshape(X.shape[0], *shape))
 
     # ----- persist --------------------------------------------------------------------------------
@@ -206,8 +216,9 @@ class WeaponHead:
             blob.update(thr=self._thr, scale=self._scale, positive_below=self._positive_below,
                         classes=self._classes)
         else:  # cnn: state as numpy arrays (torch needed only to LOAD, not to open the file)
+            # image_shape is always a 3-tuple (C, K, W) from P10; pre-P10 blobs may have 2-tuple
             blob.update(state={k: v.cpu().numpy() for k, v in self._net.state_dict().items()},
-                        norm=self._norm, image_shape=self._image_shape, classes=self._classes)
+                        norm=self._norm, image_shape=tuple(self._image_shape), classes=self._classes)
         joblib.dump(blob, p)
         return p
 
@@ -226,8 +237,12 @@ class WeaponHead:
             torch = _torch()
             head._classes = blob["classes"]
             head._norm = blob["norm"]
-            head._image_shape = tuple(blob["image_shape"])
-            net = _build_net(torch, head.config.hidden, int(head._classes.size))
+            raw_shape = tuple(blob["image_shape"])
+            # pre-P10 blobs store a 2-tuple (K, W); prepend C=1 to get the canonical 3-tuple
+            head._image_shape = raw_shape if len(raw_shape) == 3 else (1,) + raw_shape
+            in_channels = head._image_shape[0]
+            net = _build_net(torch, head.config.hidden, int(head._classes.size),
+                             in_channels=in_channels)
             net.load_state_dict({k: torch.from_numpy(v) for k, v in blob["state"].items()})
             net.eval()
             head._net = net

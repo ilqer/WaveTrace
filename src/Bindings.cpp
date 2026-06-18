@@ -151,6 +151,19 @@ PYBIND11_MODULE(_wavetrace, m) {
       },
       py::arg("amp"), py::arg("alpha") = 0.75f, "Per-subcarrier NBVI over a baseline matrix.");
   m.def(
+      "valid_subcarriers",
+      [](py::array_t<float, py::array::c_style | py::array::forcecast> amp,
+         float noise_gate_percentile) {
+        py::buffer_info info = amp.request();
+        if (info.ndim != 2)
+          throw WaveTraceError("valid_subcarriers: amp must be 2D (frames x subcarriers)");
+        return validSubcarriers(static_cast<const float*>(info.ptr),
+                                static_cast<size_t>(info.shape[0]),
+                                static_cast<size_t>(info.shape[1]), noise_gate_percentile);
+      },
+      py::arg("amp"), py::arg("noise_gate_percentile") = 0.15f,
+      "ALL subcarriers passing the noise gate, sorted ascending (freq order) — CNN image rows.");
+  m.def(
       "select_subcarriers_nbvi",
       [](py::array_t<float, py::array::c_style | py::array::forcecast> amp, float alpha,
          size_t max_subcarriers, float noise_gate_percentile) {

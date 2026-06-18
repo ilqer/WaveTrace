@@ -86,7 +86,9 @@ def train_presence(
         meta = loaded[0].meta
         # window/hop come from the dataset's front-end cadence so serving (Cli.run) matches training
         config = ModelConfig(stage="presence", k=int(meta["K"]),
-                             window=int(meta["window"]), hop=int(meta["hop"]))
+                             window=int(meta["window"]), hop=int(meta["hop"]),
+                             frame_average=int(meta.get("frame_average", 1)),
+                             subtract_baseline=bool(meta.get("subtract_baseline", False)))
 
     t0 = time.perf_counter()
     head = PresenceHead(config).fit(X, y)
@@ -149,10 +151,14 @@ def train_weapon(
     if config is None:
         backend = "variance" if feature_mode == "ic27" else "cnn" if feature_mode == "cnn" else "mlp"
         config = ModelConfig(stage="weapon", k=K, backend=backend,
-                             window=int(meta["window"]), hop=int(meta["hop"]))
+                             window=int(meta["window"]), hop=int(meta["hop"]),
+                             frame_average=int(meta.get("frame_average", 1)),
+                             subtract_baseline=bool(meta.get("subtract_baseline", False)))
     else:
         # the dataset's front-end cadence dictates serving; enforce it so Cli.run matches training
-        config = replace(config, window=int(meta["window"]), hop=int(meta["hop"]))
+        config = replace(config, window=int(meta["window"]), hop=int(meta["hop"]),
+                         frame_average=int(meta.get("frame_average", 1)),
+                         subtract_baseline=bool(meta.get("subtract_baseline", False)))
 
     head = WeaponHead(config)
     head.feature_mode = feature_mode  # self-describing: Cli.run reads it to assemble x at serve time

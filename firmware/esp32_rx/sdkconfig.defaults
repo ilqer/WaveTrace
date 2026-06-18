@@ -1,0 +1,7 @@
+# WaveTrace RX defaults. Apply target with: idf.py set-target esp32s3
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_FREERTOS_HZ=1000
+# High console baud so 100 CSI CSV lines/sec don't overflow UART -> matches SerialReader(baud=921600)
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600

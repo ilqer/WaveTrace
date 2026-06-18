@@ -9,8 +9,10 @@ import pytest
 
 from fixtures.SyntheticCsi import generateStream
 from fixtures.SyntheticRecording import generatePairedRecording
+from wavetrace import Label
 from wavetrace.Calibration import Calibration
 from wavetrace.groundtruth import (
+    Dataset,
     LocationChipLabeler,
     ReplayLabeler,
     ScriptedLabeler,
@@ -180,8 +182,9 @@ def test_dataset_builder_camera_shapes_and_roundtrip(tmp_path):
 
     n = ds.y.shape[0]
     assert n > 0
+    K_img = ds.meta["K_img"]  # T1/P10: image uses all valid subcarriers (>= K NBVI)
     assert ds.X_features.shape == (n, 9 * K)
-    assert ds.X_image.shape == (n, K, 32)
+    assert ds.X_image.shape == (n, K_img, 32)
     assert ds.t.shape == (n,)
     assert ds.meta["K"] == K and ds.meta["fs"] == pytest.approx(FS, rel=0.05)
     # stored sync error = the bounded matched-Δt residual (shared clock -> small)
@@ -195,6 +198,32 @@ def test_dataset_builder_camera_shapes_and_roundtrip(tmp_path):
     assert np.array_equal(reloaded.y, ds.y)
     assert reloaded.meta["sync_error"] == ds.meta["sync_error"]
     assert [l.class_id for l in reloaded.labels] == list(ds.y)
+
+
+def test_dataset_roundtrips_heatmap_mask(tmp_path):
+    # the camera mask (heatmap target) must survive save->load, else the heatmap head loses its label.
+    grid = 4
+    labels = []
+    for i in range(3):
+        lab = Label()
+        lab.class_id = 1
+        lab.name = "present"
+        lab.timestamp = float(i)
+        lab.mask = [float((i + j) % 2) for j in range(grid * grid)]
+        lab.mask_grid = grid
+        labels.append(lab)
+    ds = Dataset(
+        X_features=np.zeros((3, 9), np.float32),
+        X_image=np.zeros((3, 4, 8), np.float32),
+        y=np.array([1, 1, 1], np.int64),
+        t=np.array([0.0, 1.0, 2.0]),
+        labels=labels,
+        session_ids=np.full(3, "s0", dtype=object),
+        subject_ids=np.full(3, "p0", dtype=object),
+    )
+    reloaded = load_dataset(save_dataset(ds, tmp_path / "mask_ds"))
+    assert [l.mask_grid for l in reloaded.labels] == [grid] * 3
+    assert [list(l.mask) for l in reloaded.labels] == [list(l.mask) for l in labels]
 
 
 def test_dataset_builder_skips_gain_lock_when_none():

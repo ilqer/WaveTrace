@@ -127,6 +127,55 @@ def evaluate_weapon(
     return reports
 
 
+def evaluate_concealment_gap(
+    X, y, is_concealed, groups, make_head, *,
+    fp_max: float = 0.10, tpr_min: float = 0.90,
+) -> dict:
+    """Measure the open→concealed transfer the whole weapon strategy bets on (3-tier ground truth,
+    REFERENCE_DIGEST §0B): train ONLY on the visible tiers (open / see-through-wrapped) and test on
+    the fully held-out truly-concealed split. The concealed set is never in any training fold, so its
+    TPR/FP is the honest deployment number — the project's documented "hope it transfers" turned into
+    a measurement instead of an assumption.
+
+    is_concealed: (n,) bool — True for tier-3 (scripted, truly concealed) samples.
+    groups: (n,) session/subject ids — folds the *visible* reference (within-condition LOGO), so the
+    gap compares like-for-like generalization, not optimistic resubstitution.
+    make_head: () -> unfitted WeaponHead (binary). O(folds·fit + fit).
+
+    Returns {"concealed": {n,tpr,fp_rate,accuracy}, "visible": logo_report, "tpr_gap", "verdict"}.
+    The verdict gates ONLY on the concealed split (visible passing is necessary but not the target)."""
+    X = np.asarray(X, dtype=np.float32)
+    y = np.asarray(y, dtype=np.int64)
+    mask = np.asarray(is_concealed, dtype=bool)
+    if not mask.any() or mask.all():
+        raise ValueError("evaluate_concealment_gap: need both visible and concealed samples")
+
+    Xv, yv, gv = X[~mask], y[~mask], np.asarray(groups)[~mask]
+    Xc, yc = X[mask], y[mask]
+
+    # concealed: fit on ALL visible, predict the held-out concealed set (honest transfer number)
+    head = make_head().fit(Xv, yv)
+    pred_c = head.predict(Xc)
+    cm_c = confusion_matrix(yc, pred_c, labels=[0, 1])
+    concealed = {"n": int(mask.sum()), "accuracy": float((pred_c == yc).mean()), **binary_rates(cm_c)}
+
+    # visible reference: within-condition LOGO (same head recipe) — the "seen condition" ceiling
+    visible = leave_one_group_out(Xv, yv, gv, make_head)
+
+    reasons = []
+    if concealed["fp_rate"] > fp_max:
+        reasons.append(f"concealed fp_rate {concealed['fp_rate']:.3f} > {fp_max}")
+    if concealed["tpr"] < tpr_min:
+        reasons.append(f"concealed tpr {concealed['tpr']:.3f} < {tpr_min}")
+    return {
+        "concealed": concealed,
+        "visible": visible,
+        "tpr_gap": float(visible.get("tpr", 0.0) - concealed["tpr"]),  # how much transfer costs
+        "verdict": "PASS" if not reasons else "FAIL",
+        "reasons": reasons,
+    }
+
+
 def segmenter_baseline(
     X_image, *, cv_window: int = 32, enter_cv: float = 0.08, exit_cv: float = 0.04
 ) -> np.ndarray:

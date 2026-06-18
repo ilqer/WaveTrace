@@ -14,7 +14,7 @@ import warnings
 
 import numpy as np
 
-from wavetrace.Calibration import Calibration, load_calibration, save_calibration
+from wavetrace.Calibration import Calibration, image_baseline, load_calibration, save_calibration
 from wavetrace.Config import ModelConfig
 from wavetrace.Frontend import iter_windows
 from wavetrace.Localize import Localizer, Tracker, save_localization
@@ -59,15 +59,27 @@ def calibrate_source(source, out_dir, *, baseline_packets=300, use_gain_lock=Tru
 
 
 def collect_source(source, calib_dir, out_dir, spans, *, stage="presence", window=128, hop=32,
-                   session_id="", subject_id=""):
-    """Build + serialize a labeled dataset from a source + scripted spans. weapon stage emits the
-    dual-block (intercarrier) dataset under the locked calibration; presence emits the feature path."""
+                   session_id="", subject_id="", frame_average=1, subtract_baseline=False,
+                   labeler=None, tier=""):
+    """Build + serialize a labeled dataset from a source + a label source. weapon stage emits the
+    dual-block (intercarrier) dataset; presence emits the feature path.
+
+    labeler: explicit label source (list[Label] / callable / Labeler) to use INSTEAD of the default
+    scripted spans — pass a SegmentationLabeler/YoloSegLabeler (or a list of camera-produced Labels)
+    to collect a mask-bearing, camera-supervised dataset that feeds the heatmap head. Defaults to a
+    ScriptedLabeler over `spans` (the no-camera path).
+    tier: 'open' | 'wrapped' | 'concealed', stamped into meta['tier'] so a concealed collection can be
+    held out by evaluate_concealment_gap (the open→concealed transfer measurement)."""
     result, gain_lock = load_calibration(calib_dir)
-    label_fn = weapon_label_fn if stage == "weapon" else presence_label_fn
-    labeler = ScriptedLabeler([(s, e, True) for s, e in spans], label_fn=label_fn)
+    if labeler is None:
+        label_fn = weapon_label_fn if stage == "weapon" else presence_label_fn
+        labeler = ScriptedLabeler([(s, e, True) for s, e in spans], label_fn=label_fn)
     intercarrier = stage == "weapon"
     ds = build_dataset(list(source.frames()), result, gain_lock, labeler, window=window, hop=hop,
-                       session_id=session_id, subject_id=subject_id, intercarrier=intercarrier)
+                       session_id=session_id, subject_id=subject_id, intercarrier=intercarrier,
+                       frame_average=frame_average, subtract_baseline=subtract_baseline)
+    if tier:
+        ds.meta["tier"] = tier
     return save_dataset(ds, out_dir), ds
 
 
@@ -115,23 +127,54 @@ def localize_source(source, out_dir, *, num_antennas, spacing=0.5, method="music
     return save_localization(agg, out_dir), agg
 
 
-def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False):
+def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False, guard=False):
     """Stream a source through the front-end and publish one verdict per window (+ a final soft-vote
-    verdict when vote=True). Returns the published RecognitionResults. O(windows)."""
+    verdict when vote=True). When guard=True, wires AlertGuard+DriftMonitor for debounce and drift
+    advisory (O(S)/frame extra — acceptable on the Pi serving side). O(windows)."""
     result, gain_lock = load_calibration(calib_dir)
     session = mode_session(mode, model_path)
     apply_lock, intercarrier, pick = _serving_plan(mode, session.head)
     cfg = session.head.config
+
+    img_subc = getattr(result, "image_subcarriers", None)
+    img_base = None
+    if cfg.subtract_baseline:
+        img_base = image_baseline(result, locked=(apply_lock and gain_lock is not None))
+
+    frames_iter = source.frames()
+    if guard:
+        from wavetrace.output.Guard import AlertGuard, DriftMonitor
+        drift_mon = DriftMonitor(result.baseline_mag)
+        alert_guard = AlertGuard()
+        # feed raw (pre-lock) per-frame mags to DriftMonitor without disrupting the frame stream
+        # O(S)/frame extra — acceptable on Pi serving side (not the hot DSP path)
+        def _tee_drift(frames, monitor, pub):
+            import numpy as _np
+            for fr in frames:
+                ev = monitor.update(float(fr.timestamp),
+                                    _np.abs(_np.asarray(fr.grid)).mean(axis=0).astype(_np.float32))
+                if ev:
+                    pub.publish_event(ev)
+                yield fr
+        frames_iter = _tee_drift(frames_iter, drift_mon, publisher)
+
     voter = SegmentVoter() if vote else None
     out = []
     for t, features, image, ic in iter_windows(
-        source.frames(), result.subcarriers, gain_lock if apply_lock else None,
+        frames_iter, result.subcarriers, gain_lock if apply_lock else None,
         window=cfg.window, hop=cfg.hop, intercarrier=intercarrier,
+        image_subcarriers=img_subc,
+        frame_average=cfg.frame_average,
+        image_baseline=img_base,
     ):
         cls, conf = session.predict_window(pick(features, image, ic))
         r = RecognitionResult(); r.class_id = cls; r.confidence = conf; r.timestamp = t
         publisher.publish(r)
         out.append(r)
+        if guard:
+            ev = alert_guard.update(t, cls)
+            if ev:
+                publisher.publish_event(ev)
         if voter is not None:
             voter.add(session.head.predict_proba(np.asarray(pick(features, image, ic),
                                                             dtype=np.float32).reshape(1, -1))[0])
@@ -214,6 +257,10 @@ def main(argv=None) -> int:
     p_col.add_argument("--hop", type=int, default=32)
     p_col.add_argument("--session-id", default="", dest="session_id")
     p_col.add_argument("--subject-id", default="", dest="subject_id")
+    p_col.add_argument("--tier", choices=["open", "wrapped", "concealed"], default="",
+                       help="weapon ground-truth tier -> meta['tier'] (concealed = held-out test split)")
+    p_col.add_argument("--frame-average", type=int, default=1, dest="frame_average")
+    p_col.add_argument("--subtract-baseline", action="store_true", dest="subtract_baseline")
 
     p_tr = sub.add_parser("train", help="dataset(s) -> model")
     p_tr.add_argument("datasets", nargs="+")
@@ -251,6 +298,7 @@ def main(argv=None) -> int:
                        dest="head_mode", help="which operating mode to serve")
     p_run.add_argument("--out", default=None, help="JSONL output file (default stdout)")
     p_run.add_argument("--vote", action="store_true", help="also emit a final soft-vote verdict")
+    p_run.add_argument("--guard", action="store_true", help="enable AlertGuard debounce + DriftMonitor advisory")
 
     args = ap.parse_args(argv)
 
@@ -266,7 +314,9 @@ def main(argv=None) -> int:
         path, ds = collect_source(_source_from_args(args), args.calibration, args.out,
                                   _parse_spans(args.label_spans), stage=args.stage,
                                   window=args.window, hop=args.hop,
-                                  session_id=args.session_id, subject_id=args.subject_id)
+                                  session_id=args.session_id, subject_id=args.subject_id,
+                                  frame_average=args.frame_average,
+                                  subtract_baseline=args.subtract_baseline, tier=args.tier)
         print(f"dataset ({ds.y.size} samples) -> {path}", file=sys.stderr)
     elif args.mode == "train":
         if args.stage == "presence":
@@ -302,7 +352,7 @@ def main(argv=None) -> int:
         pub = JsonlPublisher(args.out, mode=args.head_mode)
         with pub:
             results = run_inference(_source_from_args(args), args.calibration, args.model,
-                                    args.head_mode, pub, vote=args.vote)
+                                    args.head_mode, pub, vote=args.vote, guard=args.guard)
         print(f"published {len(results)} verdict(s)", file=sys.stderr)
     return 0
 

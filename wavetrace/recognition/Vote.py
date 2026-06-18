@@ -22,13 +22,15 @@ import numpy as np
 class SegmentVoter:
     """Accumulate per-window probabilities for ONE segment; finalize() votes and resets."""
 
-    def __init__(self, *, middle_fraction: float = 1.0, decimate: int = 1):
+    def __init__(self, *, middle_fraction: float = 1.0, decimate: int = 1,
+                 confidence_weighted: bool = False):
         if not 0.0 < middle_fraction <= 1.0:
             raise ValueError("middle_fraction must be in (0, 1]")
         if decimate < 1:
             raise ValueError("decimate must be >= 1")
         self._mid = float(middle_fraction)
         self._step = int(decimate)
+        self._weighted = bool(confidence_weighted)
         self._probas: list[np.ndarray] = []
 
     def __len__(self) -> int:
@@ -43,14 +45,23 @@ class SegmentVoter:
 
     def finalize(self) -> tuple[int, np.ndarray]:
         """Segment closed: (argmax class INDEX, mean probability vector) over the selected votes,
-        then reset for the next segment. Map the index through the head's classes_."""
+        then reset for the next segment. Map the index through the head's classes_.
+
+        When confidence_weighted=True, each window's vote is weighted by its own peak probability
+        (max over classes), so borderline windows count less than confident ones."""
         if not self._probas:
             raise ValueError("SegmentVoter: no votes in this segment")
         n = len(self._probas)
         keep = max(1, int(round(self._mid * n)))
         start = (n - keep) // 2
         votes = self._probas[start:start + keep:self._step]  # middle slice, then decimate
-        mean = np.mean(votes, axis=0)
+        V = np.asarray(votes)                      # (m, C)
+        if self._weighted:
+            w = V.max(axis=1, keepdims=True)       # per-window confidence as weight
+            total = float(w.sum())
+            mean = (V * w).sum(axis=0) / max(total, 1e-9)
+        else:
+            mean = V.mean(axis=0)
         self._probas.clear()
         return int(np.argmax(mean)), mean
 
