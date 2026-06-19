@@ -3,3 +3,24 @@ CONFIG_ESP_WIFI_CSI_ENABLED=y
 # 1000 Hz tick so the burst spacing (vTaskDelay) can reach 1 ms -> 100 Hz+ per-link CSI.
 # Default 100 Hz capped us at ~10 ms spacing. (ESP32-CSI-Tool mandates this too.)
 CONFIG_FREERTOS_HZ=1000
+
+# --- Mesh CSI stability (added 2026-06-18) ---
+# AMPDU aggregation is useless for per-packet CSI and triggers the AP's relentless
+# ADDBA/DELBA(reason 39) teardown churn that stalls the link. CSI tools disable it.
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n
+# More RX headroom: the all-pairs promiscuous capture floods the RX path; thin buffers (10/32)
+# let the sniffer hit a recycled/exhausted buffer -> LoadProhibited / interrupt-WDT reset.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64
+# Keep the radio fully awake even while disconnected -> faster reconnect, steadier RX (ESPectre).
+CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE=n
+
+# --- UDP uplink headroom (added 2026-06-19) ---
+# The CSI uplink is bursty (~400 fps batched); the default 32 dynamic TX buffers exhaust under
+# channel congestion -> `sendto` ENOMEM (errno 12). Doubling them gives the lwIP/Wi-Fi TX path
+# headroom to absorb a burst instead of dropping it. Binary payload already cut the volume ~3.5x.
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64
+# Bigger tcpip mailbox + lwIP heap so queued UDP pbufs don't starve the stack during a burst.
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=16

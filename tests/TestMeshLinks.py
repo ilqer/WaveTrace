@@ -1,6 +1,6 @@
 """All-pairs link splitting: parse_batch_links buckets one batch by (tx_short, rx_node)."""
 
-import json
+import struct
 
 import numpy as np
 import pytest
@@ -8,22 +8,17 @@ import pytest
 from wavetrace.Source import parse_batch_links, mac_short
 
 
-def _csi_line(csi_ints, mac, local_ts):
-    """Well-formed 25-column esp-csi CSV line (mirrors TestUdpSource._make_csi_line)."""
-    cols = [
-        "CSI_DATA", "1", mac, "-60", "11", "0", "7", "0",
-        "1", "0", "0", "0", "0", "0",
-        "-95", "0", "6", "0", str(local_ts), "0", "100", "0",
-        str(len(csi_ints) // 2), "1", '"' + json.dumps(csi_ints, separators=(",", ":")) + '"',
-    ]
-    assert len(cols) == 25
-    return ",".join(cols)
+def _rec(csi_ints, mac, local_ts):
+    """One binary v2 record: mac[6] | ts_us(u32 LE) | len(u16 LE) | int8 raw CSI."""
+    mb = bytes(int(x, 16) for x in mac.split(":"))
+    data = bytes(v & 0xFF for v in csi_ints)
+    return mb + struct.pack("<IH", local_ts, len(csi_ints)) + data
 
 
 def _batch(rows, node_id=7, ntp_ms=5000):
-    """rows = [(csi_ints, mac, local_ts), ...] -> one UDP batch payload (header + lines)."""
-    header = json.dumps({"v": 1, "node": node_id, "ntp_ms": ntp_ms, "n": len(rows)})
-    return ("\n".join([header] + [_csi_line(*r) for r in rows])).encode("utf-8")
+    """rows = [(csi_ints, mac, local_ts), ...] -> one binary v2 UDP batch payload (header + records)."""
+    hdr = struct.pack("<BBBQH", 0x57, 2, node_id, ntp_ms, len(rows))
+    return hdr + b"".join(_rec(*r) for r in rows)
 
 
 def test_mac_short():
@@ -88,5 +83,6 @@ def test_bad_header_raises_empty_returns_dict():
         parse_batch_links(b"not_json\nfoo")
     with pytest.raises(ValueError, match="bad batch header"):
         parse_batch_links(b"")
-    header = json.dumps({"v": 1, "node": 0, "ntp_ms": 1000, "n": 0})
-    assert parse_batch_links((header + "\nbad\nlines").encode()) == {}
+    # Valid header, no complete records (trailing garbage) -> empty dict, no error
+    good_hdr = struct.pack("<BBBQH", 0x57, 2, 0, 1000, 0)
+    assert parse_batch_links(good_hdr + b"\x01\x02bad") == {}

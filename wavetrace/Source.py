@@ -20,6 +20,7 @@ from abc import ABC, abstractmethod
 import json
 from pathlib import Path
 import socket
+import struct
 import time
 
 import numpy as np
@@ -64,41 +65,74 @@ def parse_csi_line(line, *, tx_mac=None):
         return None
 
 
+# Binary UDP wire format v2 (little-endian; the ESP32 firmware sends this). Header then packed records.
+_BIN_HDR = struct.Struct("<BBBQH")   # magic, ver, node, ntp_ms, n  -> 13 bytes
+_BIN_MAGIC, _BIN_VER = 0x57, 2
+
+
+def _parse_bin_header(payload: bytes):
+    """(node_id, ntp_ms, n, body_offset) from a v2 binary batch header; ValueError on a bad header.
+    `n` is the authoritative record count — the parser trusts it over the raw byte length."""
+    if len(payload) < _BIN_HDR.size:
+        raise ValueError(f"UdpSource: bad batch header: {len(payload)} bytes < {_BIN_HDR.size}")
+    magic, ver, node_id, ntp_ms, n = _BIN_HDR.unpack_from(payload, 0)
+    if magic != _BIN_MAGIC or ver != _BIN_VER:
+        raise ValueError(f"UdpSource: bad batch header: magic={magic:#x} ver={ver}")
+    return node_id, ntp_ms, n, _BIN_HDR.size
+
+
+def _mac_to_bytes(mac: str) -> bytes:
+    """'aa:bb:cc:dd:ee:ff' -> 6 raw bytes (case-insensitive). Normalize a tx_mac filter once."""
+    return bytes(int(x, 16) for x in mac.split(":"))
+
+
+def _iter_bin_records(payload: bytes, offset: int, n: int):
+    """Yield (mac_bytes, csi complex64, local_ts_us) for up to `n` packed records — the header count
+    bounds the loop, so trailing bytes past `n` records are never interpreted as CSI. Stops early on a
+    structurally corrupt record (truncated, or odd byte length) since the stream can't be resynced.
+    Record = mac[6] | ts_us(u32 LE) | len(u16 LE) | len*int8 raw CSI, laid out [imag0,real0,...].
+    Yields the raw 6 MAC bytes (not a formatted string) so the hot path skips per-record formatting;
+    callers compare bytes for the tx_mac filter and only stringify when bucketing/logging."""
+    end = len(payload)
+    for _ in range(n):
+        if offset + 12 > end:                     # 6 (mac) + 4 (ts) + 2 (len): batch shorter than n
+            break
+        mac = payload[offset:offset + 6]
+        local_ts_us, L = struct.unpack_from("<IH", payload, offset + 6)
+        offset += 12
+        if L % 2 != 0 or offset + L > end:
+            break
+        d = np.frombuffer(payload, dtype=np.int8, count=L, offset=offset).astype(np.float32)
+        offset += L
+        csi = (d[1::2] + 1j * d[0::2]).astype(np.complex64)   # csi[k] = complex(real=d[2k+1], imag=d[2k])
+        yield mac, csi, local_ts_us
+
+
 def parse_batch(payload: bytes, *, tx_mac=None) -> list:
     """One UDP batch payload -> list[CsiFrame] (node_id + wall-clock timestamps from the header).
     O(n·S).
 
-    Header = first line, JSON: {"v": 1, "node": int, "ntp_ms": int, "n": int}. A bad/missing header
-    raises ValueError (wiring error). Bad CSI lines are skipped silently (RF noise). Lines whose
-    subcarrier count S differs from the first parsed line are also skipped (format guard).
+    Binary v2 wire format: header csi_hdr_t {magic,ver=2,node,ntp_ms,n} then exactly n packed records
+    (see _iter_bin_records). A bad/missing header raises ValueError (wiring error). The header's n
+    bounds parsing, so trailing bytes are ignored; a structurally corrupt record stops parsing. Records
+    whose subcarrier count S differs from the first kept one are skipped (width guard).
 
     Timestamp scheme: ntp_ms/1000.0 is the batch SEND time ≈ the LAST frame's wall time; each
     frame's absolute time is reconstructed from its local_timestamp offset relative to the last
-    parsed line's local_ts:  t_i = ntp_ms/1000 - (last_us - local_ts_i) / 1e6."""
-    lines = payload.decode("utf-8", errors="replace").splitlines()
-    if not lines:
-        raise ValueError("UdpSource: bad batch header: empty payload")
-    try:
-        header = json.loads(lines[0])
-        node_id = int(header["node"])
-        ntp_ms = int(header["ntp_ms"])
-    except Exception as e:
-        raise ValueError(f"UdpSource: bad batch header: {lines[0]!r}") from e
+    record's local_ts:  t_i = ntp_ms/1000 - (last_us - local_ts_i) / 1e6."""
+    node_id, ntp_ms, n, off = _parse_bin_header(payload)
+    tx_bytes = _mac_to_bytes(tx_mac) if tx_mac is not None else None
 
     parsed = []
     S_ref = None
-    for line in lines[1:]:
-        if not line:
+    for mac_b, csi, local_ts_us in _iter_bin_records(payload, off, n):
+        if tx_bytes is not None and mac_b != tx_bytes:
             continue
-        result = parse_csi_line(line, tx_mac=tx_mac)
-        if result is None:
-            continue
-        csi, local_ts_us, _ = result
         S = int(csi.size)
         if S_ref is None:
             S_ref = S
         elif S != S_ref:
-            continue  # mixed-S line: skip
+            continue  # mixed-S record: skip
         parsed.append((csi, local_ts_us))
 
     if not parsed:
@@ -107,7 +141,9 @@ def parse_batch(payload: bytes, *, tx_mac=None) -> list:
     last_us = parsed[-1][1]
     frames = []
     for csi, local_ts_us in parsed:
-        t = ntp_ms / 1000.0 - (last_us - local_ts_us) / 1e6
+        # & 0xFFFFFFFF: ts_us is the firmware's low-32-bit esp_timer (wraps ~71.6 min). The masked
+        # subtraction stays correct across a within-batch rollover (batch span ≪ 2^32 µs).
+        t = ntp_ms / 1000.0 - ((last_us - local_ts_us) & 0xFFFFFFFF) / 1e6
         fr = CsiFrame(1, S_ref)
         fr.grid[0, :] = csi
         fr.timestamp = t
@@ -125,29 +161,19 @@ def parse_batch_links(payload: bytes, *, tx_mac=None) -> dict:
     """One UDP batch -> dict[(tx_short, rx_node) -> list[CsiFrame]], keeping TX identity so each
     directed (tx->rx) link is its OWN stream (the all-pairs fusion input). O(n·S).
 
-    Same header + timestamp scheme as parse_batch (rx_node = header node; ntp_ms ≈ the last frame's
-    wall time; per-frame t reconstructed from local_timestamp). Difference: frames are bucketed by the
-    per-line MAC (the transmitter) instead of merged, and the subcarrier-width format guard is applied
-    PER LINK (a future 5 GHz arm can carry a different width than the 2.4 GHz mesh)."""
-    lines = payload.decode("utf-8", errors="replace").splitlines()
-    if not lines:
-        raise ValueError("UdpSource: bad batch header: empty payload")
-    try:
-        header = json.loads(lines[0])
-        node_id = int(header["node"])
-        ntp_ms = int(header["ntp_ms"])
-    except Exception as e:
-        raise ValueError(f"UdpSource: bad batch header: {lines[0]!r}") from e
+    Same binary v2 format + timestamp scheme as parse_batch (rx_node = header node; ntp_ms ≈ the last
+    frame's wall time; per-frame t reconstructed from local_timestamp; header n bounds parsing).
+    Difference: frames are bucketed by the per-record MAC (the transmitter) instead of merged, and the
+    subcarrier-width guard is applied PER LINK (a future 5 GHz arm can carry a different width)."""
+    node_id, ntp_ms, n, off = _parse_bin_header(payload)
+    tx_bytes = _mac_to_bytes(tx_mac) if tx_mac is not None else None
 
     parsed = []  # (tx_short, csi, local_ts_us)
-    for line in lines[1:]:
-        if not line:
+    for mac_b, csi, local_ts_us in _iter_bin_records(payload, off, n):
+        if tx_bytes is not None and mac_b != tx_bytes:
             continue
-        result = parse_csi_line(line, tx_mac=tx_mac)
-        if result is None:
-            continue
-        csi, local_ts_us, mac = result
-        parsed.append((mac_short(mac), csi, local_ts_us))
+        tx_short = f"{mac_b[4]:02x}:{mac_b[5]:02x}"   # last two octets == mac_short(full mac)
+        parsed.append((tx_short, csi, local_ts_us))
     if not parsed:
         return {}
 
@@ -163,7 +189,8 @@ def parse_batch_links(payload: bytes, *, tx_mac=None) -> dict:
             continue
         fr = CsiFrame(1, S)
         fr.grid[0, :] = csi
-        fr.timestamp = ntp_ms / 1000.0 - (last_us - local_ts_us) / 1e6
+        # & 0xFFFFFFFF handles the firmware ts_us low-32-bit wrap (see parse_batch).
+        fr.timestamp = ntp_ms / 1000.0 - ((last_us - local_ts_us) & 0xFFFFFFFF) / 1e6
         fr.node_id = node_id
         links.setdefault(key, []).append(fr)
     return links

@@ -18,6 +18,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#include <errno.h>
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_event.h"
@@ -47,7 +48,10 @@
 
 #define MESH_MAGIC 0x57            // 'W' — marks our mesh frames, ignore foreign ESP-NOW
 #define FLAG_LAST  0x01            // set on the final frame of a burst (carries the token handoff)
-#define UDP_BATCH_BYTES 8192       // max CSI body per datagram before a forced flush
+// MTU-safe: keep the whole datagram (header + body) under one ~1500-byte Wi-Fi/Ethernet frame so a
+// single dropped IP fragment can't sink the whole batch. Was 8192 (≈6 fragments -> amplified loss).
+#define UDP_BATCH_BYTES 1400       // max CSI body per datagram before a forced flush
+#define CSI_MAX_BYTES   256        // max pinned CSI byte length buffered (128 complex; covers HT20/HT40)
 
 static const char *TAG = "wt_node";
 static const uint8_t BCAST[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
@@ -61,8 +65,27 @@ typedef struct __attribute__((packed)) {
     uint8_t next_id;
 } mesh_pkt_t;
 
-static char data_buf[384 * 8 + 8];
-static QueueHandle_t s_csi_q;        // char* CSI_DATA lines -> udp_batch_task
+// Raw CSI passed BY VALUE through the queue (no per-frame malloc, no formatting in the Wi-Fi task).
+// udp_batch_task on Core 1 packs this into a binary v2 record (csi_hdr_t below).
+typedef struct {
+    uint8_t  mac[6];     // transmitter MAC = tx node identity
+    uint16_t len;        // pinned CSI byte length (STBC doubles already collapsed)
+    uint32_t ts_us;      // per-frame local esp_timer time (low 32 bits)
+    int8_t   buf[CSI_MAX_BYTES];
+} csi_raw_t;
+
+// Binary UDP wire format v2 (little-endian; both ESP32 and the host Mac are LE -> no byteswap).
+// One datagram = csi_hdr_t, then `n` packed records: mac[6] | ts_us(u32) | len(u16) | len*int8 raw CSI.
+// ~3.5x smaller than the old ASCII CSV (140 vs ~500 B/frame @ HT20) and zero formatting cost.
+typedef struct __attribute__((packed)) {
+    uint8_t  magic;      // MESH_MAGIC ('W')
+    uint8_t  ver;        // 2 = binary
+    uint8_t  node;       // rx node id
+    uint64_t ntp_ms;     // batch send wall time (~ last frame's time; host reconstructs per-frame)
+    uint16_t n;          // record count
+} csi_hdr_t;             // 13 bytes
+
+static QueueHandle_t s_csi_q;        // csi_raw_t frames -> udp_batch_task
 static QueueHandle_t s_turn_q;       // "go" tokens -> mesh_task
 static volatile uint32_t s_csi_count = 0;
 static volatile uint32_t s_csi_raw = 0;   // DIAG: every CSI callback, before the MAC filter
@@ -70,6 +93,7 @@ static volatile uint32_t s_tx_sent = 0;   // DIAG: ESP-NOW frames we successfull
 static volatile uint32_t s_last_air_ms = 0;   // last time any mesh frame was heard
 static volatile bool s_connected = false;     // STA associated + has IP (gate mesh TX on this)
 static struct in_addr s_pc_addr = {0};        // discovered PC address
+static volatile int s_expect_len = 0;         // first-seen CSI byte length; the stream is pinned to this
 
 static inline uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
@@ -115,6 +139,7 @@ static volatile int8_t s_lock_fft = 0;
 static uint8_t s_macs[MAX_NODES][6];
 static uint8_t s_ids[MAX_NODES];
 static volatile uint32_t s_seen_ms[MAX_NODES];
+static uint8_t s_miss[MAX_NODES];    // consecutive turns we handed this peer the token without hearing it
 static volatile int s_nmac = 0;
 
 static void learn_mac(const uint8_t *mac, uint8_t id) {
@@ -130,6 +155,11 @@ static void learn_mac(const uint8_t *mac, uint8_t id) {
 static int id_for_mac(const uint8_t *mac) {
     for (int i = 0; i < s_nmac; i++) if (memcmp(s_macs[i], mac, 6) == 0) return s_ids[i];
     return -1;  // not a mesh node -> not our sensing traffic
+}
+
+static int idx_for_id(int id) {
+    for (int i = 0; i < s_nmac; i++) if (s_ids[i] == id) return i;
+    return -1;
 }
 
 // --- Dynamic ring helpers (self is always alive; peers expire after LIVE_TIMEOUT_MS) ---
@@ -152,6 +182,7 @@ static int next_after(int me) {
     int best_gt = 0x7fffffff, best_any = NODE_ID;
     for (int i = 0; i < s_nmac; i++) {
         if (t - s_seen_ms[i] >= LIVE_TIMEOUT_MS) continue;
+        if (s_miss[i] >= TOKEN_MISS_MAX) continue;  // adaptive skip: unresponsive to recent handoffs
         int id = s_ids[i];
         if (id > me && id < best_gt) best_gt = id;
         if (id < best_any) best_any = id;
@@ -169,16 +200,13 @@ static uint64_t wall_ms(void) {
     return (uint64_t)(esp_timer_get_time() / 1000);
 }
 
-// Capture CSI; emit one esp-csi CSV line (sender MAC = tx identity) to the batch task. No printf/
-// sendto here (runs in the Wi-Fi task — blocking it starves the WDT).
+// Capture CSI; copy the raw I/Q + tx identity into the queue BY VALUE. No malloc, no snprintf here —
+// this runs in the Wi-Fi task (Core 0); heap ops + string formatting at ~300 fps would starve it.
 static void csi_cb(void *ctx, wifi_csi_info_t *info) {
     if (!info || !info->buf) return;
     s_csi_raw++;  // DIAG: count every CSI callback regardless of source
     int tx = id_for_mac(info->mac);
     if (tx < 0) return;  // only emit CSI from known mesh nodes
-    int8_t *buf = info->buf;
-    int S = info->len / 2;
-    if (S <= 0 || S > 384) return;
 #if WIFI_CSI_PHY_GAIN_ENABLE
     // Freeze AGC/FFT once a baseline is built (room must stay still for the first few seconds).
     if (!s_gain_locked) {
@@ -205,28 +233,29 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info) {
         }
     }
 #endif
-    char mac[18];
-    snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
-             info->mac[0], info->mac[1], info->mac[2], info->mac[3], info->mac[4], info->mac[5]);
-    int dpos = 0;
-    data_buf[dpos++] = '[';
-    for (int k = 0; k < S; k++) {
-        dpos += snprintf(data_buf + dpos, sizeof(data_buf) - dpos,
-                         k ? ",%d,%d" : "%d,%d", buf[2 * k], buf[2 * k + 1]);
+    // Pin the CSI width at the source: the host gets a deterministic (1,S) shape, and STBC double-length
+    // frames are RETAINED (collapsed to the first LTF block) instead of being dropped by the host guard.
+    int len = info->len;
+    if (len <= 0 || len > 2 * CSI_MAX_BYTES) return;
+    if (s_expect_len == 0) {
+        if (len > CSI_MAX_BYTES) return;            // wait for a base-width frame to pin to
+        s_expect_len = len;
     }
-    data_buf[dpos++] = ']'; data_buf[dpos] = '\0';
-    uint32_t ts_us = (uint32_t)(esp_timer_get_time() & 0xFFFFFFFF);
-    // One esp-csi CSV line; the batch task adds the JSON header. mac (col 2) carries the tx id;
-    // local_timestamp (col 18) lets the host reconstruct each frame's absolute time within the batch.
-    size_t cap = (size_t)dpos + 96;
-    char *line = (char *)malloc(cap);
-    if (!line) return;
-    snprintf(line, cap,
-             "CSI_DATA,0,%s,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,%u,0,0,0,%d,0,%s\n",
-             mac, (unsigned)ts_us, S * 2, data_buf);
-    if (xQueueSend(s_csi_q, &line, 0) != pdTRUE) free(line);
-    s_csi_count++;
+    if (len == 2 * s_expect_len) len = s_expect_len;   // STBC double -> keep first LTF block only
+    else if (len != s_expect_len) return;              // off-format (short/odd) -> drop, like the host
+
+    csi_raw_t r;
+    memcpy(r.mac, info->mac, 6);
+    r.len = (uint16_t)len;
+    r.ts_us = (uint32_t)(esp_timer_get_time() & 0xFFFFFFFF);
+    memcpy(r.buf, info->buf, len);
+    if (xQueueSend(s_csi_q, &r, 0) == pdTRUE) s_csi_count++;
 }
+
+static volatile uint32_t s_last_token_ms = 0;  // dedup: when we last accepted a token...
+static volatile uint8_t  s_last_token_tx = 0;  // ...and from which tx node (token is repeated TOKEN_REPEAT x)
+static volatile int  s_handoff_id = -1;        // node we last handed the token to (adaptive-skip pending)
+static volatile bool s_handoff_heard = false;  // did that node transmit in response to our handoff?
 
 // Learn sender MACs + liveness, track airtime, and accept the token when a burst hands us the turn.
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
@@ -235,9 +264,19 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
     if (p->magic != MESH_MAGIC) return;
     s_last_air_ms = now_ms();
     learn_mac(info->src_addr, p->tx_id);
+    if (p->tx_id == s_handoff_id) s_handoff_heard = true;  // it took its turn -> responsive
+    int hi = idx_for_id(p->tx_id);
+    if (hi >= 0) s_miss[hi] = 0;                           // hearing it transmit clears its skip count
+    // The token rides the last TOKEN_REPEAT frames (survives single-frame loss); accept it ONCE per
+    // burst by ignoring repeats from the same tx within TOKEN_DEDUP_MS, else we'd burst TOKEN_REPEAT x.
     if ((p->flags & FLAG_LAST) && p->next_id == NODE_ID) {
-        uint8_t go = 1;
-        xQueueSend(s_turn_q, &go, 0);  // our turn next
+        uint32_t t = now_ms();
+        if (!(p->tx_id == s_last_token_tx && t - s_last_token_ms < TOKEN_DEDUP_MS)) {
+            s_last_token_tx = p->tx_id;
+            s_last_token_ms = t;
+            uint8_t go = 1;
+            xQueueSend(s_turn_q, &go, 0);  // our turn next
+        }
     }
 }
 
@@ -246,17 +285,37 @@ static volatile uint32_t s_last_tx_ms = 0;
 
 static void send_burst(void) {
     s_last_tx_ms = now_ms();
+    // Adaptive skip: judge the PREVIOUS handoff before issuing a new one. If the node we handed the
+    // token to never transmitted (we didn't hear it) by the time the token came back to us, count a
+    // miss; after TOKEN_MISS_MAX it's dropped from next_after immediately instead of lingering for
+    // LIVE_TIMEOUT_MS (a flapping node would otherwise get — and drop — the token every lap). Any
+    // frame we hear from it resets the count (espnow_recv_cb), so it rejoins as soon as it's responsive.
+    if (s_handoff_id >= 0 && s_handoff_id != NODE_ID && !s_handoff_heard) {
+        int hi = idx_for_id(s_handoff_id);
+        if (hi >= 0 && s_miss[hi] < 255) s_miss[hi]++;
+    }
     uint8_t next = (uint8_t)next_after(NODE_ID);
+    s_handoff_id = (next != NODE_ID) ? next : -1;
+    s_handoff_heard = false;
     for (int seq = 0; seq < BURST_LEN; seq++) {
+        // Token (FLAG_LAST + next_id) is repeated on the last TOKEN_REPEAT frames so a single dropped
+        // frame can't stall the ring; the receiver dedups (espnow_recv_cb) so it still bursts once.
         mesh_pkt_t p = {MESH_MAGIC, (uint8_t)NODE_ID, (uint8_t)seq,
-                        (uint8_t)(seq == BURST_LEN - 1 ? FLAG_LAST : 0), next};
-        if (esp_now_send(BCAST, (uint8_t *)&p, sizeof(p)) == ESP_OK) s_tx_sent++;
+                        (uint8_t)(seq >= BURST_LEN - TOKEN_REPEAT ? FLAG_LAST : 0), next};
+        // Retry on NO_MEM (TX buffers full): the token frames matter most, so dropping one would
+        // stall the ring until a TURN_TIMEOUT_MS self-heal. vTaskDelay(1) yields ~1 ms.
+        esp_err_t e;
+        for (int t = 0; (e = esp_now_send(BCAST, (uint8_t *)&p, sizeof(p))) == ESP_ERR_ESPNOW_NO_MEM && t < 3; t++)
+            vTaskDelay(1);
+        if (e == ESP_OK) s_tx_sent++;
         vTaskDelay(pdMS_TO_TICKS(BURST_MS));
     }
 }
 
 // Token loop. Whoever is the current leader (lowest live id) bootstraps and self-heals a lost token;
 // everyone bursts when handed the turn. Leadership follows the ring as boards join/leave.
+static volatile bool s_ever_got_turn = false;  // admitted to the ring once we've received >=1 token
+
 static void mesh_task(void *) {
     vTaskDelay(pdMS_TO_TICKS(3000));  // settle: STA assoc + hear peers before deciding the ring
     if (s_connected && NODE_ID == leader_id()) {
@@ -266,6 +325,7 @@ static void mesh_task(void *) {
     for (;;) {
         uint8_t go;
         if (xQueueReceive(s_turn_q, &go, pdMS_TO_TICKS(TURN_TIMEOUT_MS)) == pdTRUE) {
+            s_ever_got_turn = true;  // we're in the ring
             if (s_connected) send_burst();
         } else if (s_connected) {
             uint32_t t = now_ms();
@@ -274,57 +334,91 @@ static void mesh_task(void *) {
                     ESP_LOGD(TAG, "token lost, restarting");
                     send_burst();
                 }
-            } else if (t - s_last_tx_ms > 5000) {
-                // Discovery: if we haven't transmitted in 5s, send a single frame to introduce ourselves.
-                // This lets the leader learn our MAC and include us in the ring.
-                mesh_pkt_t p = {MESH_MAGIC, (uint8_t)NODE_ID, 0, 0, 0};
-                esp_now_send(BCAST, (uint8_t *)&p, sizeof(p));
-                s_last_tx_ms = t;
-                ESP_LOGI(TAG, "sent discovery frame (peers=%d leader=%d)", alive_peers(), leader_id());
+            } else if (t - s_last_air_ms > LEADER_DEAD_MS + (uint32_t)NODE_ID * 100) {
+                // Backstop: the whole ring (incl. the leader) has been silent far longer than a turn.
+                // Any node restarts it; the +id*100 stagger makes only the lowest live id fire first, so
+                // a dead leader no longer freezes everyone (otherwise only the leader self-heals).
+                ESP_LOGD(TAG, "leader dead, taking over");
+                send_burst();
+            } else {
+                // Announce until admitted (got our first token), then back off to a 5 s keep-alive.
+                // Aggressive DISCOVERY_MS announce so the ring learns a fresh joiner within ~1 lap
+                // instead of the old fixed 5 s; other nodes learn_mac us -> next_after includes us.
+                uint32_t interval = s_ever_got_turn ? 5000 : DISCOVERY_MS;
+                if (t - s_last_tx_ms > interval) {
+                    mesh_pkt_t p = {MESH_MAGIC, (uint8_t)NODE_ID, 0, 0, 0};
+                    esp_now_send(BCAST, (uint8_t *)&p, sizeof(p));
+                    s_last_tx_ms = t;
+                }
             }
         }
     }
 }
 
-// Batch CSI lines into one datagram per BATCH_MS (or UDP_BATCH_BYTES), instead of one datagram per
-// frame — at ~300 fps per-frame UDP means thousands of contending TXs/s and heavy loss.
+// Prepend the binary header and ship one datagram (header + body). dst addr is refreshed per send.
+static int send_csi_batch(int sock, struct sockaddr_in *dst, uint8_t *dgram,
+                          const uint8_t *body, int blen, int count) {
+    csi_hdr_t h = {MESH_MAGIC, 2, (uint8_t)NODE_ID, wall_ms(), (uint16_t)count};
+    memcpy(dgram, &h, sizeof(h));
+    memcpy(dgram + sizeof(h), body, blen);
+    dst->sin_addr = s_pc_addr;
+    return sendto(sock, dgram, sizeof(h) + blen, 0, (struct sockaddr *)dst, sizeof(*dst));
+}
+
+// Pack raw CSI -> binary records and batch them into one datagram per BATCH_MS (or per MTU), instead
+// of one datagram per frame — at ~300 fps per-frame UDP means thousands of contending TXs/s and heavy
+// loss. Packing is pure memcpy (no snprintf), so Core 1 stays cheap and the Wi-Fi callback (Core 0) free.
 static void udp_batch_task(void *) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in dst = {};
     dst.sin_family = AF_INET;
     dst.sin_port = htons(CSI_UDP_PORT);
-    static char body[UDP_BATCH_BYTES];
-    static char dgram[UDP_BATCH_BYTES + 128];
-    int blen = 0, count = 0;
-    char *line;
+    static uint8_t body[UDP_BATCH_BYTES];
+    static uint8_t dgram[sizeof(csi_hdr_t) + UDP_BATCH_BYTES];
+    int blen = 0, count = 0, since_yield = 0;
+    csi_raw_t r;
+    int64_t backoff_until_us = 0;
     for (;;) {
-        bool flush = false;
-        if (xQueueReceive(s_csi_q, &line, pdMS_TO_TICKS(BATCH_MS)) == pdTRUE) {
-            int ll = (int)strlen(line);
-            if (blen + ll >= UDP_BATCH_BYTES) flush = (count > 0);
-            if (!flush && ll < UDP_BATCH_BYTES) {
-                memcpy(body + blen, line, ll); blen += ll; count++;
+        int64_t now = esp_timer_get_time();
+        if (backoff_until_us > 0) {
+            if (now < backoff_until_us) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            } else {
+                ESP_LOGI(TAG, "ENOMEM backoff expired, resuming sends");
+                backoff_until_us = 0;
             }
-            char *pending = flush ? line : NULL;
-            if (flush) {
-                int hl = snprintf(dgram, sizeof(dgram),
-                                  "{\"v\":1,\"node\":%d,\"ntp_ms\":%llu,\"n\":%d}\n",
-                                  NODE_ID, (unsigned long long)wall_ms(), count);
-                memcpy(dgram + hl, body, blen);
-                dst.sin_addr = s_pc_addr;
-                sendto(sock, dgram, hl + blen, 0, (struct sockaddr *)&dst, sizeof(dst));
+        }
+
+        if (xQueueReceive(s_csi_q, &r, pdMS_TO_TICKS(BATCH_MS)) == pdTRUE) {
+            int rec = 6 + 4 + 2 + r.len;   // mac | ts_us | len | raw int8 CSI
+            if (blen + rec > UDP_BATCH_BYTES && count > 0) {
+                int res = send_csi_batch(sock, &dst, dgram, body, blen, count);
+                if (res < 0 && errno == ENOMEM) {
+                    backoff_until_us = esp_timer_get_time() + 100 * 1000; // 100 ms backoff
+                    ESP_LOGW(TAG, "sendto ENOMEM — backing off for 100 ms");
+                }
                 blen = 0; count = 0;
-                int pl = (int)strlen(pending);
-                if (pl < UDP_BATCH_BYTES) { memcpy(body + blen, pending, pl); blen += pl; count++; }
             }
-            free(line);
+            if (rec <= UDP_BATCH_BYTES) {
+                uint8_t *p = body + blen;
+                memcpy(p, r.mac, 6);          p += 6;
+                memcpy(p, &r.ts_us, 4);        p += 4;   // LE u32
+                uint16_t L = r.len;
+                memcpy(p, &L, 2);              p += 2;   // LE u16
+                memcpy(p, r.buf, r.len);
+                blen += rec; count++;
+            }
+            // When the queue stays full (busy AP) this loop never blocks on xQueueReceive and would
+            // starve the Core-1 idle task (task-WDT) + the other pinned tasks (health/mesh). Yield ~1ms
+            // every 64 frames so they run; at >1000 fps this costs <2% throughput.
+            if (++since_yield >= 64) { since_yield = 0; vTaskDelay(1); }
         } else if (count > 0) {
-            int hl = snprintf(dgram, sizeof(dgram),
-                              "{\"v\":1,\"node\":%d,\"ntp_ms\":%llu,\"n\":%d}\n",
-                              NODE_ID, (unsigned long long)wall_ms(), count);
-            memcpy(dgram + hl, body, blen);
-            dst.sin_addr = s_pc_addr;
-            sendto(sock, dgram, hl + blen, 0, (struct sockaddr *)&dst, sizeof(dst));
+            int res = send_csi_batch(sock, &dst, dgram, body, blen, count);
+            if (res < 0 && errno == ENOMEM) {
+                backoff_until_us = esp_timer_get_time() + 100 * 1000;
+                ESP_LOGW(TAG, "sendto ENOMEM — backing off for 100 ms");
+            }
             blen = 0; count = 0;
         }
     }
@@ -355,7 +449,10 @@ static void health_task(void *) {
             (unsigned long)((tx - last_tx) * 1000 / HEALTH_MS),
             alive_peers(), leader_id(), g, (unsigned)s_lock_agc, wall_ms() > 1600000000000ULL ? 1 : 0);
         dst.sin_addr = s_pc_addr;
-        sendto(sock, msg, n, 0, (struct sockaddr *)&dst, sizeof(dst));
+        int res = sendto(sock, msg, n, 0, (struct sockaddr *)&dst, sizeof(dst));
+        if (res < 0) {
+            ESP_LOGW(TAG, "health sendto failed: errno %d", errno);
+        }
         last_csi = c; last_tx = tx;
     }
 }
@@ -453,6 +550,11 @@ extern "C" void app_main(void) {
     strncpy((char *)sta_cfg.sta.password, ROUTER_PASS, sizeof(sta_cfg.sta.password));
     esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
     esp_wifi_start();
+    // Lock the PHY so the AP can't push us into 11ax/HT40 (which would change the CSI subcarrier layout)
+    // or a bandwidth that conflicts with the ESP-NOW sensing rate. WT_BW_HT40 selects the bandwidth;
+    // HT40 needs the router on a 40 MHz channel (else ESP-NOW HT40 silently drops to legacy).
+    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WT_BW_HT40 ? WIFI_BW_HT40 : WIFI_BW_HT20);
     esp_wifi_set_ps(WIFI_PS_NONE);  // no modem-sleep -> steady bursts + reliable RX
     esp_wifi_connect();
 
@@ -480,13 +582,26 @@ extern "C" void app_main(void) {
     // need change second channel to 40") and silently falls back to legacy — only use HT40 once the
     // router runs a 40 MHz channel.
     esp_now_rate_config_t rate_cfg = {
-        .phymode = WIFI_PHY_MODE_HT20,
+        .phymode = WT_BW_HT40 ? WIFI_PHY_MODE_HT40 : WIFI_PHY_MODE_HT20,
         .rate = WIFI_PHY_RATE_MCS0_LGI,
         .ersu = false,
         .dcm = false,
     };
     esp_err_t rerr = esp_now_set_peer_rate_config(BCAST, &rate_cfg);
     if (rerr != ESP_OK) ESP_LOGW(TAG, "esp_now rate_config failed: %s", esp_err_to_name(rerr));
+
+    // Promiscuous mode is set up BEFORE the CSI engine (ESPectre ordering): it primes the internal
+    // Wi-Fi stack tables so CSI initializes cleanly. CSI only fires for the associated-AP link by
+    // default; promiscuous taps received frames so CSI is also generated from peers' ESP-NOW bursts.
+    // ESP-NOW = vendor action (MGMT) frames, so MGMT alone captures ALL our sensing traffic. DATA is
+    // excluded on purpose: a busy AP's data flood drove 100s of HW interrupts/s and corrupted the
+    // sniffer RX buffers (wDev_SnifferRxData LoadProhibited crash-loop); those frames are never used.
+    esp_wifi_set_promiscuous_rx_cb(promisc_cb);
+    wifi_promiscuous_filter_t promisc_filt = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT,
+    };
+    esp_wifi_set_promiscuous_filter(&promisc_filt);
+    esp_wifi_set_promiscuous(true);
 
     wifi_csi_config_t csi_cfg = {
         .lltf_en = true, .htltf_en = true, .stbc_htltf2_en = true,
@@ -496,24 +611,18 @@ extern "C" void app_main(void) {
     esp_wifi_set_csi_rx_cb(csi_cb, NULL);
     esp_wifi_set_csi(true);
 
-    // CSI only fires for the associated-AP link by default. Promiscuous mode taps EVERY received
-    // frame so CSI is also generated from peers' ESP-NOW bursts. ESP-NOW = vendor action (mgmt)
-    // frames, so MGMT must be in the filter; DATA kept too (harmless, also yields CSI).
-    esp_wifi_set_promiscuous_rx_cb(promisc_cb);
-    wifi_promiscuous_filter_t promisc_filt = {
-        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA,
-    };
-    esp_wifi_set_promiscuous_filter(&promisc_filt);
-    esp_wifi_set_promiscuous(true);
-
-    s_csi_q = xQueueCreate(64, sizeof(char *));   // deeper queue: ~BATCH_MS of lines buffer here
+    // By-value queue: 256 frames ≈ 0.6–1.7 s of burst tolerance. Static cost = 256*sizeof(csi_raw_t)
+    // ≈ 68 KB (no per-frame heap churn — the malloc was a CLAUDE.md hot-path-allocation violation).
+    s_csi_q = xQueueCreate(256, sizeof(csi_raw_t));
     s_turn_q = xQueueCreate(4, sizeof(uint8_t));
-    xTaskCreate(discovery_task, "discovery", 3072, NULL, 4, NULL);
-    xTaskCreate(udp_batch_task, "csi_udp", 4096, NULL, 5, NULL);
-    xTaskCreate(mesh_task, "mesh", 4096, NULL, 6, NULL);
-    xTaskCreate(health_task, "health", 4096, NULL, 3, NULL);
-    xTaskCreate(stats_task, "stats", 4096, NULL, 2, NULL);
+    // Pin every app task to Core 1 (APP_CPU), leaving Core 0 (PRO_CPU) dedicated to the Wi-Fi/lwIP
+    // stack + csi_cb. Heavy work (CSV formatting in udp_batch_task) must not contend with the driver.
+    xTaskCreatePinnedToCore(discovery_task, "discovery", 3072, NULL, 4, NULL, 1);
+    xTaskCreatePinnedToCore(udp_batch_task, "csi_udp", 4096, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(mesh_task, "mesh", 4096, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(health_task, "health", 4096, NULL, 3, NULL, 1);
+    xTaskCreatePinnedToCore(stats_task, "stats", 4096, NULL, 2, NULL, 1);
 #if STATUS_LED_GPIO >= 0
-    xTaskCreate(led_task, "led", 3072, NULL, 1, NULL);
+    xTaskCreatePinnedToCore(led_task, "led", 3072, NULL, 1, NULL, 1);
 #endif
 }

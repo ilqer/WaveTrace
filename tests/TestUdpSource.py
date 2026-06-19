@@ -1,6 +1,7 @@
 """T7/P10 — UdpSource pure function tests: parse_csi_line, parse_batch."""
 
 import json
+import struct
 import sys
 
 import numpy as np
@@ -23,15 +24,24 @@ def _make_csi_line(csi_ints, mac="aa:bb:cc:dd:ee:ff", local_ts=1000):
     return ",".join(cols)
 
 
+def _bin_rec(csi_ints, mac="aa:bb:cc:dd:ee:ff", local_ts=1000):
+    """One binary v2 record: mac[6] | ts_us(u32 LE) | len(u16 LE) | int8 raw CSI."""
+    mb = bytes(int(x, 16) for x in mac.split(":"))
+    data = bytes(v & 0xFF for v in csi_ints)
+    return mb + struct.pack("<IH", local_ts, len(csi_ints)) + data
+
+
+def _bin_batch(rows, node_id=0, ntp_ms=5000):
+    """rows = [(csi_ints, mac, local_ts), ...] -> one binary v2 UDP batch (header + records)."""
+    hdr = struct.pack("<BBBQH", 0x57, 2, node_id, ntp_ms, len(rows))
+    return hdr + b"".join(_bin_rec(*r) for r in rows)
+
+
 def _make_batch_payload(frames_ints, node_id=0, ntp_ms=5000):
-    """Build a multi-line UDP batch payload (header + one CSV line per frame)."""
+    """Build a binary v2 UDP batch payload (header + one record per frame)."""
     # Local timestamps step by 10 000 µs = 10 ms between frames.
-    local_ts_list = [1000 + i * 10_000 for i in range(len(frames_ints))]
-    header = json.dumps({"v": 1, "node": node_id, "ntp_ms": ntp_ms, "n": len(frames_ints)})
-    lines = [header]
-    for ints, ts in zip(frames_ints, local_ts_list):
-        lines.append(_make_csi_line(ints, local_ts=ts))
-    return "\n".join(lines).encode("utf-8")
+    rows = [(ints, "aa:bb:cc:dd:ee:ff", 1000 + i * 10_000) for i, ints in enumerate(frames_ints)]
+    return _bin_batch(rows, node_id=node_id, ntp_ms=ntp_ms)
 
 
 # ---- T7d.1: parse_csi_line -----------------------------------------------------------
@@ -172,27 +182,50 @@ def test_parse_batch_valid():
 # ---- T7d.3: parse_batch error paths --------------------------------------------------
 
 def test_parse_batch_bad_header_and_bad_lines():
-    """Bad header raises ValueError; bad CSI lines within a valid batch are silently skipped."""
-    # Bad header: not JSON
+    """Bad header raises ValueError; truncated/mixed-width records within a valid batch are skipped."""
+    # Bad header: wrong magic (not a v2 binary header)
     with pytest.raises(ValueError, match="bad batch header"):
         parse_batch(b"not_json\nsome,csv,line")
 
-    # Empty payload
+    # Empty payload (shorter than the 13-byte header)
     with pytest.raises(ValueError, match="bad batch header"):
         parse_batch(b"")
 
-    # Valid header but all CSI lines are malformed → empty list, no error
-    header = json.dumps({"v": 1, "node": 0, "ntp_ms": 1000, "n": 2})
-    bad_batch = (header + "\nbad_line_1\nbad_line_2").encode("utf-8")
-    assert parse_batch(bad_batch) == []
+    # Valid header but no complete records (trailing garbage) → empty list, no error
+    empty = struct.pack("<BBBQH", 0x57, 2, 0, 1000, 0) + b"\x01\x02\x03"
+    assert parse_batch(empty) == []
 
-    # Valid header + mixed S lines: only matching-S lines kept (first S sets the reference)
-    csi_ints_s4 = [1, 2, 3, 4, 5, 6, 7, 8]   # S=4
-    csi_ints_s2 = [1, 2, 3, 4]                  # S=2 → different S, skipped
-    header2 = json.dumps({"v": 1, "node": 0, "ntp_ms": 2000, "n": 2})
-    mixed = (header2 + "\n"
-             + _make_csi_line(csi_ints_s4, local_ts=1000) + "\n"
-             + _make_csi_line(csi_ints_s2, local_ts=2000)).encode("utf-8")
+    # Valid header + mixed S records: only matching-S kept (first S sets the reference)
+    mixed = _bin_batch([([1, 2, 3, 4, 5, 6, 7, 8], "aa:bb:cc:dd:ee:ff", 1000),   # S=4 (reference)
+                        ([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 2000)],              # S=2 → skipped
+                       node_id=0, ntp_ms=2000)
     frames = parse_batch(mixed)
-    assert len(frames) == 1  # only the S=4 line kept
+    assert len(frames) == 1  # only the S=4 record kept
     assert frames[0].num_subcarriers == 4
+
+
+def test_parse_batch_honors_header_count():
+    """Header n is authoritative: extras past n are ignored; n>records stops at truncation."""
+    rec = _bin_rec([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 1000)  # one S=2 record (12+4 bytes)
+
+    def hdr(n):
+        return struct.pack("<BBBQH", 0x57, 2, 0, 5000, n)
+
+    # (a) n smaller than the encoded records -> only n parsed
+    assert len(parse_batch(hdr(1) + rec + rec + rec)) == 1
+    # (b) trailing garbage after exactly n records -> ignored, not parsed as CSI
+    assert len(parse_batch(hdr(2) + rec + rec + b"\xde\xad\xbe\xef")) == 2
+    # (c) n larger than the encoded records -> stops at truncation, returns what's there
+    assert len(parse_batch(hdr(5) + rec + rec)) == 2
+
+
+def test_parse_batch_handles_uint32_ts_wrap():
+    """ts_us is the firmware's low-32-bit timer (wraps ~71.6 min); a within-batch rollover must not
+    corrupt timestamps (the masked subtraction keeps the 512 µs gap, not a ~71 min jump)."""
+    ntp_ms = 5000
+    rows = [([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 0xFFFFFF00),   # just below the 2^32 wrap
+            ([5, 6, 7, 8], "aa:bb:cc:dd:ee:ff", 0x00000100)]   # wrapped: 512 µs later
+    frames = parse_batch(_bin_batch(rows, node_id=0, ntp_ms=ntp_ms))
+    assert len(frames) == 2
+    assert frames[0].timestamp == pytest.approx(ntp_ms / 1000.0 - 512 / 1e6, abs=1e-9)
+    assert frames[1].timestamp == pytest.approx(ntp_ms / 1000.0, abs=1e-9)
