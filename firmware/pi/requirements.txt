@@ -1,0 +1,4 @@
+numpy
+# Optional cross-check parser during bring-up (the publisher/reader need only numpy):
+#   csiread   # reads Nexmon pcap -> complex CSI, to validate parse_nexmon_csi on hardware
+#   CSIKit    # alternative multi-format CSI parser

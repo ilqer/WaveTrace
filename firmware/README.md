@@ -95,6 +95,11 @@ that board isn't associated to the AP, is on the wrong channel, or `DEST_IP` is 
 On the Pi: `sudo apt install -y python3-picamera2 && python3 pi/camera_stream.py`
 The PC reads `http://<pi-ip>:8090/stream.mjpg` and feeds it to the camera labeler during collection.
 
-## TODO — Pi 5 GHz nexmon CSI node
-Not yet implemented. nexmon_csi on the Pi must emit the same `parse_batch` datagram
-(`{"v":1,"node":100,"ntp_ms":...}` header + esp-csi CSV lines) to the PC:5566. Track as its own step.
+## Pi 5 GHz nexmon CSI node (`pi/` — IMPLEMENTED 2026-06-22)
+Python node that captures 5 GHz CSI on the Pi's **onboard CYW43455** via **Nexmon CSI** (no
+external NIC) and emits the current **binary v2** datagram to the PC as **node 5** on **UDP 9876**
+(same format/port the ESP mesh uses → host auto-discovers it, zero host changes). See
+[`pi/README.md`](pi/README.md) for firmware bring-up, the 2-modem topology (Pi RX-only over
+wired eth, Mac illuminates modem B), and run/validate steps. Files: `nexmon_reader.py`,
+`publisher.py`, `pi5_csi_node.py`, `config.py`. Tested via `tests/TestPiPublisher.py`
+(round-trips the wire format through `wavetrace/Source.py`).
