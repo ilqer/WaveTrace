@@ -1,7 +1,9 @@
-# WaveTrace Core Types (`src/core/`)
+# `src/core/`
 
-This folder contains the fundamental data structures used throughout the C++ backend. 
+Shared types used across the entire C++ backend.
 
-* **`CsiFrame.hpp`**: The most important class. It represents a single "snapshot" of WiFi Channel State Information (CSI) received at a specific time. It holds the complex numbers (amplitude and phase) for every antenna and subcarrier.
-* **`Types.hpp`**: Defines standard data types and aliases to keep the C++ code clean.
-* **`Errors.hpp`**: Custom error handling classes so we know exactly what went wrong if the signal processing fails.
+| File | What it defines |
+|---|---|
+| `CsiFrame.hpp` | One snapshot of CSI data: complex amplitude per antenna per subcarrier, timestamp, node ID |
+| `Types.hpp` | Common type aliases (e.g. `complex64` vectors) |
+| `Errors.hpp` | Error types for parse failures and out-of-range values |

@@ -59,6 +59,7 @@ class ModelConfig:
     seed: int = 0                   # backend rng seed (deterministic training/inference)
     frame_average: int = 1          # T2/P10: non-overlapping decimating mean (M=1 = no change)
     subtract_baseline: bool = False  # T3/P10: subtract quiet-room baseline from image path
+    subtract_ic_baseline: bool = False  # Item 10/CAUSE 2B: subtract raw baseline from the weapon IC path
 
     def __post_init__(self) -> None:
         if self.stage not in ("presence", "weapon"):

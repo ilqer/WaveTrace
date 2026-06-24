@@ -60,7 +60,7 @@ def calibrate_source(source, out_dir, *, baseline_packets=300, use_gain_lock=Tru
 
 def collect_source(source, calib_dir, out_dir, spans, *, stage="presence", window=128, hop=32,
                    session_id="", subject_id="", frame_average=1, subtract_baseline=False,
-                   labeler=None, tier=""):
+                   subtract_ic_baseline=False, labeler=None, tier=""):
     """Build + serialize a labeled dataset from a source + a label source. weapon stage emits the
     dual-block (intercarrier) dataset; presence emits the feature path.
 
@@ -77,7 +77,8 @@ def collect_source(source, calib_dir, out_dir, spans, *, stage="presence", windo
     intercarrier = stage == "weapon"
     ds = build_dataset(list(source.frames()), result, gain_lock, labeler, window=window, hop=hop,
                        session_id=session_id, subject_id=subject_id, intercarrier=intercarrier,
-                       frame_average=frame_average, subtract_baseline=subtract_baseline)
+                       frame_average=frame_average, subtract_baseline=subtract_baseline,
+                       subtract_ic_baseline=subtract_ic_baseline)
     if tier:
         ds.meta["tier"] = tier
     return save_dataset(ds, out_dir), ds
@@ -140,6 +141,8 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
     img_base = None
     if cfg.subtract_baseline:
         img_base = image_baseline(result, locked=(apply_lock and gain_lock is not None))
+    # weapon IC background subtraction (Item 10/CAUSE 2B): raw baseline, IC path only, mirrors training
+    ic_base = result.baseline_mag if getattr(cfg, "subtract_ic_baseline", False) else None
 
     frames_iter = source.frames()
     if guard:
@@ -166,6 +169,7 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
         image_subcarriers=img_subc,
         frame_average=cfg.frame_average,
         image_baseline=img_base,
+        ic_baseline=ic_base,
     ):
         cls, conf = session.predict_window(pick(features, image, ic))
         r = RecognitionResult(); r.class_id = cls; r.confidence = conf; r.timestamp = t

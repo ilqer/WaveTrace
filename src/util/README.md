@@ -1,6 +1,8 @@
-# WaveTrace Utilities (`src/util/`)
+# `src/util/`
 
-This folder contains generic helper tools used by the rest of the C++ code.
+Low-level helpers used by the rest of the C++ code.
 
-* **`Fft.hpp`**: A fast implementation of the Fast Fourier Transform. This is heavy math used to convert signals from the time domain (how it changes over time) into the frequency domain (what pitches/frequencies are present).
-* **`RingBuffer.hpp`**: A highly efficient memory structure that lets us store a rolling window of recent data without constantly copying arrays in memory.
+| File | What it does |
+|---|---|
+| `Fft.hpp` | Self-contained radix-2 FFT; used for Doppler/PSD features and the spectrogram. O(n log n). |
+| `RingBuffer.hpp` | Fixed-capacity circular buffer for streaming windows; no allocations after construction |

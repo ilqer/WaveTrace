@@ -1,5 +1,9 @@
-# WaveTrace Diagnostics (`wavetrace/diagnostics/`)
+# `wavetrace/diagnostics/`
 
-This folder is used to monitor the health and performance of the WaveTrace system while it is running.
+Runtime health monitoring for the WaveTrace system.
 
-* **`Telemetry.py`**: Gathers metrics about the system (like how many packets we are dropping, how fast the C++ code is running, and memory usage) and packages it so we can view it on the web dashboard or print it to the terminal.
+## Files
+
+| File | What it does |
+|---|---|
+| `Telemetry.py` | Collects per-node metrics (frames/s, free heap, uptime) from the UDP health-monitor port (9877) and exposes them for `health_monitor.py` and the web dashboard. |

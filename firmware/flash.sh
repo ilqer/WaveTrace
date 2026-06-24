@@ -11,26 +11,32 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROLE="${1:-}"
+# NO_MONITOR=1 drops the blocking `monitor` step (used by the web dashboard, which streams the
+# serial port separately). Default keeps the interactive monitor for terminal use.
+MON="monitor"; [ "${NO_MONITOR:-0}" = "1" ] && MON=""
 
 case "$ROLE" in
   node)
     NODE_ID="${2:?need NODE_ID 1..MESH_NODES}"; PORT="${3:?need serial port}"
     cd "$HERE/esp32_node"
+    [ "${CLEAN:-0}" = "1" ] && { echo "[flash] CLEAN: removing sdkconfig + build to re-apply sdkconfig.defaults"; rm -f sdkconfig; rm -rf build; }
     [ -f sdkconfig ] || idf.py set-target esp32s3
     # -D cache var (not env) so changing the id reconfigures + recompiles for each board
-    idf.py -p "$PORT" -DNODE_ID="$NODE_ID" build flash monitor
+    idf.py -p "$PORT" -DNODE_ID="$NODE_ID" build flash $MON
     ;;
   rx)
     NODE_ID="${2:?need NODE_ID 1..6}"; PORT="${3:?need serial port}"
     cd "$HERE/esp32_rx"
+    [ "${CLEAN:-0}" = "1" ] && { echo "[flash] CLEAN: removing sdkconfig + build to re-apply sdkconfig.defaults"; rm -f sdkconfig; rm -rf build; }
     [ -f sdkconfig ] || idf.py set-target esp32s3
-    NODE_ID="$NODE_ID" idf.py -p "$PORT" build flash monitor
+    NODE_ID="$NODE_ID" idf.py -p "$PORT" build flash $MON
     ;;
   tx)
     PORT="${2:?need serial port}"
     cd "$HERE/esp32_tx"
+    [ "${CLEAN:-0}" = "1" ] && { echo "[flash] CLEAN: removing sdkconfig + build to re-apply sdkconfig.defaults"; rm -f sdkconfig; rm -rf build; }
     [ -f sdkconfig ] || idf.py set-target esp32s3
-    idf.py -p "$PORT" build flash monitor
+    idf.py -p "$PORT" build flash $MON
     ;;
   *)
     echo "usage: flash.sh node <NODE_ID> <PORT> | rx <NODE_ID> <PORT> | tx <PORT>" >&2; exit 1 ;;

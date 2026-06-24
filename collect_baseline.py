@@ -68,9 +68,11 @@ def main():
     parser.add_argument("--port", type=int, default=9876, help="UDP port (default: 9876)")
     parser.add_argument("--frames", type=int, default=3000, help="Baseline frames per node (default: 3000)")
     parser.add_argument("--min-frames", type=int, default=300, help="Skip a node with fewer frames than this (default: 300)")
+    parser.add_argument("--root", default="data",
+                        help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
     args = parser.parse_args()
 
-    os.makedirs("data/cal", exist_ok=True)
+    os.makedirs(f"{args.root}/cal", exist_ok=True)
 
     nodes = detect_nodes(args.port)
     if not nodes:
@@ -83,7 +85,8 @@ def main():
         nodes = [args.node]
     print(f"Calibrating nodes: {nodes}")
 
-    input("\nEnsure room is QUIET and still. Press Enter to start capturing the baseline...")
+    print("\nEnsure room is QUIET and still. Press Enter to start capturing the baseline...", flush=True)
+    input()
     for d in range(5, 0, -1):
         print(f"   capturing baseline in {d}s...", end="\r")
         time.sleep(1)
@@ -97,18 +100,18 @@ def main():
         if len(fr) < args.min_frames:
             print(f"   [SKIP] Node {nid}: only {len(fr)} frames (< {args.min_frames}). Not calibrated.")
             continue
-        save_recording(fr, f"data/baseline_raw/node{nid}")
-        calibrate_source(RecordingSource(f"data/baseline_raw/node{nid}"), f"data/cal/node{nid}",
+        save_recording(fr, f"{args.root}/baseline_raw/node{nid}")
+        calibrate_source(RecordingSource(f"{args.root}/baseline_raw/node{nid}"), f"{args.root}/cal/node{nid}",
                          baseline_packets=min(2000, len(fr)))
         print(f"   [OK]   Node {nid}: {len(fr)} frames, {fr[0].num_subcarriers} subcarriers "
-              f"-> data/cal/node{nid}")
+              f"-> {args.root}/cal/node{nid}")
         calibrated.append(nid)
 
     if not calibrated:
         print(f"\n[ERROR] No node reached {args.min_frames} frames. Check the boards / mesh_verify.py.",
               file=sys.stderr)
         return
-    print(f"\ncalibration written for nodes {calibrated} -> data/cal/node*/")
+    print(f"\ncalibration written for nodes {calibrated} -> {args.root}/cal/node*/")
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-from wavetrace.Source import parse_batch_links, resample_uniform
+from wavetrace.Source import parse_batch_links, resample_uniform, bind_udp
 from wavetrace.Calibration import load_calibration
 from wavetrace.Frontend import iter_windows
 from wavetrace.recognition import mode_session
@@ -114,10 +114,16 @@ def load_count_nodes(cal_root, model_root):
 def main():
     parser = argparse.ArgumentParser(description="Live ALL-PAIRS people-count (per-link, per-RX-node cal+head).")
     parser.add_argument("--port", type=int, default=9876, help="UDP port (default: 9876)")
-    parser.add_argument("--cal", default="data/cal", help="Calibration root (default: data/cal)")
-    parser.add_argument("--model", default="data/model_count", help="Count model root (default: data/model_count)")
+    parser.add_argument("--root", default="data",
+                        help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
+    parser.add_argument("--cal", default=None, help="Calibration root (default: <root>/cal)")
+    parser.add_argument("--model", default=None, help="Count model root (default: <root>/model_count)")
     parser.add_argument("--max-count", type=int, default=3, help="Top count level for 'N+' formatting (default: 3)")
     args = parser.parse_args()
+    if args.cal is None:
+        args.cal = f"{args.root}/cal"
+    if args.model is None:
+        args.model = f"{args.root}/model_count"
 
     TARGET_FS = 100.0      # uniform resample grid; MUST match collect_count.TARGET_FS
     CHUNK_S = 1.5          # fuse + print at this cadence
@@ -137,9 +143,7 @@ def main():
     last_seen = {}
     link_ids = {}
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", args.port))
-    sock.settimeout(0.5)
+    sock = bind_udp(args.port, timeout=0.5)
     wsummary = "  ".join(f"N{nid}:w={nodes[nid]['weight']:.2f}" for nid in sorted(nodes))
     print(f"PEOPLE-COUNT on udp/{args.port} (fs={TARGET_FS:g}Hz, classes={labels}, rx nodes={sorted(nodes)}; "
           f"vote weights {wsummary}). vary the headcount. Ctrl+C to stop.\n")

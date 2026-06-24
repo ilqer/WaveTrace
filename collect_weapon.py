@@ -25,13 +25,13 @@ import socket
 import sys
 import time
 
-from wavetrace.Source import RecordingSource, save_recording, parse_batch_links, resample_uniform
+from wavetrace.Source import RecordingSource, save_recording, parse_batch_links, resample_uniform, bind_udp
 from wavetrace.Cli import collect_source
 from wavetrace.recognition import train_weapon
 
 TARGET_FS = 100.0   # resample grid; MUST match run_weapon.TARGET_FS so train and serve windows align
 WINDOW = 128        # front-end window (frames); a link shorter than this on the grid emits no window
-DS_ROOT = "data/weapon_ds"   # cumulative dataset pool (one subdir tree per run), globbed at train time
+# Cumulative dataset pool lives at <root>/weapon_ds (one subdir tree per run), globbed at train time.
 
 
 def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
@@ -40,7 +40,8 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     Per-link so training matches per-link serving (run_weapon). Keeps the dominant subcarrier width per
     link. Stops when every expected RX node has appeared AND all known links reach n, OR max_capture_s
     elapses (the recv timeout fires only on TOTAL silence, so the deadline is what stops a quiet link)."""
-    input(f"\n>> {prompt}\n   Press Enter to start...")
+    print(f"\n>> {prompt}\n   Press Enter to start...", flush=True)
+    input()
     if countdown:
         for d in range(countdown, 0, -1):
             print(f"   starting in {d}s...", end="\r")
@@ -50,9 +51,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
 
     links = collections.defaultdict(list)  # (tx_short, rx_node) -> [frames]
     want = set(node_ids)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", port))
-    sock.settimeout(15.0)
+    sock = bind_udp(port, timeout=15.0)
     start = time.time()
     last_print = start
     try:
@@ -87,7 +86,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     return dict(links)
 
 
-def _emit(cap, cal_root, nid, sess_id, subject, carry, cond, weapon):
+def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_subtract=False):
     """Window every link of node `nid` from one captured condition and persist a labeled dataset per
     link (class 1 if `weapon` else 0). Returns the list of dataset dirs written."""
     out = []
@@ -97,14 +96,16 @@ def _emit(cap, cal_root, nid, sess_id, subject, carry, cond, weapon):
             continue
         span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
         tag = key[0].replace(":", "")  # tx mac-short, ':'-free for a path segment
-        rec = f"data/weapon_rec/{sess_id}/{cond}/node{nid}/link_{tag}"
-        ds = f"{DS_ROOT}/node{nid}/{sess_id}_{cond}_link{tag}"
+        rec = f"{root}/weapon_rec/{sess_id}/{cond}/node{nid}/link_{tag}"
+        ds = f"{root}/weapon_ds/node{nid}/{sess_id}_{cond}_link{tag}"
         save_recording(fr, rec)
         # stage="weapon" -> intercarrier dataset + weapon_label_fn; spans=[span] -> class 1 over the
         # whole segment, spans=[] -> class 0. Same session_id for both conditions so LOGO folds cleanly.
+        # bg_subtract -> null the quiet-room channel from σ²[p] (Item 10/CAUSE 2B); serving mirrors it.
         collect_source(RecordingSource(rec), f"{cal_root}/node{nid}", ds,
                        [span] if weapon else [],
-                       stage="weapon", session_id=sess_id, subject_id=subject)
+                       stage="weapon", session_id=sess_id, subject_id=subject,
+                       subtract_ic_baseline=bg_subtract)
         out.append(ds)
     return out
 
@@ -117,9 +118,17 @@ def main():
     parser.add_argument("--frames", type=int, default=1500, help="Frames per condition per node (default: 1500)")
     parser.add_argument("--subject", default="p0", help="Subject id for this run (vary it across people!)")
     parser.add_argument("--carry", default="na", help="Carry position label, e.g. waist/chest/ankle (default: na)")
-    parser.add_argument("--cal", default="data/cal", help="Calibration root (default: data/cal)")
-    parser.add_argument("--model", default="data/model_weapon", help="Weapon model root (default: data/model_weapon)")
+    parser.add_argument("--bg-subtract", action="store_true", dest="bg_subtract",
+                        help="Subtract the quiet-room baseline from σ²[p] (Item 10/CAUSE 2B); serving mirrors it")
+    parser.add_argument("--root", default="data",
+                        help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
+    parser.add_argument("--cal", default=None, help="Calibration root (default: <root>/cal)")
+    parser.add_argument("--model", default=None, help="Weapon model root (default: <root>/model_weapon)")
     args = parser.parse_args()
+    if args.cal is None:
+        args.cal = f"{args.root}/cal"
+    if args.model is None:
+        args.model = f"{args.root}/model_weapon"
 
     cal_nodes = sorted(int(os.path.basename(d)[len("node"):])
                        for d in glob.glob(os.path.join(args.cal, "node*"))
@@ -143,13 +152,15 @@ def main():
         armed = capture_links(f"Session {i+1}/{args.sessions} — stand STILL, weapon concealed on you.",
                               args.frames, args.port, cal_nodes, countdown=5)
         for nid in cal_nodes:
-            _emit(clear, args.cal, nid, sess_id, args.subject, args.carry, "clear", weapon=False)
-            _emit(armed, args.cal, nid, sess_id, args.subject, args.carry, "weapon", weapon=True)
+            _emit(clear, args.root, args.cal, nid, sess_id, args.subject, args.carry, "clear",
+                  weapon=False, bg_subtract=args.bg_subtract)
+            _emit(armed, args.root, args.cal, nid, sess_id, args.subject, args.carry, "weapon",
+                  weapon=True, bg_subtract=args.bg_subtract)
 
     print("\nTraining per-node weapon models (ic27) on the CUMULATIVE pool...")
     trained = []
     for nid in cal_nodes:
-        ds_dirs = sorted(glob.glob(f"{DS_ROOT}/node{nid}/*"))
+        ds_dirs = sorted(glob.glob(f"{args.root}/weapon_ds/node{nid}/*"))
         if not ds_dirs:
             print(f"   [SKIP] Node {nid}: no datasets in pool.")
             continue
@@ -165,6 +176,9 @@ def main():
         if sess:
             line += (f"  LOGO={sess['accuracy']:.3f} (majority {sess['majority_accuracy']:.3f}, "
                      f"TPR {sess.get('tpr', 0):.3f}, FP {sess.get('fp_rate', 0):.3f})")
+        carry = logo.get("carry")  # confound axis: generalization across carry pose (diagnosis 5E)
+        if carry:
+            line += f"  carry-LOGO={carry['accuracy']:.3f} (maj {carry['majority_accuracy']:.3f})"
         print(line)
         trained.append(nid)
 

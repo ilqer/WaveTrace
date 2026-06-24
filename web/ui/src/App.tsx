@@ -1,4 +1,4 @@
-import { useWaveTrace } from './hooks/useWaveTrace';
+import { useWaveTrace, type StartPayload } from './hooks/useWaveTrace';
 import Controls from './components/Controls';
 import Spectrogram from './components/Spectrogram';
 import VariancePlot from './components/VariancePlot';
@@ -7,8 +7,12 @@ import { SpatialView } from './components/SpatialView';
 import TrainingDashboard from './components/TrainingDashboard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
-import { Activity, Terminal, Wifi, BarChart3, AlertCircle, Box, Map as MapIcon, BrainCircuit, LayoutDashboard, Gauge, AlertTriangle, Upload } from 'lucide-react';
+import { WeaponLitmus } from './components/WeaponLitmus';
+import { DevicePanel } from './components/DevicePanel';
+import { Activity, Terminal, Wifi, BarChart3, AlertCircle, Box, Map as MapIcon, BrainCircuit, LayoutDashboard, Gauge, AlertTriangle, Upload, Usb } from 'lucide-react';
 import { clsx } from 'clsx';
+import AnsiImport from 'ansi-to-react';
+const Ansi = (AnsiImport as any).default || AnsiImport;
 import { useState, useMemo, useRef } from 'react';
 
 function App() {
@@ -19,6 +23,7 @@ function App() {
     driftRatio,
     varianceData,
     antennas,
+    nodeIds,
     logs,
     spectrogram,
     spatial,
@@ -39,14 +44,17 @@ function App() {
   const handleModelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const buf = await file.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let b64 = '';
+    const CHUNK = 8192;
+    for (let i = 0; i < bytes.length; i += CHUNK)
+      b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
     setUploadStatus('Uploading…');
     try {
-      const res = await fetch(`/api/model/upload?dest=output/model.pkl/${file.name}`, {
+      const res = await fetch('/api/model/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(b64),
+        body: JSON.stringify({ file_b64: b64, dest: `output/model.pkl/${file.name}` }),
       });
       const data = await res.json();
       setUploadStatus(data.error ? `Error: ${data.error}` : `Uploaded → ${data.dest}`);
@@ -58,7 +66,8 @@ function App() {
   };
 
   const [view3dMode, setView3dMode] = useState<'manifold' | 'heatmap'>('manifold');
-  const [activeTab, setActiveTab] = useState<'sensing' | 'training' | 'diagnostics'>('sensing');
+  const [activeTab, setActiveTab] = useState<'sensing' | 'training' | 'diagnostics' | 'devices'>('sensing');
+  const [calibK, setCalibK] = useState(64);
 
   const verdictInfo = useMemo(() => {
     if (!verdict) return null;
@@ -114,6 +123,14 @@ function App() {
             <Gauge size={14} />
             Diagnostics
           </button>
+          <button
+            onClick={() => setActiveTab('devices')}
+            className={clsx("flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
+              activeTab === 'devices' ? "bg-slate-800 text-emerald-400 shadow-lg" : "text-slate-500 hover:text-slate-300")}
+          >
+            <Usb size={14} />
+            Devices
+          </button>
         </div>
 
         <div className="flex items-center gap-3">
@@ -153,20 +170,27 @@ function App() {
       <main className="grid grid-cols-12 gap-6 max-w-[1600px] mx-auto">
         {/* Left Column: Controls and Antennas */}
         <div className="col-span-3 space-y-6 flex flex-col">
-          <Controls onStart={start} onStop={stop} isRunning={isRunning} />
+          <Controls
+            onStart={start}
+            onStop={stop}
+            isRunning={isRunning}
+            onCalibDetected={setCalibK}
+          />
           
           <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
             <div className="flex items-center gap-2 mb-4 text-slate-400">
               <BarChart3 size={18} />
-              <h2 className="text-xs font-bold uppercase tracking-widest">Antenna Power</h2>
+              <h2 className="text-xs font-bold uppercase tracking-widest">Node Power</h2>
             </div>
             <div className="space-y-4">
               {antennas.length > 0 ? antennas.map((pwr, idx) => {
-                const pct = Math.min(100, Math.max(0, pwr * 50));
+                // normalize to the strongest node so a dead board reads ~0 and balance is visible
+                const maxPwr = Math.max(...antennas, 1e-9);
+                const pct = Math.min(100, Math.max(0, (pwr / maxPwr) * 100));
                 return (
-                  <div key={idx} className="flex flex-col gap-1.5">
+                  <div key={nodeIds[idx] ?? idx} className="flex flex-col gap-1.5">
                     <div className="flex justify-between text-xs">
-                      <span className="text-slate-400 font-medium">Antenna {idx + 1}</span>
+                      <span className="text-slate-400 font-medium">Node {nodeIds[idx] ?? idx + 1}</span>
                       <span className="font-mono text-emerald-400 font-bold">{pwr.toFixed(3)}</span>
                     </div>
                     <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
@@ -186,7 +210,21 @@ function App() {
 
         {/* Middle Column: Visualizations */}
         <div className="col-span-6 space-y-6">
-          {activeTab === 'diagnostics' ? (
+          {activeTab === 'devices' ? (
+            <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[624px]">
+              <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 shrink-0">
+                <Usb size={14} className="text-emerald-500" />
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Hardware — Flash · Serial · Pi
+                </span>
+              </div>
+              <div className="flex-1 min-h-0">
+                <ErrorBoundary label="Device panel error">
+                  <DevicePanel subcarriers={calibK} />
+                </ErrorBoundary>
+              </div>
+            </section>
+          ) : activeTab === 'diagnostics' ? (
             <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[624px]">
               <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 shrink-0">
                 <Gauge size={14} className="text-emerald-500" />
@@ -194,7 +232,8 @@ function App() {
                   Live Diagnostics
                 </span>
               </div>
-              <div className="flex-1 min-h-0 overflow-auto">
+              <div className="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+                <WeaponLitmus />
                 <DiagnosticsPanel />
               </div>
             </section>
@@ -313,14 +352,14 @@ function App() {
                <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">System Logs</h2>
              </div>
              <div className="flex-1 p-4 font-mono text-[11px] overflow-y-auto space-y-1 bg-slate-950/50 custom-scrollbar">
-                {logs.length > 0 ? logs.map((log, i) => (
-                  <div key={i} className={clsx(
+                {logs.length > 0 ? logs.map((log) => (
+                  <div key={log.id} className={clsx(
                     "border-l-2 pl-2",
-                    log.includes('ERROR') ? "border-rose-500 text-rose-400 bg-rose-500/5" :
-                    log.includes('[SYSTEM]') ? "border-emerald-500 text-emerald-400 bg-emerald-500/5" :
+                    log.text.includes('ERROR') ? "border-rose-500 text-rose-400 bg-rose-500/5" :
+                    log.text.includes('[SYSTEM]') ? "border-emerald-500 text-emerald-400 bg-emerald-500/5" :
                     "border-slate-800 text-slate-500"
                   )}>
-                    {log}
+                    <Ansi>{log.text}</Ansi>
                   </div>
                 )) : (
                   <div className="text-slate-700 italic">No logs yet...</div>

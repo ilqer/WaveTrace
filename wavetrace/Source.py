@@ -65,20 +65,22 @@ def parse_csi_line(line, *, tx_mac=None):
         return None
 
 
-# Binary UDP wire format v2 (little-endian; the ESP32 firmware sends this). Header then packed records.
+# Binary UDP wire format (little-endian). Header then packed records. ver 2 = int8 I/Q (ESP32 nodes),
+# ver 3 = int16 I/Q (Pi 5 GHz node — keeps full amplitude range the weapon σ² feature needs).
 _BIN_HDR = struct.Struct("<BBBQH")   # magic, ver, node, ntp_ms, n  -> 13 bytes
-_BIN_MAGIC, _BIN_VER = 0x57, 2
+_BIN_MAGIC = 0x57
+_BIN_VERS = (2, 3)
 
 
 def _parse_bin_header(payload: bytes):
-    """(node_id, ntp_ms, n, body_offset) from a v2 binary batch header; ValueError on a bad header.
+    """(node_id, ntp_ms, n, ver, body_offset) from a binary batch header; ValueError on a bad header.
     `n` is the authoritative record count — the parser trusts it over the raw byte length."""
     if len(payload) < _BIN_HDR.size:
         raise ValueError(f"UdpSource: bad batch header: {len(payload)} bytes < {_BIN_HDR.size}")
     magic, ver, node_id, ntp_ms, n = _BIN_HDR.unpack_from(payload, 0)
-    if magic != _BIN_MAGIC or ver != _BIN_VER:
+    if magic != _BIN_MAGIC or ver not in _BIN_VERS:
         raise ValueError(f"UdpSource: bad batch header: magic={magic:#x} ver={ver}")
-    return node_id, ntp_ms, n, _BIN_HDR.size
+    return node_id, ntp_ms, n, ver, _BIN_HDR.size
 
 
 def _mac_to_bytes(mac: str) -> bytes:
@@ -86,23 +88,28 @@ def _mac_to_bytes(mac: str) -> bytes:
     return bytes(int(x, 16) for x in mac.split(":"))
 
 
-def _iter_bin_records(payload: bytes, offset: int, n: int):
+def _iter_bin_records(payload: bytes, offset: int, n: int, ver: int = 2):
     """Yield (mac_bytes, csi complex64, local_ts_us) for up to `n` packed records — the header count
     bounds the loop, so trailing bytes past `n` records are never interpreted as CSI. Stops early on a
-    structurally corrupt record (truncated, or odd byte length) since the stream can't be resynced.
-    Record = mac[6] | ts_us(u32 LE) | len(u16 LE) | len*int8 raw CSI, laid out [imag0,real0,...].
+    structurally corrupt record (truncated, or wrong byte length) since the stream can't be resynced.
+    Record = mac[6] | ts_us(u32 LE) | len(u16 LE) | CSI bytes, laid out [imag0,real0,...]. CSI is
+    int8 per component (ver 2, L=2*S) or int16 (ver 3, L=4*S).
     Yields the raw 6 MAC bytes (not a formatted string) so the hot path skips per-record formatting;
     callers compare bytes for the tx_mac filter and only stringify when bucketing/logging."""
     end = len(payload)
+    step = 2 if ver == 2 else 4   # bytes per subcarrier: int8 I/Q (2) vs int16 I/Q (4)
     for _ in range(n):
         if offset + 12 > end:                     # 6 (mac) + 4 (ts) + 2 (len): batch shorter than n
             break
         mac = payload[offset:offset + 6]
         local_ts_us, L = struct.unpack_from("<IH", payload, offset + 6)
         offset += 12
-        if L % 2 != 0 or offset + L > end:
+        if L % step != 0 or offset + L > end:
             break
-        d = np.frombuffer(payload, dtype=np.int8, count=L, offset=offset).astype(np.float32)
+        if ver == 2:
+            d = np.frombuffer(payload, dtype=np.int8, count=L, offset=offset).astype(np.float32)
+        else:
+            d = np.frombuffer(payload, dtype="<i2", count=L // 2, offset=offset).astype(np.float32)
         offset += L
         csi = (d[1::2] + 1j * d[0::2]).astype(np.complex64)   # csi[k] = complex(real=d[2k+1], imag=d[2k])
         yield mac, csi, local_ts_us
@@ -120,12 +127,12 @@ def parse_batch(payload: bytes, *, tx_mac=None) -> list:
     Timestamp scheme: ntp_ms/1000.0 is the batch SEND time ≈ the LAST frame's wall time; each
     frame's absolute time is reconstructed from its local_timestamp offset relative to the last
     record's local_ts:  t_i = ntp_ms/1000 - (last_us - local_ts_i) / 1e6."""
-    node_id, ntp_ms, n, off = _parse_bin_header(payload)
+    node_id, ntp_ms, n, ver, off = _parse_bin_header(payload)
     tx_bytes = _mac_to_bytes(tx_mac) if tx_mac is not None else None
 
     parsed = []
     S_ref = None
-    for mac_b, csi, local_ts_us in _iter_bin_records(payload, off, n):
+    for mac_b, csi, local_ts_us in _iter_bin_records(payload, off, n, ver):
         if tx_bytes is not None and mac_b != tx_bytes:
             continue
         S = int(csi.size)
@@ -165,11 +172,11 @@ def parse_batch_links(payload: bytes, *, tx_mac=None) -> dict:
     frame's wall time; per-frame t reconstructed from local_timestamp; header n bounds parsing).
     Difference: frames are bucketed by the per-record MAC (the transmitter) instead of merged, and the
     subcarrier-width guard is applied PER LINK (a future 5 GHz arm can carry a different width)."""
-    node_id, ntp_ms, n, off = _parse_bin_header(payload)
+    node_id, ntp_ms, n, ver, off = _parse_bin_header(payload)
     tx_bytes = _mac_to_bytes(tx_mac) if tx_mac is not None else None
 
     parsed = []  # (tx_short, csi, local_ts_us)
-    for mac_b, csi, local_ts_us in _iter_bin_records(payload, off, n):
+    for mac_b, csi, local_ts_us in _iter_bin_records(payload, off, n, ver):
         if tx_bytes is not None and mac_b != tx_bytes:
             continue
         tx_short = f"{mac_b[4]:02x}:{mac_b[5]:02x}"   # last two octets == mac_short(full mac)
@@ -234,6 +241,22 @@ def resample_uniform(frames, fs_hz):
     return result
 
 
+def bind_udp(port, *, timeout=None):
+    """A UDP socket bound to `port` with a large (8 MB) kernel receive buffer. The big buffer absorbs
+    bursts from N nodes while the main thread is busy in inference — without it the kernel drops
+    datagrams before the single-threaded receiver reads them. The OS may cap the size (on macOS raise
+    kern.ipc.maxsockbuf); the setsockopt failing is non-fatal."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
+    except OSError:
+        pass
+    sock.bind(("0.0.0.0", port))
+    if timeout is not None:
+        sock.settimeout(timeout)
+    return sock
+
+
 class CsiSource(ABC):
     """A stream of CsiFrames feeding the front-end."""
 
@@ -275,10 +298,8 @@ class UdpSource(CsiSource):
 
     def frames(self):
         """Bind UDP socket and yield CsiFrames; stop on timeout or max_frames."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock = bind_udp(self._port, timeout=self._timeout_s)
         try:
-            sock.bind(("0.0.0.0", self._port))
-            sock.settimeout(self._timeout_s)
             count = 0
             while self._max_frames is None or count < self._max_frames:
                 try:

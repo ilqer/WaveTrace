@@ -31,12 +31,17 @@ from wavetrace import FeatureExtractor, InterCarrierExtractor, SpectrogramBuilde
 
 
 def iter_windows(frames, subcarriers, gain_lock, *, window=128, hop=32, intercarrier=False,
-                 image_subcarriers=None, frame_average=1, image_baseline=None):
+                 image_subcarriers=None, frame_average=1, image_baseline=None, ic_baseline=None):
     """Yield (t, features, image, ic) per emitted window over `frames`.
 
     subcarriers: NBVI subcarrier indices (K, the feature series).
     gain_lock: locked GainLock or None (no rescale).
     intercarrier: emit the 27-feature IC block from raw mags; ic=None when False.
+    ic_baseline: (S,) float32 quiet-room |H| per subcarrier (calibration.baseline_mag). When set, it
+      is subtracted from each frame's raw magnitude BEFORE the IC block (diagnosis CAUSE 2B weapon
+      background subtraction): σ²[p] then measures the variance of the PERTURBATION (h_live−h_baseline,
+      static room nulled), not of the full channel. Per-subcarrier (not a scalar), so it genuinely
+      reshapes σ²[p]. Only affects the IC path; features/image are unchanged. Must match training.
     image_subcarriers: if set, image rows use these subcarrier indices (all-valid, freq order) instead
       of the NBVI set. None -> image uses `subcarriers` (byte-identical to pre-T1 behavior).
     frame_average: M>=1 decimating mean (M=1 -> existing path, byte-identical). Effective fs=fs/M.
@@ -68,12 +73,20 @@ def iter_windows(frames, subcarriers, gain_lock, *, window=128, hop=32, intercar
     img_base = (np.ascontiguousarray(image_baseline[img_subc], dtype=np.float32)
                 if image_baseline is not None else None)
     sub_buf = np.empty(K_img, dtype=np.float32) if img_base is not None else None
+    # full-S IC baseline (not sliced to subc — the IC block consumes the whole frame, Frontend §76)
+    ic_base = np.ascontiguousarray(ic_baseline, dtype=np.float32) if ic_baseline is not None else None
 
     if frame_average == 1:
         # M=1: exact original code path — byte-identical to pre-P10 behavior.
         for fr in frames:
             if ic is not None:
-                ic_emitted = ic.push(np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32))
+                ic_mag = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
+                if ic_base is not None:
+                    if ic_mag.shape != ic_base.shape:
+                        raise ValueError(f"ic_baseline width {ic_base.shape} != frame width "
+                                         f"{ic_mag.shape}; calibration and capture must share width")
+                    ic_mag = ic_mag - ic_base  # null the static room before σ²[p]
+                ic_emitted = ic.push(ic_mag)
             if gain_lock is not None:
                 gain_lock.apply(fr)
             mags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
@@ -134,7 +147,10 @@ def iter_windows(frames, subcarriers, gain_lock, *, window=128, hop=32, intercar
                 else:
                     sg_emitted = sg.push(vals_img)
                 if ic is not None:
-                    ic_emitted = ic.push(raw_acc)
+                    if ic_base is not None and raw_acc.shape != ic_base.shape:
+                        raise ValueError(f"ic_baseline width {ic_base.shape} != frame width "
+                                         f"{raw_acc.shape}; calibration and capture must share width")
+                    ic_emitted = ic.push(raw_acc - ic_base if ic_base is not None else raw_acc)
                 else:
                     ic_emitted = emitted
                 if emitted:

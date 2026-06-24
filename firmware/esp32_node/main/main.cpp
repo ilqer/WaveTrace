@@ -51,7 +51,18 @@
 // MTU-safe: keep the whole datagram (header + body) under one ~1500-byte Wi-Fi/Ethernet frame so a
 // single dropped IP fragment can't sink the whole batch. Was 8192 (≈6 fragments -> amplified loss).
 #define UDP_BATCH_BYTES 1400       // max CSI body per datagram before a forced flush
-#define CSI_MAX_BYTES   256        // max pinned CSI byte length buffered (128 complex; covers HT20/HT40)
+#define UDP_SEND_RETRIES 3         // resend a batch this many times on transient ENOMEM before dropping
+#define UDP_ENOMEM_BACKOFF_MS 15   // brief global pause once the retries are exhausted (was a 100 ms hole)
+// CSI byte length is DERIVED from the sensing mode (2 bytes/subcarrier, set by WT_BW_HT40 in
+// config.h), not a magic number: HT40 = LLTF(64)+HT-LTF(128) = 192 complex = 384 B; HT20 =
+// LLTF(64)+HT-LTF(64) = 128 complex = 256 B. The static by-value queue buffer is sized to exactly
+// the active mode's width — a static array can't be sized at runtime, but the mode is known at build
+// time. (The ACTUAL per-frame length still pins dynamically via s_expect_len; this is just the cap.)
+#if WT_BW_HT40
+#define CSI_MAX_BYTES   384
+#else
+#define CSI_MAX_BYTES   256
+#endif
 
 static const char *TAG = "wt_node";
 static const uint8_t BCAST[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
@@ -244,6 +255,18 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info) {
     if (len == 2 * s_expect_len) len = s_expect_len;   // STBC double -> keep first LTF block only
     else if (len != s_expect_len) return;              // off-format (short/odd) -> drop, like the host
 
+    // Per-node emit-rate cap (CSI_MAX_HZ): drop frames closer than the min interval so HT40's high
+    // native rate can't overrun the UDP backhaul (sendto ENOMEM). The host resamples to TARGET_FS
+    // anyway, so the dropped frames carry no usable signal. csi_raw still counts every callback, so
+    // the gap between csi_raw and csi_hz in the heartbeat shows the cap working.
+
+#if CSI_MAX_HZ > 0
+    static int64_t s_last_emit_us = 0;
+    const int64_t now_us = esp_timer_get_time();
+    if (now_us - s_last_emit_us < 1000000 / CSI_MAX_HZ) return;
+    s_last_emit_us = now_us;
+#endif
+
     csi_raw_t r;
     memcpy(r.mac, info->mac, 6);
     r.len = (uint16_t)len;
@@ -365,6 +388,21 @@ static int send_csi_batch(int sock, struct sockaddr_in *dst, uint8_t *dgram,
     return sendto(sock, dgram, sizeof(h) + blen, 0, (struct sockaddr *)dst, sizeof(*dst));
 }
 
+// Flush one batch with a bounded retry on transient ENOMEM (TX buffers momentarily full). Keeps the
+// SAME bytes and yields ~2 ms between tries instead of discarding the datagram on the first failure —
+// so one ENOMEM blip no longer becomes a multi-hundred-frame hole (the queue would overflow during a
+// 100 ms drop). Returns true once it leaves the air (or on a non-ENOMEM error a retry can't fix);
+// false only after every retry still hit ENOMEM -> caller backs off briefly then drops this batch.
+static bool flush_csi_batch(int sock, struct sockaddr_in *dst, uint8_t *dgram,
+                            const uint8_t *body, int blen, int count) {
+    for (int t = 0; t < UDP_SEND_RETRIES; t++) {
+        if (send_csi_batch(sock, dst, dgram, body, blen, count) >= 0) return true;
+        if (errno != ENOMEM) return true;       // not a buffer issue -> retrying won't help
+        vTaskDelay(pdMS_TO_TICKS(2));           // let the Wi-Fi TX path drain, then resend the SAME batch
+    }
+    return false;
+}
+
 // Pack raw CSI -> binary records and batch them into one datagram per BATCH_MS (or per MTU), instead
 // of one datagram per frame — at ~300 fps per-frame UDP means thousands of contending TXs/s and heavy
 // loss. Packing is pure memcpy (no snprintf), so Core 1 stays cheap and the Wi-Fi callback (Core 0) free.
@@ -382,7 +420,7 @@ static void udp_batch_task(void *) {
         int64_t now = esp_timer_get_time();
         if (backoff_until_us > 0) {
             if (now < backoff_until_us) {
-                vTaskDelay(pdMS_TO_TICKS(10));
+                vTaskDelay(pdMS_TO_TICKS(5));
                 continue;
             } else {
                 ESP_LOGI(TAG, "ENOMEM backoff expired, resuming sends");
@@ -393,12 +431,12 @@ static void udp_batch_task(void *) {
         if (xQueueReceive(s_csi_q, &r, pdMS_TO_TICKS(BATCH_MS)) == pdTRUE) {
             int rec = 6 + 4 + 2 + r.len;   // mac | ts_us | len | raw int8 CSI
             if (blen + rec > UDP_BATCH_BYTES && count > 0) {
-                int res = send_csi_batch(sock, &dst, dgram, body, blen, count);
-                if (res < 0 && errno == ENOMEM) {
-                    backoff_until_us = esp_timer_get_time() + 100 * 1000; // 100 ms backoff
-                    ESP_LOGW(TAG, "sendto ENOMEM — backing off for 100 ms");
+                if (!flush_csi_batch(sock, &dst, dgram, body, blen, count)) {
+                    backoff_until_us = esp_timer_get_time() + UDP_ENOMEM_BACKOFF_MS * 1000;
+                    ESP_LOGW(TAG, "sendto ENOMEM after %d retries — backing off %d ms",
+                             UDP_SEND_RETRIES, UDP_ENOMEM_BACKOFF_MS);
                 }
-                blen = 0; count = 0;
+                blen = 0; count = 0;   // batch left the air (or dropped after retries) -> reset
             }
             if (rec <= UDP_BATCH_BYTES) {
                 uint8_t *p = body + blen;
@@ -414,10 +452,10 @@ static void udp_batch_task(void *) {
             // every 64 frames so they run; at >1000 fps this costs <2% throughput.
             if (++since_yield >= 64) { since_yield = 0; vTaskDelay(1); }
         } else if (count > 0) {
-            int res = send_csi_batch(sock, &dst, dgram, body, blen, count);
-            if (res < 0 && errno == ENOMEM) {
-                backoff_until_us = esp_timer_get_time() + 100 * 1000;
-                ESP_LOGW(TAG, "sendto ENOMEM — backing off for 100 ms");
+            if (!flush_csi_batch(sock, &dst, dgram, body, blen, count)) {
+                backoff_until_us = esp_timer_get_time() + UDP_ENOMEM_BACKOFF_MS * 1000;
+                ESP_LOGW(TAG, "sendto ENOMEM after %d retries — backing off %d ms",
+                         UDP_SEND_RETRIES, UDP_ENOMEM_BACKOFF_MS);
             }
             blen = 0; count = 0;
         }
@@ -528,6 +566,33 @@ static void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *
         s_connected = true;
         ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "router ip: " IPSTR, IP2STR(&ev->ip_info.ip));
+        // HT-rate the ESP-NOW sensing burst HERE (post-association), NOT in app_main: only once we are
+        // on the router channel does the 40 MHz secondary exist. Setting an HT40 rate before assoc (still
+        // on the default 20 MHz channel) fails with "invalid chanel info / ESP_ERR_ESPNOW_ARG" and the
+        // burst silently stays legacy → CSI is HT20-width even on a 40 MHz link. Re-applied each (re)assoc.
+        esp_now_rate_config_t rate_cfg = {
+            .phymode = WT_BW_HT40 ? WIFI_PHY_MODE_HT40 : WIFI_PHY_MODE_HT20,
+            .rate = WIFI_PHY_RATE_MCS0_LGI,
+            .ersu = false,
+            .dcm = false,
+        };
+        esp_err_t rerr = esp_now_set_peer_rate_config(BCAST, &rate_cfg);
+        ESP_LOGI(TAG, "esp_now HT%d rate: %s", WT_BW_HT40 ? 40 : 20, esp_err_to_name(rerr));
+
+        // DIAGNOSTIC: is the router actually on a 40 MHz channel? `second` is read from the ASSOCIATED
+        // AP (ground truth, not what we requested). second != NONE => the AP offers a 40 MHz secondary;
+        // second == NONE while WT_BW_HT40=1 => the router is 20 MHz-only, so HT40 ESP-NOW frames won't
+        // carry and peers/csi stay 0. Printed at WARN so it stands out once per (re)association.
+        wifi_ap_record_t ap = {};
+        wifi_bandwidth_t bw = WIFI_BW_HT20;
+        esp_wifi_get_bandwidth(WIFI_IF_STA, &bw);
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+            const char *sec = ap.second == WIFI_SECOND_CHAN_ABOVE ? "ABOVE(=40MHz)"
+                            : ap.second == WIFI_SECOND_CHAN_BELOW ? "BELOW(=40MHz)"
+                            : "NONE(=20MHz only)";
+            ESP_LOGW(TAG, "AP-CHECK ssid=%s ch=%d second=%s 11n=%d rssi=%d sta_bw=%s", ap.ssid,
+                     ap.primary, sec, ap.phy_11n, ap.rssi, bw == WIFI_BW_HT40 ? "HT40" : "HT20");
+        }
     }
 }
 
@@ -576,19 +641,10 @@ extern "C" void app_main(void) {
     peer.encrypt = false;
     esp_now_add_peer(&peer);
 
-    // Force the sensing frame to an HT rate. Default ESP-NOW = tiny legacy/1 Mbps action frames that
-    // rarely trigger the CSI engine (our yield was <1%); HT frames yield CSI reliably AND carry HT-LTF.
-    // HT20 matches a 20 MHz AP. HT40 (wider CSI) is REJECTED on a BW20 channel ("invalid chanel info,
-    // need change second channel to 40") and silently falls back to legacy — only use HT40 once the
-    // router runs a 40 MHz channel.
-    esp_now_rate_config_t rate_cfg = {
-        .phymode = WT_BW_HT40 ? WIFI_PHY_MODE_HT40 : WIFI_PHY_MODE_HT20,
-        .rate = WIFI_PHY_RATE_MCS0_LGI,
-        .ersu = false,
-        .dcm = false,
-    };
-    esp_err_t rerr = esp_now_set_peer_rate_config(BCAST, &rate_cfg);
-    if (rerr != ESP_OK) ESP_LOGW(TAG, "esp_now rate_config failed: %s", esp_err_to_name(rerr));
+    // The sensing frame is forced to an HT rate (default ESP-NOW = tiny legacy/1 Mbps action frames that
+    // rarely trigger the CSI engine, <1% yield; HT frames yield CSI reliably AND carry HT-LTF). The
+    // rate_config is applied in wifi_event_handler on IP_EVENT_STA_GOT_IP — NOT here — because an HT40
+    // rate needs the 40 MHz secondary channel, which only exists after we associate to the router.
 
     // Promiscuous mode is set up BEFORE the CSI engine (ESPectre ordering): it primes the internal
     // Wi-Fi stack tables so CSI initializes cleanly. CSI only fires for the associated-AP link by
@@ -611,12 +667,17 @@ extern "C" void app_main(void) {
     esp_wifi_set_csi_rx_cb(csi_cb, NULL);
     esp_wifi_set_csi(true);
 
-    // By-value queue: 256 frames ≈ 0.6–1.7 s of burst tolerance. Static cost = 256*sizeof(csi_raw_t)
-    // ≈ 68 KB (no per-frame heap churn — the malloc was a CLAUDE.md hot-path-allocation violation).
-    s_csi_q = xQueueCreate(256, sizeof(csi_raw_t));
+    // By-value queue: 128 frames ≈ 0.3–0.5 s of burst tolerance — ample vs the 100 ms BATCH_MS flush.
+    // Static cost at HT40 = 128*sizeof(csi_raw_t) (≈396 B) ≈ 50 KB. Was 256 (≈99 KB at HT40, NOT the
+    // 68 KB the old comment claimed — that was the HT20 figure); the oversize starved the heap that the
+    // Wi-Fi/lwIP TX path needs, *causing* the sendto ENOMEM it was meant to buffer against. Halving it
+    // frees ~50 KB for the (now static) TX buffers. (No per-frame heap churn — the malloc was a
+    // CLAUDE.md hot-path-allocation violation.)
+    s_csi_q = xQueueCreate(128, sizeof(csi_raw_t));
     s_turn_q = xQueueCreate(4, sizeof(uint8_t));
     // Pin every app task to Core 1 (APP_CPU), leaving Core 0 (PRO_CPU) dedicated to the Wi-Fi/lwIP
-    // stack + csi_cb. Heavy work (CSV formatting in udp_batch_task) must not contend with the driver.
+    // stack + csi_cb. The binary record packing in udp_batch_task (pure memcpy) must not contend with
+    // the driver.
     xTaskCreatePinnedToCore(discovery_task, "discovery", 3072, NULL, 4, NULL, 1);
     xTaskCreatePinnedToCore(udp_batch_task, "csi_udp", 4096, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(mesh_task, "mesh", 4096, NULL, 6, NULL, 1);

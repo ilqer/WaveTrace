@@ -18,7 +18,7 @@ import socket
 import sys
 import time
 
-from wavetrace.Source import RecordingSource, save_recording, parse_batch_links, resample_uniform
+from wavetrace.Source import RecordingSource, save_recording, parse_batch_links, resample_uniform, bind_udp
 from wavetrace.Cli import collect_source
 from wavetrace.recognition import train_presence
 from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler
@@ -40,7 +40,8 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     single-channel stream. Keeps the dominant subcarrier width per link. Stops when every expected RX
     node has appeared AND all known links reach n, OR max_capture_s elapses (the recv timeout fires only
     on TOTAL silence, so the wall-clock deadline is what stops a lone quiet link from stalling)."""
-    input(f"\n>> {prompt}\n   Press Enter to start...")
+    print(f"\n>> {prompt}\n   Press Enter to start...", flush=True)
+    input()
     if countdown:
         for d in range(countdown, 0, -1):
             print(f"   starting in {d}s...", end="\r")
@@ -50,9 +51,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
 
     links = collections.defaultdict(list)  # (tx_short, rx_node) -> [frames]
     want = set(node_ids)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", port))
-    sock.settimeout(15.0)
+    sock = bind_udp(port, timeout=15.0)
     start = time.time()
     last_print = start
     try:
@@ -94,9 +93,15 @@ def main():
     parser.add_argument("--sessions", type=int, default=3, help="Number of sessions to capture (default: 3)")
     parser.add_argument("--frames", type=int, default=1500, help="Frames per count per node (default: 1500)")
     parser.add_argument("--max-count", type=int, default=3, help="Top count level; captures 0..N, N='N+' (default: 3)")
-    parser.add_argument("--cal", default="data/cal", help="Calibration root (default: data/cal)")
-    parser.add_argument("--model", default="data/model_count", help="Count model root (default: data/model_count)")
+    parser.add_argument("--root", default="data",
+                        help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
+    parser.add_argument("--cal", default=None, help="Calibration root (default: <root>/cal)")
+    parser.add_argument("--model", default=None, help="Count model root (default: <root>/model_count)")
     args = parser.parse_args()
+    if args.cal is None:
+        args.cal = f"{args.root}/cal"
+    if args.model is None:
+        args.model = f"{args.root}/model_count"
 
     if args.max_count < 1:
         print("[ERROR] --max-count must be >= 1 (need at least empty vs one person).", file=sys.stderr)
@@ -137,8 +142,8 @@ def main():
                         continue
                     span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
                     tag = key[0].replace(":", "")  # tx mac-short, ':'-free for a path segment
-                    rec = f"data/count_sess_{i}/c{c}/node{nid}/link_{tag}"
-                    ds = f"data/count_ds_{i}/c{c}/node{nid}/link_{tag}"
+                    rec = f"{args.root}/count_sess_{i}/c{c}/node{nid}/link_{tag}"
+                    ds = f"{args.root}/count_ds_{i}/c{c}/node{nid}/link_{tag}"
                     save_recording(fr, rec)
                     # constant-count labeler: every window in this segment carries class_id = c.
                     lab = ScriptedLabeler([(span[0], span[1], True)],

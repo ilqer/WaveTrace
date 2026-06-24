@@ -15,7 +15,8 @@ Payload layout (Nexmon CSI, bcm43455c0 — same as the `nexcsi` decoder):
 
 NOTE (verify on hardware, Part A step 2): the int16 I/Q ordering below assumes
 [real, imag] per subcarrier. For PRESENCE this is irrelevant (|csi| is identical either
-way and the host normalizes); confirm only if you later need phase. NFFT for 5 GHz HT40 = 128.
+way and the host normalizes); confirm before using phase or weapon σ². NFFT = FFT size:
+5 GHz HT40 = 128, HT80 = 256 (this deployment uses HT80 -> EXPECT_S = 256).
 """
 import socket
 import struct

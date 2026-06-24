@@ -19,7 +19,7 @@ import time
 
 import numpy as np
 
-from wavetrace.Source import parse_batch_links, resample_uniform
+from wavetrace.Source import parse_batch_links, resample_uniform, bind_udp
 from wavetrace.Calibration import load_calibration
 from wavetrace.Frontend import iter_windows
 from wavetrace.recognition import mode_session
@@ -47,19 +47,26 @@ def _logo_acc(metrics_path):
     return None
 
 
-def _last_window_proba(frames, fs, result, gain_lock, cfg, intercarrier, pick, session):
-    """Resample one link's frames to fs, window them, return the LAST window's class-proba or None."""
+def _dwell_proba(frames, fs, result, gain_lock, cfg, intercarrier, pick, session, ic_baseline=None):
+    """Resample one link's frames to fs, window them, and return the TEMPORAL VOTE across the whole
+    dwell — the mean class-proba over every window in the buffer (BUFFER_S of history), not just the
+    last one (diagnosis CAUSE 5C: Zhou's per-crossing aggregation lifted single-window 51% -> 93%).
+    Soft mean (not hard majority) so it composes with the soft cross-link LinkVoter. None if no full
+    window fits. ic_baseline (Item 10/CAUSE 2B): the node's quiet-room baseline, subtracted from the
+    IC path when this head was trained that way — MUST match training (set from the head config)."""
     res = resample_uniform(frames, fs)
     if len(res) < cfg.window:
         return None
-    last = None
+    probas = []
     for _t, features, image, ic in iter_windows(
         res, result.subcarriers, gain_lock,
         window=cfg.window, hop=cfg.hop, intercarrier=intercarrier,
-        image_subcarriers=result.image_subcarriers,
+        image_subcarriers=result.image_subcarriers, ic_baseline=ic_baseline,
     ):
-        last = session.predict_proba_window(pick(features, image, ic))
-    return last
+        probas.append(session.predict_proba_window(pick(features, image, ic)))
+    if not probas:
+        return None
+    return np.mean(probas, axis=0)  # temporal (soft) majority vote over the dwell
 
 
 def load_weapon_nodes(cal_root, model_root):
@@ -81,10 +88,15 @@ def load_weapon_nodes(cal_root, model_root):
         session = mode_session("weapon", model_path)
         apply_lock, intercarrier, pick = _serving_plan("weapon", session.head)
         classes = list(session.head.classes_)
+        # IC background subtraction is a property of how THIS head was trained (head config), rebuilt
+        # from the same per-node calibration so train/serve subtract the identical baseline (Item 10).
+        ic_baseline = (result.baseline_mag
+                       if getattr(session.head.config, "subtract_ic_baseline", False) else None)
         nodes[nid] = dict(
             result=result, lock=gain_lock if apply_lock else None,
             intercarrier=intercarrier, pick=pick, session=session, cfg=session.head.config,
             min_width=_min_width(result), weapon_i=classes.index(1) if 1 in classes else -1,
+            ic_baseline=ic_baseline,
         )
         accs[nid] = _logo_acc(os.path.join(model_dir, "metrics.json"))
     weights = accuracy_weights({nid: a for nid, a in accs.items() if a is not None})
@@ -99,9 +111,15 @@ def load_weapon_nodes(cal_root, model_root):
 def main():
     parser = argparse.ArgumentParser(description="Live ALL-PAIRS weapon detection (per-link, per-RX-node cal+head).")
     parser.add_argument("--port", type=int, default=9876, help="UDP port (default: 9876)")
-    parser.add_argument("--cal", default="data/cal", help="Calibration root (default: data/cal)")
-    parser.add_argument("--model", default="data/model_weapon", help="Weapon model root (default: data/model_weapon)")
+    parser.add_argument("--root", default="data",
+                        help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
+    parser.add_argument("--cal", default=None, help="Calibration root (default: <root>/cal)")
+    parser.add_argument("--model", default=None, help="Weapon model root (default: <root>/model_weapon)")
     args = parser.parse_args()
+    if args.cal is None:
+        args.cal = f"{args.root}/cal"
+    if args.model is None:
+        args.model = f"{args.root}/model_weapon"
 
     TARGET_FS = 100.0      # uniform resample grid; MUST match collect_weapon.TARGET_FS
     CHUNK_S = 1.5          # fuse + print at this cadence
@@ -119,9 +137,7 @@ def main():
     last_seen = {}
     link_ids = {}
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", args.port))
-    sock.settimeout(0.5)
+    sock = bind_udp(args.port, timeout=0.5)
     wsummary = "  ".join(f"N{nid}:w={nodes[nid]['weight']:.2f}" for nid in sorted(nodes))
     print(f"WEAPON detection on udp/{args.port} (fs={TARGET_FS:g}Hz, rx nodes={sorted(nodes)}; "
           f"vote weights {wsummary}). Ctrl+C to stop.\n")
@@ -160,8 +176,9 @@ def main():
                 if now - last_seen.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
                 m = nodes[key[1]]
-                proba = _last_window_proba(list(buffers[key]), TARGET_FS, m["result"], m["lock"],
-                                           m["cfg"], m["intercarrier"], m["pick"], m["session"])
+                proba = _dwell_proba(list(buffers[key]), TARGET_FS, m["result"], m["lock"],
+                                     m["cfg"], m["intercarrier"], m["pick"], m["session"],
+                                     ic_baseline=m["ic_baseline"])
                 if proba is None:
                     continue
                 wi = m["weapon_i"]

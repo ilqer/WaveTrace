@@ -23,13 +23,32 @@ from wavetrace.recognition.Model import PresenceHead
 from wavetrace.recognition.Weapon import WeaponHead
 
 
+def _carry_groups(sess):
+    """Carry-position group per window, parsed from weapon session ids `<subject>_<carry>_s<n>`
+    (collect_weapon's sess_id). Returns None unless EVERY id matches that shape, so presence/other
+    session ids are left untouched and never get a spurious carry axis. The point (diagnosis CAUSE
+    5E): a below-chance head is often keying on a NUISANCE like carry pose, not the weapon — folding
+    on carry exposes that."""
+    carries = []
+    for s in sess:
+        parts = str(s).split("_")
+        if len(parts) < 3 or parts[-1][:1] != "s" or not parts[-1][1:].isdigit():
+            return None
+        carries.append(parts[-2])
+    return np.asarray(carries)
+
+
 def _logo_metrics(X, y, sess, subj, make_head) -> dict:
-    """Headline leave-one-group-out accuracy over sessions AND subjects, computed only when a group
-    has >= 2 distinct values (a single synthetic session can't be folded — rev-7 #1). Stores the
-    pooled accuracy + majority baseline per axis; absent axes are skipped. Confusion drops out (not
-    JSON-native). O(folds·fit)."""
+    """Headline leave-one-group-out accuracy over sessions AND subjects (AND carry position when the
+    session ids encode it), computed only when a group has >= 2 distinct values (a single synthetic
+    session can't be folded — rev-7 #1). Stores the pooled accuracy + majority baseline per axis;
+    absent axes are skipped. Confusion drops out (not JSON-native). O(folds·fit)."""
     out: dict = {}
-    for axis, groups in (("session", sess), ("subject", subj)):
+    axes = [("session", sess), ("subject", subj)]
+    carry = _carry_groups(sess)
+    if carry is not None:
+        axes.append(("carry", carry))  # weapon-only confound axis (diagnosis Item 13)
+    for axis, groups in axes:
         if np.unique(groups).size >= 2:
             rep = leave_one_group_out(X, y, groups, make_head)
             out[axis] = {k: rep[k] for k in ("accuracy", "majority_accuracy") if k in rep}
@@ -153,12 +172,14 @@ def train_weapon(
         config = ModelConfig(stage="weapon", k=K, backend=backend,
                              window=int(meta["window"]), hop=int(meta["hop"]),
                              frame_average=int(meta.get("frame_average", 1)),
-                             subtract_baseline=bool(meta.get("subtract_baseline", False)))
+                             subtract_baseline=bool(meta.get("subtract_baseline", False)),
+                             subtract_ic_baseline=bool(meta.get("subtract_ic_baseline", False)))
     else:
         # the dataset's front-end cadence dictates serving; enforce it so Cli.run matches training
         config = replace(config, window=int(meta["window"]), hop=int(meta["hop"]),
                          frame_average=int(meta.get("frame_average", 1)),
-                         subtract_baseline=bool(meta.get("subtract_baseline", False)))
+                         subtract_baseline=bool(meta.get("subtract_baseline", False)),
+                         subtract_ic_baseline=bool(meta.get("subtract_ic_baseline", False)))
 
     head = WeaponHead(config)
     head.feature_mode = feature_mode  # self-describing: Cli.run reads it to assemble x at serve time

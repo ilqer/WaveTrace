@@ -13,8 +13,9 @@ import time
 import numpy as np
 
 # Header: magic, ver, node, ntp_ms, n  -> 13 bytes (must match wavetrace/Source.py _BIN_HDR).
+# ver 2 = int8 I/Q, ver 3 = int16 I/Q (full amplitude range for the weapon feature).
 _BIN_HDR = struct.Struct("<BBBQH")
-_BIN_MAGIC, _BIN_VER = 0x57, 2
+_BIN_MAGIC = 0x57
 # Record header: mac[6], ts_us(u32 LE), len(u16 LE) -> 12 bytes; CSI bytes follow.
 _REC_HDR = struct.Struct("<6sIH")
 
@@ -30,11 +31,12 @@ def mac_to_bytes(mac: str) -> bytes:
 
 
 def quantize_csi(csi: np.ndarray, scale=None) -> bytes:
-    """complex64 csi[S] -> 2*S int8 bytes, interleaved [imag0, real0, imag1, real1, ...].
+    """complex64 csi[S] -> 2*S int8 bytes (ver 2), interleaved [imag0, real0, imag1, real1, ...].
 
     The host rebuilds csi[k] = real=d[2k+1] + 1j*d[2k], so imag goes in even slots, real in odd.
-    scale=None auto-scales each frame so its peak |component| maps to 127 (lossy but fine for
-    presence; calibration normalizes amplitude). O(S), one temporary buffer."""
+    scale=None auto-scales each frame so its peak |component| maps to 127. WARNING: per-frame
+    auto-scale removes absolute amplitude — fine for presence, but it ERASES the weapon metal
+    signature. Use quantize_csi_i16 with a FIXED scale for weapon. O(S)."""
     re = np.real(csi)
     im = np.imag(csi)
     if scale is None:
@@ -47,6 +49,19 @@ def quantize_csi(csi: np.ndarray, scale=None) -> bytes:
     return out.astype(np.int8).tobytes()
 
 
+def quantize_csi_i16(csi: np.ndarray, scale: float = 1.0) -> bytes:
+    """complex64 csi[S] -> 4*S int16 bytes (ver 3), interleaved [imag0, real0, ...] little-endian.
+
+    Uses a FIXED scale (never per-frame), so absolute amplitude is comparable across frames — the
+    Nexmon CSI is already int16-range, so scale=1.0 is pass-through. This preserves the inter-frame
+    amplitude/variance the weapon σ² feature needs. O(S)."""
+    out = np.empty(2 * csi.size, dtype=np.float32)
+    out[0::2] = np.imag(csi) * scale  # imag in even slots
+    out[1::2] = np.real(csi) * scale  # real in odd slots
+    np.clip(np.rint(out), -32768, 32767, out=out)
+    return out.astype("<i2").tobytes()
+
+
 class BatchPublisher:
     """Accumulate records and flush a v2 datagram whenever the next record would exceed the MTU.
 
@@ -54,10 +69,12 @@ class BatchPublisher:
     timer). ntp_ms is stamped at flush time (~ the last frame's wall clock), matching the host's
     timestamp-reconstruction scheme."""
 
-    def __init__(self, pc_ip: str, port: int, node_id: int, ap_mac: str, mtu: int = _DEFAULT_MTU):
+    def __init__(self, pc_ip: str, port: int, node_id: int, ap_mac: str, ver: int = 2,
+                 mtu: int = _DEFAULT_MTU):
         self._addr = (pc_ip, port)
         self._node = node_id
         self._mac = mac_to_bytes(ap_mac)
+        self._ver = ver          # 2 = int8 payload, 3 = int16 payload (must match the quantizer used)
         self._mtu = mtu
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._records: list[bytes] = []
@@ -78,7 +95,7 @@ class BatchPublisher:
         if not self._records:
             return
         ntp_ms = int(time.time() * 1000)
-        hdr = _BIN_HDR.pack(_BIN_MAGIC, _BIN_VER, self._node, ntp_ms, len(self._records))
+        hdr = _BIN_HDR.pack(_BIN_MAGIC, self._ver, self._node, ntp_ms, len(self._records))
         self._sock.sendto(hdr + b"".join(self._records), self._addr)
         self._records.clear()
         self._size = _BIN_HDR.size

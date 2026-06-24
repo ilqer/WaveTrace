@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-from wavetrace.Source import parse_batch_links, resample_uniform
+from wavetrace.Source import parse_batch_links, resample_uniform, bind_udp
 from wavetrace.Calibration import load_calibration
 from wavetrace.Frontend import iter_windows
 from wavetrace.recognition import mode_session
@@ -107,9 +107,15 @@ def load_node_models(cal_root, model_root, mode="presence"):
 def main():
     parser = argparse.ArgumentParser(description="Live ALL-PAIRS presence (per-link, per-RX-node cal+head).")
     parser.add_argument("--port", type=int, default=9876, help="UDP port (default: 9876)")
-    parser.add_argument("--cal", default="data/cal", help="Calibration root (default: data/cal)")
-    parser.add_argument("--model", default="data/model", help="Per-node model root (default: data/model)")
+    parser.add_argument("--root", default="data",
+                        help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
+    parser.add_argument("--cal", default=None, help="Calibration root (default: <root>/cal)")
+    parser.add_argument("--model", default=None, help="Per-node model root (default: <root>/model)")
     args = parser.parse_args()
+    if args.cal is None:
+        args.cal = f"{args.root}/cal"
+    if args.model is None:
+        args.model = f"{args.root}/model"
 
     TARGET_FS = 100.0      # uniform resample grid (the locked live cadence the collect scripts assume)
     CHUNK_S = 1.5          # fuse + print at this cadence
@@ -128,9 +134,7 @@ def main():
     last_seen = {}
     link_ids = {}  # stable int id per link for LinkVoter
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", args.port))
-    sock.settimeout(0.5)
+    sock = bind_udp(args.port, timeout=0.5)
     wsummary = "  ".join(f"N{nid}:w={nodes[nid]['weight']:.2f}" for nid in sorted(nodes))
     print(f"ALL-PAIRS presence on udp/{args.port} (fs={TARGET_FS:g}Hz, rx nodes={sorted(nodes)}; "
           f"vote weights {wsummary}). move in and out of the links. Ctrl+C to stop.\n")

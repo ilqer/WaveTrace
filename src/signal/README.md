@@ -1,10 +1,12 @@
-# WaveTrace Signal Processing (`src/signal/`)
+# `src/signal/`
 
-This is the math engine of the project. Raw WiFi CSI is incredibly noisy—it drifts, it spikes, and it jumps around. This folder cleans it up and extracts the actual human movement.
+DSP pipeline: cleans the raw CSI and extracts features the models can use.
 
-* **`Preprocess.hpp`**: Cleans the raw signal. It removes hardware artifacts like Carrier Frequency Offset (CFO) and Sampling Frequency Offset (SFO) which cause the signal phase to spin randomly.
-* **`GainLock.hpp`**: WiFi routers constantly adjust their "volume" (AGC - Automatic Gain Control). This class reverses that, locking the signal gain so our models see consistent data.
-* **`Features.hpp`**: Extracts statistical features (like variance and mean) that describe how much the signal is changing. This is what the machine learning model actually looks at.
-* **`Spectrogram.hpp`**: Converts the signal into a spectrogram (a 2D image of frequencies over time), which is extremely useful for detecting specific movements or weapons.
-* **`PresenceSegment.hpp`**: Helps chop a continuous stream of data into distinct "events" or segments of activity.
-* **`SubcarrierSelect.hpp`**: Not all WiFi frequencies (subcarriers) are useful. Some are just noise. This picks the best ones to listen to.
+| File | What it does |
+|---|---|
+| `Preprocess.hpp` | Conjugate-multiply (cancels CFO/SFO clock drift), Hampel filter (removes outlier spikes), phase unwrap, EMA detrend |
+| `GainLock.hpp` | Fixes the AGC amplification to the calibration value so amplitude is comparable across sessions |
+| `Features.hpp` | Nine per-subcarrier statistics (mean, std, max, min, IQR, skew, lag-1 autocorr, MAD, waveform length); inter-subcarrier µ[p] and σ²[p] (weapon discriminator); `reconstruct_complex_csi` |
+| `Spectrogram.hpp` | Builds a (subcarriers × time) amplitude image for the CNN path |
+| `PresenceSegment.hpp` | Splits a continuous frame stream into motion segments (active vs. quiet) for the voter |
+| `SubcarrierSelect.hpp` | NBVI: ranks subcarriers by presence sensitivity and keeps the top K |

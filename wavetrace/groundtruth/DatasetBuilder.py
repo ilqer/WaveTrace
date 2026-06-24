@@ -76,6 +76,7 @@ def build_dataset(
     intercarrier: bool = False,
     frame_average: int = 1,
     subtract_baseline: bool = False,
+    subtract_ic_baseline: bool = False,
 ) -> "Dataset":
     """Build a labeled dataset from a CSI recording + a label source.
 
@@ -91,7 +92,9 @@ def build_dataset(
     session_id / subject_id (P6a): group ids of THIS recording, stamped on every sample.
     intercarrier (P7p-a): also emit the (n, 27) IC block from RAW magnitudes.
     frame_average (T2/P10): non-overlapping decimating mean (M=1 = no change).
-    subtract_baseline (T3/P10): subtract the quiet-room baseline from the image path only."""
+    subtract_baseline (T3/P10): subtract the quiet-room baseline from the image path only.
+    subtract_ic_baseline (Item 10/CAUSE 2B): subtract the raw quiet-room baseline from the IC path
+      (weapon σ²[p] background subtraction). Independent of subtract_baseline (image path)."""
     subc = np.asarray(calibration_result.subcarriers, dtype=np.intp)
     K = int(subc.size)
     img_subc_list = getattr(calibration_result, "image_subcarriers", None) or list(calibration_result.subcarriers)
@@ -100,6 +103,10 @@ def build_dataset(
     img_baseline_arr = None
     if subtract_baseline:
         img_baseline_arr = _image_baseline(calibration_result, locked=(gain_lock is not None))
+    # IC background subtraction uses the RAW baseline (the IC path is always raw, gain_lock=None for
+    # weapon), so no locked-basis rescale — just the quiet-room mean |H| per subcarrier.
+    ic_baseline_arr = (np.asarray(calibration_result.baseline_mag, dtype=np.float32)
+                       if (subtract_ic_baseline and intercarrier) else None)
 
     # materialize once: iter_windows consumes the stream, and the fs estimate below re-indexes
     # frames[-1] — a bare generator would be exhausted by then (B5).
@@ -114,6 +121,7 @@ def build_dataset(
         image_subcarriers=(img_subc_list if img_subc_list != list(calibration_result.subcarriers) else None),
         frame_average=frame_average,
         image_baseline=img_baseline_arr,
+        ic_baseline=ic_baseline_arr,
     ):
         feats.append(features.copy())
         imgs.append(image.copy())
@@ -142,6 +150,7 @@ def build_dataset(
         "K_img": K_img,
         "subcarriers": [int(s) for s in calibration_result.subcarriers],
         "image_subcarriers": img_subc_list,
+        "subtract_ic_baseline": bool(ic_baseline_arr is not None),
         "window": window,
         "hop": hop,
         "tolerance": tolerance,

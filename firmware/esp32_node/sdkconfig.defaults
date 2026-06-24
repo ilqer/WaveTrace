@@ -16,11 +16,15 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64
 # Keep the radio fully awake even while disconnected -> faster reconnect, steadier RX (ESPectre).
 CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE=n
 
-# --- UDP uplink headroom (added 2026-06-19) ---
-# The CSI uplink is bursty (~400 fps batched); the default 32 dynamic TX buffers exhaust under
-# channel congestion -> `sendto` ENOMEM (errno 12). Doubling them gives the lwIP/Wi-Fi TX path
-# headroom to absorb a burst instead of dropping it. Binary payload already cut the volume ~3.5x.
-CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64
+# --- UDP uplink headroom (added 2026-06-19; TX buffers made static 2026-06-23) ---
+# The CSI uplink is bursty (~400 fps batched). DYNAMIC TX buffers are allocated from the same heap the
+# 99 KB CSI queue + RX buffers squeeze, so they vanish exactly under the congestion that needs them ->
+# `sendto` ENOMEM (errno 12). STATIC TX buffers are pre-allocated at boot (~1.6 KB each), so a burst
+# always has guaranteed, heap-immune TX slots. Paired with the queue halved to 128 (frees ~50 KB), so
+# carving these out doesn't starve general heap. AMPDU-TX is off above, so static TX is unconstrained.
+# 16 ≈ 26 KB pre-allocated; raise if the health-log free heap stays comfortable on hardware.
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE=0
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=16
 # Bigger tcpip mailbox + lwIP heap so queued UDP pbufs don't starve the stack during a burst.
 CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=16

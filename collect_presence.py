@@ -23,7 +23,7 @@ import sys
 import time
 
 from wavetrace.Source import (UdpSource, RecordingSource, save_recording,
-                              parse_batch_links, resample_uniform)
+                              parse_batch_links, resample_uniform, bind_udp)
 from wavetrace.Cli import collect_source
 from wavetrace.recognition import train_presence
 
@@ -50,7 +50,8 @@ def capture_all(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     subcarrier width per link. Stops when every expected RX node has appeared AND all known links reach
     n, OR max_capture_s elapses (the per-recv timeout only fires on TOTAL silence, so the wall-clock
     deadline is what stops a lone quiet link from stalling the loop forever)."""
-    input(f"\n>> {prompt}\n   Press Enter to start...")
+    print(f"\n>> {prompt}\n   Press Enter to start...", flush=True)
+    input()
     if countdown:
         for d in range(countdown, 0, -1):
             print(f"   starting in {d}s...", end="\r")
@@ -60,9 +61,7 @@ def capture_all(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
 
     links = collections.defaultdict(list)  # (tx_short, rx_node) -> [frames]
     want = set(node_ids)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", port))
-    sock.settimeout(15.0)
+    sock = bind_udp(port, timeout=15.0)
     start = time.time()
     last_print = start
     try:
@@ -103,8 +102,12 @@ def main():
     parser.add_argument("--port", type=int, default=9876, help="UDP port (default: 9876)")
     parser.add_argument("--sessions", type=int, default=3, help="Number of sessions to capture (default: 3)")
     parser.add_argument("--frames", type=int, default=1500, help="Frames per condition per node (default: 1500)")
-    parser.add_argument("--cal", default="data/cal", help="Calibration root (default: data/cal)")
+    parser.add_argument("--root", default="data",
+                        help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
+    parser.add_argument("--cal", default=None, help="Calibration root (default: <root>/cal)")
     args = parser.parse_args()
+    if args.cal is None:
+        args.cal = f"{args.root}/cal"
 
     # Target nodes = those that have a calibration (from collect_baseline), optionally narrowed by --node.
     cal_nodes = sorted(int(os.path.basename(d)[len("node"):])
@@ -121,7 +124,7 @@ def main():
             return
     print(f"Will train nodes: {cal_nodes} (calibrated)")
 
-    os.makedirs("data/model", exist_ok=True)
+    os.makedirs(f"{args.root}/model", exist_ok=True)
     ds_dirs = {nid: [] for nid in cal_nodes}
 
     for i in range(args.sessions):
@@ -143,7 +146,7 @@ def main():
                     continue  # too short on this grid to emit a window in each class
                 span = (p[0].timestamp, p[-1].timestamp + 1.0)
                 tag = key[0].replace(":", "")  # tx mac-short, ':'-free for a path segment
-                rec, ds = f"data/sess_{i}/node{nid}/link_{tag}", f"data/ds_{i}/node{nid}/link_{tag}"
+                rec, ds = f"{args.root}/sess_{i}/node{nid}/link_{tag}", f"{args.root}/ds_{i}/node{nid}/link_{tag}"
                 save_recording(e + p, rec)
                 collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
                                stage="presence", session_id=f"sess{i}", subject_id=SUBJECT)
@@ -158,7 +161,7 @@ def main():
         if not ds_dirs[nid]:
             print(f"   [SKIP] Node {nid}: no usable sessions.")
             continue
-        _, m = train_presence(ds_dirs[nid], out_dir=f"data/model/node{nid}")
+        _, m = train_presence(ds_dirs[nid], out_dir=f"{args.root}/model/node{nid}")
         logo = m.get("logo", {}).get("session")
         line = (f"   [OK]   Node {nid}: samples={m['n_samples']} class_counts={m['class_counts']} "
                 f"train_acc={m['train_accuracy']:.3f}")
@@ -171,7 +174,7 @@ def main():
     if not trained:
         print("\n[ERROR] No node trained — check the boards / run mesh_verify.py.", file=sys.stderr)
         return
-    print(f"\nmodels saved for nodes {trained} -> data/model/node*/  "
+    print(f"\nmodels saved for nodes {trained} -> {args.root}/model/node*/  "
           "(LOGO is the honest number: it must clearly beat the majority baseline.)")
 
 

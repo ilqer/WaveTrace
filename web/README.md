@@ -1,12 +1,28 @@
-# WaveTrace Web Dashboard (`web/`)
+# `web/` — web dashboard backend
 
-This folder contains the visualization tools for the project. Because looking at terminal output isn't always helpful for debugging WiFi signals, we use a web dashboard to see the CSI heatmaps and predictions in real-time.
+Python backend that streams live CSI data and model predictions to the React frontend over WebSockets.
 
-## Backend (Python)
-* **`streamer.py`**: This script takes the live data and predictions from the WaveTrace system and streams them over WebSockets so the frontend can read them.
-* **`app.py` & `WsPublisher.py`**: Handlers for the server and WebSocket connections.
-* **`foxglove.py`**: Integration with Foxglove Studio, which is a robotics visualization tool we can use to look at the 3D data.
+## Run
 
-## Frontend (`ui/` folder)
-* **`ui/`**: This is a React web application built with Vite and TypeScript. 
-* To run it, you navigate into this folder and run `npm run dev`. 
+```bash
+# start the backend
+python web/streamer.py
+
+# start the frontend (separate terminal)
+cd web/ui && npm install && npm run dev
+# open http://localhost:5173
+```
+
+## Files
+
+| File | What it does |
+|---|---|
+| `streamer.py` | Pulls live data from the WaveTrace pipeline and pushes it to WebSocket clients |
+| `app.py` | Flask app and HTTP routes |
+| `WsPublisher.py` | WebSocket publisher — a `Publisher` implementation that writes to connected browser clients |
+| `device_ctl.py` | Device control endpoints: flash firmware, trigger recalibration, upload a model |
+| `foxglove.py` | Optional Foxglove Studio integration for 3D visualization |
+
+## Frontend
+
+See [`ui/README.md`](ui/README.md).

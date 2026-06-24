@@ -12,22 +12,27 @@ import uvicorn
 from wavetrace.Cli import _source_from_args, _parse_spans
 from web.streamer import WaveTraceRunner
 from web.foxglove import fg_server
+from web.device_ctl import DeviceHub, list_serial_ports
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global inference_queue, stream_queue, logs_queue, training_queue, telemetry_queue
+    global device_queue, device_hub
     inference_queue = asyncio.Queue()
     stream_queue = asyncio.Queue()
     logs_queue = asyncio.Queue()
     training_queue = asyncio.Queue()
     telemetry_queue = asyncio.Queue()
+    device_queue = asyncio.Queue()
+    device_hub = DeviceHub(asyncio.get_running_loop(), device_queue)
     await fg_server.start()
     asyncio.create_task(broadcast_inference())
     asyncio.create_task(broadcast_stream())
     asyncio.create_task(broadcast_logs())
     asyncio.create_task(broadcast_training())
     asyncio.create_task(broadcast_telemetry())
+    asyncio.create_task(broadcast_device())
     yield
     global runner
     if runner:
@@ -63,6 +68,8 @@ stream_queue = None
 logs_queue = None
 training_queue = None
 telemetry_queue = None
+device_queue = None
+device_hub = None
 
 class StartRequest(BaseModel):
     # Action
@@ -75,6 +82,7 @@ class StartRequest(BaseModel):
     fs: float = 100.0
     duration: float = 60.0
     seed: int = 0
+    udp_port: int = 9876  # MUST match the firmware/run_* port (nodes push CSI to 9876)
     
     # Run
     mode: str = "presence"
@@ -94,6 +102,7 @@ class StartRequest(BaseModel):
     col_spans: str = "0:5,10:15,20:25"
     col_window: int = 128
     col_hop: int = 32
+    subtract_ic_baseline: bool = False  # weapon IC background subtraction (Item 10/CAUSE 2B)
     
     # Train
     train_backend: str = "mlp"
@@ -101,7 +110,6 @@ class StartRequest(BaseModel):
 
     # Hardware
     cam_url: str = "http://192.168.1.100/mjpeg"
-    nodes: str = "192.168.1.101, 192.168.1.102"
 
 class MockArgs:
     def __init__(self, **kwargs):
@@ -112,6 +120,7 @@ clients_stream = set()
 clients_logs = set()
 clients_training = set()
 clients_telemetry = set()
+clients_device = set()
 
 async def broadcast_inference():
     while True:
@@ -160,6 +169,15 @@ async def broadcast_telemetry():
             except Exception:
                 clients_telemetry.discard(client)
 
+async def broadcast_device():
+    while True:
+        data = await device_queue.get()
+        for client in list(clients_device):
+            try:
+                await client.send_text(data)
+            except Exception:
+                clients_device.discard(client)
+
 @app.post("/api/action/start")
 async def start_inference(req: StartRequest):
     global runner, runner_task, inference_queue, stream_queue, logs_queue
@@ -189,6 +207,11 @@ async def start_inference(req: StartRequest):
     # (add_task returns None) so stop_inference can join it after runner.stop() flips the stop flag.
     runner_task = asyncio.create_task(asyncio.to_thread(run_blocking))
     return {"status": "started"}
+
+@app.get("/api/pipeline/state")
+async def pipeline_state():
+    global runner
+    return {"isRunning": runner.is_running if runner else False}
 
 @app.post("/api/action/stop")
 async def stop_inference():
@@ -277,18 +300,177 @@ async def fusion_weights(path: str):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/weapon/litmus")
+async def weapon_litmus(root: str = "data", node: int | None = None, per_link: bool = False):
+    """Static σ²[p] go/no-go: per-node (default) or per directed tx→rx link (per_link=true).
+    Rows are sorted by AUC descending so the best directions appear first. Reads weapon_rec/
+    that collect_weapon saves; runs offline (no live pipeline)."""
+    from weapon_litmus import gather_sigma2, separation, _verdict, _key_label
+    try:
+        data = gather_sigma2(root, node, per_link=per_link)
+        if not data:
+            return {"error": f"no weapon recordings under {root}/weapon_rec/*/<clear|weapon>/node*/"}
+
+        def _auc_of(key):
+            s = separation(data[key].get("clear", _np_empty()), data[key].get("weapon", _np_empty()))
+            return s["auc"] if s else 0.0
+
+        out = []
+        for key in sorted(data, key=lambda k: (-_auc_of(k), _key_label(k))):
+            s = separation(data[key].get("clear", _np_empty()), data[key].get("weapon", _np_empty()))
+            label = _key_label(key)
+            if s is None:
+                out.append({"label": label, "ok": False, "reason": "need both clear and weapon captures"})
+                continue
+            out.append({"label": label, "auc": round(s["auc"], 3),
+                        "lower_when_armed": s["lower_when_armed"], "cohens_d": round(s["cohens_d"], 2),
+                        "n_clear": s["n_clear"], "n_weapon": s["n_weapon"],
+                        "verdict": _verdict(s["auc"])})
+        return {"rows": out, "per_link": per_link}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/calib/info")
+async def calib_info(path: str = "output/calib"):
+    """Read a saved calibration directory and return the pinned subcarrier width.
+    K is derived from max(image_subcarriers)+1 — the highest subcarrier index the
+    radio produced during calibration. bw_label maps that to HT20/HT40/HT80."""
+    import json as _json
+    meta_path = os.path.join(path, "meta.json")
+    if not os.path.exists(meta_path):
+        return {"error": f"no calibration at {path} (run Calib first)"}
+    try:
+        with open(meta_path) as f:
+            meta = _json.load(f)
+        img_subc = meta.get("image_subcarriers") or meta.get("subcarriers") or []
+        K = int(max(img_subc)) + 1 if img_subc else 0
+        if K <= 96:
+            bw_label = "HT20 · 2.4 GHz"
+        elif K <= 200:
+            bw_label = "HT40 · 2.4 GHz"
+        else:
+            bw_label = "HT80 · 5 GHz"
+        return {
+            "K": K,
+            "bw_label": bw_label,
+            "n_selected": len(meta.get("subcarriers") or []),
+            "n_image": len(img_subc),
+            "path": path,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _np_empty():
+    import numpy as np
+    return np.array([])
+
+
+class ModelUploadRequest(BaseModel):
+    file_b64: str
+    dest: str = "output/model.pkl/model.joblib"
+
 @app.post("/api/model/upload")
-async def model_upload(file_b64: str, dest: str = "output/model.pkl/model.joblib"):
+async def model_upload(req: ModelUploadRequest):
     """Receive a PC-trained model.joblib (base64) and write it to the Pi."""
     import base64
     try:
-        dest = _safe_output_path(dest)
+        dest = _safe_output_path(req.dest)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
-            f.write(base64.b64decode(file_b64))
+            f.write(base64.b64decode(req.file_b64))
         return {"status": "uploaded", "dest": dest}
     except Exception as e:
         return {"error": str(e)}
+
+# ---- Hardware: serial discovery / monitor, flashing, Pi capture control --------------
+class MonitorRequest(BaseModel):
+    port: str
+    baud: int = 115200
+
+class FlashRequest(BaseModel):
+    role: str = "node"          # node | rx | tx
+    node_id: int | None = None
+    port: str
+    clean: bool = False
+
+class PiRequest(BaseModel):
+    host: str                   # user@host
+    command: str
+
+class ScriptRequest(BaseModel):
+    script: str
+    args: str = ""
+
+class StopMonitorRequest(BaseModel):
+    port: str | None = None
+
+@app.get("/api/serial/ports")
+async def serial_ports():
+    return {"ports": list_serial_ports()}
+
+@app.get("/api/device/state")
+async def device_state():
+    return device_hub.get_state()
+
+class SerialMonitorRequest(BaseModel):
+    port: str
+    baud: int = 115200
+
+@app.post("/api/serial/monitor/start")
+async def serial_monitor_start(req: SerialMonitorRequest):
+    return device_hub.start_monitor(req.port, req.baud)
+
+@app.post("/api/serial/monitor/stop")
+async def serial_monitor_stop(req: StopMonitorRequest = None):
+    p = req.port if req else None
+    return device_hub.stop_monitor(p)
+
+@app.post("/api/flash")
+async def flash(req: FlashRequest):
+    # flashing blocks (build+flash); run in a worker thread so the event loop keeps streaming
+    asyncio.create_task(asyncio.to_thread(device_hub.flash, req.role, req.node_id, req.port, req.clean))
+    return {"status": "flashing", "role": req.role, "port": req.port, "clean": req.clean}
+
+@app.post("/api/pi/run")
+async def pi_run(req: PiRequest):
+    asyncio.create_task(asyncio.to_thread(device_hub.run_pi, req.host, req.command))
+    return {"status": "running", "host": req.host}
+
+@app.post("/api/script/run")
+async def script_run(req: ScriptRequest):
+    asyncio.create_task(asyncio.to_thread(device_hub.run_script, req.script, req.args))
+    return {"status": "running", "script": req.script}
+
+
+
+class StopProcRequest(BaseModel):
+    proc_id: str | None = None
+
+@app.post("/api/device/stop")
+async def device_stop(req: StopProcRequest = None):
+    p = req.proc_id if req else None
+    return device_hub.stop_proc(p)
+
+class InputRequest(BaseModel):
+    proc_id: str
+    input: str
+
+@app.post("/api/device/input")
+async def device_input(req: InputRequest):
+    return device_hub.send_input(req.proc_id, req.input)
+
+@app.websocket("/ws/device")
+async def websocket_device(websocket: WebSocket):
+    await websocket.accept()
+    clients_device.add(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        clients_device.discard(websocket)
+
 
 app.mount("/", StaticFiles(directory="web/ui/dist", html=True), name="static")
 

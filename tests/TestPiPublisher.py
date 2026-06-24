@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "firmware", "pi
 import struct  # noqa: E402
 
 from nexmon_reader import parse_nexmon_csi  # noqa: E402
-from publisher import BatchPublisher, mac_to_bytes, quantize_csi  # noqa: E402
+from publisher import BatchPublisher, mac_to_bytes, quantize_csi, quantize_csi_i16  # noqa: E402
 from wavetrace.Source import parse_batch, parse_batch_links  # noqa: E402
 
 AP = "aa:bb:cc:dd:ee:ff"
@@ -83,6 +83,26 @@ def test_batch_parses_through_host():
     links = parse_batch_links(pub._sock.sent[0])
     assert ("ee:ff", NODE) in links
     assert len(links[("ee:ff", NODE)]) == 4
+
+
+def test_v3_int16_preserves_exact_amplitude():
+    # The weapon feature needs absolute amplitude: ver-3 int16 with a fixed scale must round-trip
+    # the CSI integers EXACTLY (unlike ver-2 int8, which rescales). S=256 = HT80 width.
+    S = 256
+    pub = BatchPublisher("127.0.0.1", 9876, NODE, AP, ver=3)
+    pub._sock = _FakeSock()
+    real = (np.arange(S) % 4000 - 2000).astype(np.float32)
+    imag = (np.arange(S) % 3000 - 1500).astype(np.float32)
+    csi = (real + 1j * imag).astype(np.complex64)
+    pub.add(quantize_csi_i16(csi, scale=1.0), ts_us=42)
+    pub.flush()
+
+    links = parse_batch_links(pub._sock.sent[0])
+    frames = links[("ee:ff", NODE)]
+    assert len(frames) == 1
+    got = frames[0].grid[0]
+    np.testing.assert_array_equal(got.real, real)   # exact, not just correlated
+    np.testing.assert_array_equal(got.imag, imag)
 
 
 def _nexmon_payload(mac_bytes, real, imag):
