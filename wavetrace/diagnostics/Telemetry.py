@@ -80,6 +80,7 @@ class NodeHealthMeter:
                 "snr_db": round(snr_db, 1),
                 "cv": round(float(np.mean(list(self._cv[nid]))) if self._cv[nid] else 0.0, 4),
                 "gain_drift": gain_drift,
+                "loss_pct": round(max(0.0, (self.target_hz - hz) / self.target_hz * 100.0), 1),
                 "subcarriers": self._subc.get(nid, []),
                 "last_ts": round(self._last_ts.get(nid, 0.0), 4),
             })

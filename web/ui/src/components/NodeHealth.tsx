@@ -27,6 +27,7 @@ export function NodeHealthTable({ nodes, sync }: Props) {
             <th className="text-left py-0.5">node</th>
             <th className="text-left">band</th>
             <th className="text-right">Hz</th>
+            <th className="text-right">loss</th>
             <th className="text-right">SNR</th>
             <th className="text-right">CV</th>
             <th className="text-right">gain</th>
@@ -41,6 +42,10 @@ export function NodeHealthTable({ nodes, sync }: Props) {
               <td>{n.band}</td>
               <td className="text-right font-mono">
                 {n.hz}{!n.hz_ok && <span className="ml-0.5">⚠</span>}
+              </td>
+              <td className={clsx("text-right font-mono",
+                n.loss_pct > 20 ? "text-rose-400" : n.loss_pct > 5 ? "text-amber-400" : "")}>
+                {n.loss_pct != null ? `${n.loss_pct}%` : "—"}
               </td>
               <td className="text-right font-mono">{n.snr_db}dB</td>
               <td className="text-right font-mono">{n.cv.toFixed(3)}</td>

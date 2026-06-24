@@ -152,9 +152,15 @@ class WaveTraceRunner:
         self.is_running = True
         self.log(f"Training {req.col_stage}/{req.train_backend}...")
 
-        dataset_path = "output/dataset_ui"
-        import os
-        if not os.path.exists(dataset_path):
+        dataset_path = getattr(req, "train_data", "output/dataset_ui")
+        import os, glob as _glob
+        # Support cumulative pool: if dataset_path contains saved dataset subdirs, use all of them
+        _sub = sorted(_glob.glob(os.path.join(dataset_path, "*")))
+        ds_dirs = [d for d in _sub if os.path.isdir(d) and os.path.exists(os.path.join(d, "X_features.npy"))]
+        if not ds_dirs:
+            ds_dirs = [dataset_path]  # treat as a single dataset dir
+
+        if not any(os.path.exists(d) for d in ds_dirs):
             self.log(f"No dataset at {dataset_path}; run 'collect' first.")
             self.is_running = False
             return
@@ -162,7 +168,7 @@ class WaveTraceRunner:
         try:
             from wavetrace.groundtruth import load_dataset
             from wavetrace.diagnostics import dataset_report
-            ds = load_dataset(dataset_path)
+            ds = load_dataset(ds_dirs[0])
             rep = dataset_report(ds)
             self._emit_train({"type": "train_init", **rep})
         except Exception as e:
@@ -183,7 +189,7 @@ class WaveTraceRunner:
 
         try:
             if req.col_stage == "presence":
-                _, m = train_presence([dataset_path], out_dir=req.train_out)
+                _, m = train_presence(ds_dirs, out_dir=req.train_out)
                 self._emit_train({"type": "done", "metrics": m})
             elif req.train_backend == "heatmap":
                 m = self._train_heatmap(dataset_path, req, report)
@@ -191,10 +197,10 @@ class WaveTraceRunner:
             else:
                 from wavetrace.Config import ModelConfig
                 from wavetrace.groundtruth import load_dataset
-                k = int(load_dataset(dataset_path).meta["K"])
+                k = int(load_dataset(ds_dirs[0]).meta["K"])
                 cfg = ModelConfig(stage="weapon", k=k, backend=req.train_backend)
                 fm = "cnn" if req.train_backend == "cnn" else "ic27"
-                _, m = train_weapon([dataset_path], out_dir=req.train_out, config=cfg,
+                _, m = train_weapon(ds_dirs, out_dir=req.train_out, config=cfg,
                                     feature_mode=fm)
                 self._emit_train({"type": "done", "metrics": m})
             self.log(f"Training complete -> {req.train_out}")
@@ -304,6 +310,7 @@ class WaveTraceRunner:
             cfg = session.head.config
             # Item 10/CAUSE 2B: mirror training's IC background subtraction at serve time.
             _ic_base = result.baseline_mag if getattr(cfg, "subtract_ic_baseline", False) else None
+            _img_base = get_image_baseline(result, locked=(apply_lock and gain_lock is not None)) if use_baseline else None
             global_classes = session.head.classes_
             _pos_idx = list(global_classes).index(1) if 1 in global_classes else -1
             try:
@@ -459,7 +466,7 @@ class WaveTraceRunner:
                     snooper.frames(), result.subcarriers, gain_lock if apply_lock else None,
                     window=cfg.window, hop=cfg.hop, intercarrier=True,
                     image_subcarriers=result.image_subcarriers,
-                    frame_average=frame_average, image_baseline=None, ic_baseline=_ic_base
+                    frame_average=frame_average, image_baseline=_img_base, ic_baseline=_ic_base
                 ):
                     if not self.is_running: break
 

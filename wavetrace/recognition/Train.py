@@ -201,6 +201,7 @@ def train_weapon(
         "subjects": sorted({str(s) for s in subj}),
         "train_accuracy": float((head.predict(X) == y).mean()),
         "logo": _logo_metrics(X, y, sess, subj, lambda: WeaponHead(config)),  # the HEADLINE number
+        "subtract_ic_baseline": bool(config.subtract_ic_baseline),
         "fit_seconds": round(fit_s, 3),
     }
     out = Path(out_dir)

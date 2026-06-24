@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell,
@@ -30,10 +30,10 @@ function Stat({ label, value, color = 'text-emerald-400' }: { label: string; val
 }
 
 // Build an approximate 2×2 confusion matrix from tpr + fp_rate + class counts.
-function buildMatrix(logo: any, classCounts: any): number[][] | null {
-  const axis = logo?.session ?? logo?.subject;
-  if (!axis) return null;
-  const { tpr, fp_rate: fp } = axis;
+function buildMatrix(logo: any, classCounts: any, axis?: string): number[][] | null {
+  const axisData = axis ? logo?.[axis] : (logo?.session ?? logo?.subject);
+  if (!axisData) return null;
+  const { tpr, fp_rate: fp } = axisData;
   if (tpr == null || fp == null) return null;
   const pos = Number(classCounts?.['1'] ?? 0);
   const neg = Number(classCounts?.['0'] ?? 0);
@@ -47,6 +47,11 @@ function buildMatrix(logo: any, classCounts: any): number[][] | null {
 
 // Shown when MLP/SVM finishes: no epoch loop, just a final metrics dict.
 function ResultCard({ result }: { result: Record<string, any> }) {
+  const availableAxes = Object.keys(result.logo ?? {}).filter(
+    ax => result.logo[ax]?.tpr != null
+  );
+  const [selectedAxis, setSelectedAxis] = useState<string>(availableAxes[0] ?? 'session');
+
   const acc = result.train_accuracy != null ? (result.train_accuracy * 100).toFixed(2) + '%' : '—';
   const logoAcc = result.logo_accuracy != null
     ? (result.logo_accuracy * 100).toFixed(2) + '%'
@@ -59,19 +64,27 @@ function ResultCard({ result }: { result: Record<string, any> }) {
   const backend = (result.backend ?? '?').toUpperCase();
   const n = result.n_samples ?? result.n ?? '—';
   const k = result.n_features != null ? result.n_features : result.k != null ? result.k : '—';
-  const cmMatrix = buildMatrix(result.logo, result.class_counts);
-  const logoAxis = result.logo?.session ?? result.logo?.subject;
-  const tpr = logoAxis?.tpr;
-  const fp = logoAxis?.fp_rate;
+  const cmMatrix = buildMatrix(result.logo, result.class_counts, selectedAxis);
+  const logoAxisData = result.logo?.[selectedAxis];
+  const tpr = logoAxisData?.tpr;
+  const fp = logoAxisData?.fp_rate;
 
   return (
     <div className="flex flex-col gap-4 p-5">
       {/* header */}
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Training Complete</span>
-        <span className="text-[10px] bg-emerald-900/40 text-emerald-400 border border-emerald-500/30 rounded px-2 py-0.5 font-mono">
-          {backend}
-        </span>
+        <div className="flex items-center gap-2">
+          {result.subtract_ic_baseline && (
+            <span className="text-[10px] bg-amber-900/40 text-amber-400 border border-amber-500/30 rounded px-2 py-0.5 font-mono"
+                  title="Model was trained with IC background subtraction — serving must match">
+              bg-subtract
+            </span>
+          )}
+          <span className="text-[10px] bg-emerald-900/40 text-emerald-400 border border-emerald-500/30 rounded px-2 py-0.5 font-mono">
+            {backend}
+          </span>
+        </div>
       </div>
 
       {/* key numbers */}
@@ -98,7 +111,21 @@ function ResultCard({ result }: { result: Record<string, any> }) {
 
       {/* LOGO cross-validation + confusion matrix */}
       {cmMatrix && (
-        <div className="bg-slate-950 rounded-xl border border-slate-800 p-3">
+        <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 space-y-2">
+          {availableAxes.length > 1 && (
+            <div className="flex gap-1">
+              {availableAxes.map(ax => (
+                <button key={ax} onClick={() => setSelectedAxis(ax)}
+                  className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded transition-colors ${
+                    selectedAxis === ax
+                      ? 'bg-slate-700 text-emerald-400'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}>
+                  {ax}
+                </button>
+              ))}
+            </div>
+          )}
           <ConfusionMatrix matrix={cmMatrix} tpr={tpr} fp_rate={fp}
             labels={result.stage === 'weapon' ? ['No Weapon', 'Weapon'] : ['Absent', 'Present']} />
         </div>

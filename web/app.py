@@ -89,7 +89,7 @@ class StartRequest(BaseModel):
     calibration: str = "output/calib"
     model: str = "output/model.pkl/model.joblib"
     gain_lock: bool = True
-    vote: bool = False
+    vote: bool = True
     frame_average: int = 1
     use_baseline: bool = False
     
@@ -102,11 +102,12 @@ class StartRequest(BaseModel):
     col_spans: str = "0:5,10:15,20:25"
     col_window: int = 128
     col_hop: int = 32
-    subtract_ic_baseline: bool = False  # weapon IC background subtraction (Item 10/CAUSE 2B)
+    subtract_ic_baseline: bool = True  # weapon IC background subtraction (Item 10/CAUSE 2B) — default ON
     
     # Train
     train_backend: str = "mlp"
     train_out: str = "output/model.pkl"
+    train_data: str = "output/dataset_ui"  # dataset dir or cumulative pool parent (globs node*/)
 
     # Hardware
     cam_url: str = "http://192.168.1.100/mjpeg"
@@ -303,9 +304,8 @@ async def fusion_weights(path: str):
 @app.get("/api/weapon/litmus")
 async def weapon_litmus(root: str = "data", node: int | None = None, per_link: bool = False):
     """Static σ²[p] go/no-go: per-node (default) or per directed tx→rx link (per_link=true).
-    Rows are sorted by AUC descending so the best directions appear first. Reads weapon_rec/
-    that collect_weapon saves; runs offline (no live pipeline)."""
-    from weapon_litmus import gather_sigma2, separation, _verdict, _key_label
+    Rows are sorted by AUC descending. Each row includes histogram bins for the PDF overlay."""
+    from weapon_litmus import gather_sigma2, separation, _verdict, _key_label, json_hist
     try:
         data = gather_sigma2(root, node, per_link=per_link)
         if not data:
@@ -317,7 +317,9 @@ async def weapon_litmus(root: str = "data", node: int | None = None, per_link: b
 
         out = []
         for key in sorted(data, key=lambda k: (-_auc_of(k), _key_label(k))):
-            s = separation(data[key].get("clear", _np_empty()), data[key].get("weapon", _np_empty()))
+            c = data[key].get("clear", _np_empty())
+            w = data[key].get("weapon", _np_empty())
+            s = separation(c, w)
             label = _key_label(key)
             if s is None:
                 out.append({"label": label, "ok": False, "reason": "need both clear and weapon captures"})
@@ -325,7 +327,8 @@ async def weapon_litmus(root: str = "data", node: int | None = None, per_link: b
             out.append({"label": label, "auc": round(s["auc"], 3),
                         "lower_when_armed": s["lower_when_armed"], "cohens_d": round(s["cohens_d"], 2),
                         "n_clear": s["n_clear"], "n_weapon": s["n_weapon"],
-                        "verdict": _verdict(s["auc"])})
+                        "verdict": _verdict(s["auc"]),
+                        "hist": json_hist(c, w) if c.size >= 10 and w.size >= 10 else None})
         return {"rows": out, "per_link": per_link}
     except Exception as e:
         return {"error": str(e)}

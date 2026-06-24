@@ -26,7 +26,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
       calibration: 'output/calib',
       model: 'output/model.pkl/model.joblib',
       gain_lock: true,
-      vote: false,
+      vote: true,
       frame_average: 1,
       use_baseline: false,
       // Calib
@@ -37,10 +37,11 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
       col_spans: '0:5,10:15,20:25',
       col_window: 128,
       col_hop: 32,
-      subtract_ic_baseline: false,
+      subtract_ic_baseline: true,
       // Train
       train_backend: 'cnn',
       train_out: 'output/model.pkl',
+      train_data: 'output/dataset_ui',
     });
 
   // Fetch pinned subcarrier width whenever the calibration path changes.
@@ -293,9 +294,19 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
               >
                 <option value="cnn">CNN (PyTorch)</option>
                 <option value="mlp">MLP Classifier</option>
-                <option value="rf">Random Forest</option>
-                <option value="heatmap">Heatmap Head</option>
+                <option value="svm">SVM (calibrated)</option>
+                <option value="variance">Variance Threshold (weapon baseline)</option>
               </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">Dataset Path</label>
+              <input
+                type="text"
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
+                value={config.train_data}
+                onChange={(e) => setConfig({ ...config, train_data: e.target.value })}
+                placeholder="output/dataset_ui or data/weapon_ds/node0"
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs text-slate-400">Output Model Path</label>

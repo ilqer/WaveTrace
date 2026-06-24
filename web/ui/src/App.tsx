@@ -9,7 +9,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { WeaponLitmus } from './components/WeaponLitmus';
 import { DevicePanel } from './components/DevicePanel';
-import { Activity, Terminal, Wifi, BarChart3, AlertCircle, Box, Map as MapIcon, BrainCircuit, LayoutDashboard, Gauge, AlertTriangle, Upload, Usb } from 'lucide-react';
+import { Activity, Terminal, Wifi, BarChart3, AlertCircle, Box, Map as MapIcon, BrainCircuit, LayoutDashboard, Gauge, AlertTriangle, Upload, Usb, Crosshair } from 'lucide-react';
 import { clsx } from 'clsx';
 import AnsiImport from 'ansi-to-react';
 const Ansi = (AnsiImport as any).default || AnsiImport;
@@ -225,18 +225,31 @@ function App() {
               </div>
             </section>
           ) : activeTab === 'diagnostics' ? (
-            <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[624px]">
-              <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 shrink-0">
-                <Gauge size={14} className="text-emerald-500" />
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Live Diagnostics
-                </span>
-              </div>
-              <div className="flex-1 min-h-0 overflow-auto p-4 space-y-4">
-                <WeaponLitmus />
-                <DiagnosticsPanel />
-              </div>
-            </section>
+            <div className="flex flex-col gap-4 h-[624px] overflow-auto custom-scrollbar">
+              {/* Weapon litmus is offline — give it its own clearly-labelled section */}
+              <section className="bg-slate-900 rounded-xl border border-slate-800 shrink-0">
+                <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50">
+                  <Crosshair size={14} className="text-emerald-500" />
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Weapon Litmus — Offline
+                  </span>
+                </div>
+                <div className="p-4">
+                  <WeaponLitmus />
+                </div>
+              </section>
+              <section className="bg-slate-900 rounded-xl border border-slate-800 flex flex-col flex-1 min-h-0">
+                <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 shrink-0">
+                  <Gauge size={14} className="text-emerald-500" />
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Live Node Diagnostics
+                  </span>
+                </div>
+                <div className="flex-1 min-h-0 overflow-auto p-4">
+                  <DiagnosticsPanel />
+                </div>
+              </section>
+            </div>
           ) : activeTab === 'sensing' ? (
             <>
               <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[400px]">

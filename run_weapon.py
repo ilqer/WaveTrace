@@ -69,11 +69,17 @@ def _dwell_proba(frames, fs, result, gain_lock, cfg, intercarrier, pick, session
     return np.mean(probas, axis=0)  # temporal (soft) majority vote over the dwell
 
 
-def load_weapon_nodes(cal_root, model_root):
-    """Discover per-RX-node calibrations + weapon heads -> {node_id: dict(...)}. Each node carries a
-    static vote `weight` from its LOGO accuracy (binary chance 0.5) and the serving plan for its head's
-    feature_mode (ic27/fusion/cnn), so the live feature path matches how it was trained."""
-    nodes = {}
+def load_weapon_links(cal_root, model_root):
+    """Discover weapon heads -> {(tx_tag|None, rx_node): entry}. Two layouts, auto-detected per node:
+      * PER-LINK (WEAPON_NLOS_PLAN §4): model_weapon/node<id>/link<tag>/model.joblib -> one entry per
+        directed (tx->rx) view, keyed (tag, nid). The weapon signal is per-direction; this lets each
+        NLOS-scatter link vote on its own merit instead of being pooled (and sign-flipped) per node.
+      * PER-NODE (fallback): model_weapon/node<id>/model.joblib -> a single (None, nid) entry that
+        serves ANY tx into that node. Used when a node wasn't trained --per-link.
+    Calibration is per RX node (shared across that node's link heads). Each entry carries a static
+    LinkVoter `weight` from its OWN LOGO accuracy (accuracy_weights; chance->0 so a weak direction
+    drops out without being explicitly removed) and the serving plan matching how it was trained."""
+    entries = {}
     accs = {}
     for model_dir in sorted(glob.glob(os.path.join(model_root, "node*"))):
         base = os.path.basename(model_dir)
@@ -81,31 +87,67 @@ def load_weapon_nodes(cal_root, model_root):
             continue
         nid = int(base[len("node"):])
         cal_dir = os.path.join(cal_root, base)
-        model_path = os.path.join(model_dir, "model.joblib")
-        if not (os.path.isdir(cal_dir) and os.path.exists(model_path)):
+        if not os.path.isdir(cal_dir):
+            continue
+        link_models = sorted(glob.glob(os.path.join(model_dir, "link*", "model.joblib")))
+        if link_models:  # per-link: tag from the link<tag> dir name
+            found = [(os.path.basename(os.path.dirname(p))[len("link"):], p) for p in link_models]
+        elif os.path.exists(os.path.join(model_dir, "model.joblib")):
+            found = [(None, os.path.join(model_dir, "model.joblib"))]  # per-node fallback
+        else:
             continue
         result, gain_lock = load_calibration(cal_dir)
-        session = mode_session("weapon", model_path)
-        apply_lock, intercarrier, pick = _serving_plan("weapon", session.head)
-        classes = list(session.head.classes_)
-        # IC background subtraction is a property of how THIS head was trained (head config), rebuilt
-        # from the same per-node calibration so train/serve subtract the identical baseline (Item 10).
-        ic_baseline = (result.baseline_mag
-                       if getattr(session.head.config, "subtract_ic_baseline", False) else None)
-        nodes[nid] = dict(
-            result=result, lock=gain_lock if apply_lock else None,
-            intercarrier=intercarrier, pick=pick, session=session, cfg=session.head.config,
-            min_width=_min_width(result), weapon_i=classes.index(1) if 1 in classes else -1,
-            ic_baseline=ic_baseline,
-        )
-        accs[nid] = _logo_acc(os.path.join(model_dir, "metrics.json"))
-    weights = accuracy_weights({nid: a for nid, a in accs.items() if a is not None})
-    for nid in nodes:
-        nodes[nid]["weight"] = weights.get(nid, 1.0)
-    orders = {tuple(int(c) for c in m["session"].head.classes_) for m in nodes.values()}
+        for tag, model_path in found:
+            session = mode_session("weapon", model_path)
+            apply_lock, intercarrier, pick = _serving_plan("weapon", session.head)
+            classes = list(session.head.classes_)
+            # IC background subtraction is a property of how THIS head was trained (head config),
+            # rebuilt from the node's calibration so train/serve subtract the same baseline (Item 10).
+            ic_baseline = (result.baseline_mag
+                           if getattr(session.head.config, "subtract_ic_baseline", False) else None)
+            key = (tag, nid)
+            entries[key] = dict(
+                result=result, lock=gain_lock if apply_lock else None,
+                intercarrier=intercarrier, pick=pick, session=session, cfg=session.head.config,
+                min_width=_min_width(result), weapon_i=classes.index(1) if 1 in classes else -1,
+                ic_baseline=ic_baseline,
+            )
+            accs[key] = _logo_acc(os.path.join(os.path.dirname(model_path), "metrics.json"))
+    weights = accuracy_weights({k: a for k, a in accs.items() if a is not None})
+    for key in entries:
+        entries[key]["weight"] = weights.get(key, 1.0)
+    orders = {tuple(int(c) for c in e["session"].head.classes_) for e in entries.values()}
     if len(orders) > 1:
-        raise ValueError(f"per-node heads disagree on class ordering {orders}; retrain consistently")
-    return nodes
+        raise ValueError(f"weapon heads disagree on class ordering {orders}; retrain consistently")
+    return entries
+
+
+def _entry_for(entries, buf_key):
+    """Match a live buffer key (tx_short, rx_node) to a serving entry: the per-link (tag, nid) head
+    first (tx_short '4f:9c' -> tag '4f9c'), then the per-node fallback (None, nid). None if neither."""
+    tx_short, nid = buf_key
+    return entries.get((tx_short.replace(":", ""), nid)) or entries.get((None, nid))
+
+
+def _link_health(frames):
+    """(delivered_hz, missing_fraction) from frame timestamps — the per-link Missing-Rate metric
+    (diagnosis C9b: measure DELIVERED rate, not configured). Median inter-arrival is the nominal
+    period; a gap of ~k periods counts k-1 missing frames. O(n). (0,0) if too few frames."""
+    if len(frames) < 3:
+        return 0.0, 0.0
+    ts = np.array([f.timestamp for f in frames], dtype=np.float64)
+    dt = np.diff(ts)
+    dt = dt[dt > 0]
+    if dt.size == 0:
+        return 0.0, 0.0
+    span = ts[-1] - ts[0]
+    hz = (len(frames) - 1) / span if span > 0 else 0.0
+    med = float(np.median(dt))
+    if med <= 0:
+        return hz, 0.0
+    missing = float(np.clip(np.round(dt / med) - 1.0, 0.0, None).sum())
+    expected = missing + dt.size
+    return hz, (missing / expected if expected > 0 else 0.0)
 
 
 def main():
@@ -126,21 +168,25 @@ def main():
     LINK_TIMEOUT_S = 3.0   # drop a link from the vote if unheard this long
     BUFFER_S = 3.0         # per-link rolling history kept for resampling/windowing
 
-    nodes = load_weapon_nodes(args.cal, args.model)
-    if not nodes:
-        print(f"[ERROR] No weapon models under {args.model}/node*/model.joblib with a matching "
+    entries = load_weapon_links(args.cal, args.model)
+    if not entries:
+        print(f"[ERROR] No weapon heads under {args.model}/node*/[link*/]model.joblib with a matching "
               f"{args.cal}/node*/. Run collect_baseline.py then collect_weapon.py first.")
         return
-    weapon_i = next(iter(nodes.values()))["weapon_i"]  # ordering validated equal in load_weapon_nodes
+    weapon_i = next(iter(entries.values()))["weapon_i"]  # ordering validated equal in load_weapon_links
 
     buffers = collections.defaultdict(collections.deque)  # keyed by (tx_short, rx_node)
     last_seen = {}
     link_ids = {}
 
     sock = bind_udp(args.port, timeout=0.5)
-    wsummary = "  ".join(f"N{nid}:w={nodes[nid]['weight']:.2f}" for nid in sorted(nodes))
-    print(f"WEAPON detection on udp/{args.port} (fs={TARGET_FS:g}Hz, rx nodes={sorted(nodes)}; "
-          f"vote weights {wsummary}). Ctrl+C to stop.\n")
+    per_link = any(tag is not None for tag, _ in entries)
+    def _wlabel(key):
+        tag, nid = key
+        return f"{tag}->{nid}" if tag is not None else f"*->{nid}"
+    wsummary = "  ".join(f"{_wlabel(k)}:w={entries[k]['weight']:.2f}" for k in sorted(entries))
+    print(f"WEAPON detection on udp/{args.port} (fs={TARGET_FS:g}Hz, "
+          f"{'per-link' if per_link else 'per-node'} heads; vote weights {wsummary}). Ctrl+C to stop.\n")
 
     next_fuse = time.time() + CHUNK_S
     try:
@@ -149,7 +195,7 @@ def main():
             try:
                 payload, _ = sock.recvfrom(65535)
                 for key, frames in parse_batch_links(payload).items():
-                    m = nodes.get(key[1])  # key = (tx_short, rx_node); cal+head belong to the RX node
+                    m = _entry_for(entries, key)  # key=(tx_short, rx_node) -> per-link, then per-node
                     if m is not None and frames[0].num_subcarriers >= m["min_width"]:
                         buffers[key].extend(frames)
                         last_seen[key] = now
@@ -167,15 +213,15 @@ def main():
                     while buf and buf[0].timestamp < cutoff:
                         buf.popleft()
 
-            # static per-node reliability x live margin (LinkVoter multiplies them); uniform fallback.
-            link_static = {lid: nodes[key[1]]["weight"] for key, lid in link_ids.items()}
+            # static per-link reliability x live margin (LinkVoter multiplies them); uniform fallback.
+            link_static = {lid: _entry_for(entries, key)["weight"] for key, lid in link_ids.items()}
             static = link_static if any(w > 0 for w in link_static.values()) else None
             voter = LinkVoter(static)
             breakdown = []
             for key in sorted(buffers):
                 if now - last_seen.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
-                m = nodes[key[1]]
+                m = _entry_for(entries, key)
                 proba = _dwell_proba(list(buffers[key]), TARGET_FS, m["result"], m["lock"],
                                      m["cfg"], m["intercarrier"], m["pick"], m["session"],
                                      ic_baseline=m["ic_baseline"])
@@ -185,7 +231,9 @@ def main():
                 p_weapon = float(proba[wi]) if wi >= 0 else 0.0
                 quality = abs(p_weapon - 0.5) * 2.0  # decision margin -> 0 (unsure) .. 1 (confident)
                 voter.add(link_ids[key], proba, quality=quality)
-                breakdown.append(f"{key[0]}->{key[1]}:{p_weapon:.2f}")
+                hz, miss = _link_health(buffers[key])  # delivered rate + missing-frame fraction (C9b)
+                tail = f"@{hz:.0f}Hz" + (f"!{miss:.0%}drop" if miss > 0.1 else "")
+                breakdown.append(f"{key[0]}->{key[1]}:{p_weapon:.2f}{tail}")
 
             if not breakdown:
                 print("\r(no live links with a full window yet)            ", end="", flush=True)

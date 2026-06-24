@@ -110,6 +110,38 @@ def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_su
     return out
 
 
+def _link_tag(ds_dir):
+    """TX link tag from a weapon_ds dir name `<sess>_<cond>_link<tag>` (':'-free tx mac-short)."""
+    base = os.path.basename(ds_dir)
+    return base.split("_link")[-1] if "_link" in base else None
+
+
+def _train_and_report(ds_dirs, out_dir, label):
+    """Train one weapon head (ic27) on `ds_dirs` -> `out_dir`, print its LOGO line, return True on
+    success. Shared by the per-node and per-link paths so both report identically. `label` names the
+    unit in the log (e.g. 'Node 2' or 'Node 2 link4f9c')."""
+    if not ds_dirs:
+        print(f"   [SKIP] {label}: no datasets in pool.")
+        return False
+    try:
+        _, m = train_weapon(ds_dirs, out_dir=out_dir, feature_mode="ic27")
+    except ValueError as e:  # WeaponHead.fit needs BOTH classes in the pool
+        print(f"   [SKIP] {label}: {e}")
+        return False
+    logo = m.get("logo", {})
+    sess = logo.get("session") or logo.get("subject")
+    line = (f"   [OK]   {label}: samples={m['n_samples']} class_counts={m['class_counts']} "
+            f"train_acc={m['train_accuracy']:.3f}")
+    if sess:
+        line += (f"  LOGO={sess['accuracy']:.3f} (majority {sess['majority_accuracy']:.3f}, "
+                 f"TPR {sess.get('tpr', 0):.3f}, FP {sess.get('fp_rate', 0):.3f})")
+    carry = logo.get("carry")  # confound axis: generalization across carry pose (diagnosis 5E)
+    if carry:
+        line += f"  carry-LOGO={carry['accuracy']:.3f} (maj {carry['majority_accuracy']:.3f})"
+    print(line)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="Capture no-weapon/weapon sessions and train a weapon model per node.")
     parser.add_argument("--node", type=int, default=None, help="Train ONLY this node (default: all calibrated)")
@@ -120,6 +152,12 @@ def main():
     parser.add_argument("--carry", default="na", help="Carry position label, e.g. waist/chest/ankle (default: na)")
     parser.add_argument("--bg-subtract", action="store_true", dest="bg_subtract",
                         help="Subtract the quiet-room baseline from σ²[p] (Item 10/CAUSE 2B); serving mirrors it")
+    parser.add_argument("--per-link", action="store_true", dest="per_link",
+                        help="Train ONE head per (tx->rx) DIRECTION -> model_weapon/node<id>/link<tag>/ "
+                             "instead of pooling a node's directions into one head (WEAPON_NLOS_PLAN §4). "
+                             "The signal is per-direction; pooling sign-flips the good NLOS link. "
+                             "Bad directions are NOT dropped — run_weapon's LinkVoter zeroes a "
+                             "sub-chance link via its own LOGO weight (accuracy_weights).")
     parser.add_argument("--root", default="data",
                         help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
     parser.add_argument("--cal", default=None, help="Calibration root (default: <root>/cal)")
@@ -157,36 +195,35 @@ def main():
             _emit(armed, args.root, args.cal, nid, sess_id, args.subject, args.carry, "weapon",
                   weapon=True, bg_subtract=args.bg_subtract)
 
-    print("\nTraining per-node weapon models (ic27) on the CUMULATIVE pool...")
+    unit = "per-link (tx->rx)" if args.per_link else "per-node"
+    print(f"\nTraining {unit} weapon models (ic27) on the CUMULATIVE pool...")
     trained = []
     for nid in cal_nodes:
         ds_dirs = sorted(glob.glob(f"{args.root}/weapon_ds/node{nid}/*"))
-        if not ds_dirs:
-            print(f"   [SKIP] Node {nid}: no datasets in pool.")
+        if not args.per_link:
+            if _train_and_report(ds_dirs, f"{args.model}/node{nid}", f"Node {nid}"):
+                trained.append(nid)
             continue
-        try:
-            _, m = train_weapon(ds_dirs, out_dir=f"{args.model}/node{nid}", feature_mode="ic27")
-        except ValueError as e:  # WeaponHead.fit needs BOTH classes in the pool
-            print(f"   [SKIP] Node {nid}: {e}")
+        # per-link: group this node's datasets by tx tag, one head per (tx->rx) direction
+        by_tag = collections.defaultdict(list)
+        for d in ds_dirs:
+            tag = _link_tag(d)
+            if tag is not None:
+                by_tag[tag].append(d)
+        if not by_tag:
+            print(f"   [SKIP] Node {nid}: no per-link datasets (re-capture with collect_weapon).")
             continue
-        logo = m.get("logo", {})
-        sess = logo.get("session") or logo.get("subject")
-        line = (f"   [OK]   Node {nid}: samples={m['n_samples']} class_counts={m['class_counts']} "
-                f"train_acc={m['train_accuracy']:.3f}")
-        if sess:
-            line += (f"  LOGO={sess['accuracy']:.3f} (majority {sess['majority_accuracy']:.3f}, "
-                     f"TPR {sess.get('tpr', 0):.3f}, FP {sess.get('fp_rate', 0):.3f})")
-        carry = logo.get("carry")  # confound axis: generalization across carry pose (diagnosis 5E)
-        if carry:
-            line += f"  carry-LOGO={carry['accuracy']:.3f} (maj {carry['majority_accuracy']:.3f})"
-        print(line)
-        trained.append(nid)
+        for tag in sorted(by_tag):
+            if _train_and_report(by_tag[tag], f"{args.model}/node{nid}/link{tag}",
+                                 f"Node {nid} link{tag}"):
+                trained.append((nid, tag))
 
     if not trained:
-        print("\n[ERROR] No node trained — need both no-weapon AND weapon captures in the pool.",
+        print("\n[ERROR] Nothing trained — need both no-weapon AND weapon captures in the pool.",
               file=sys.stderr)
         return
-    print(f"\nweapon models saved for nodes {trained} -> {args.model}/node*/  "
+    dest = f"{args.model}/node*/link*/" if args.per_link else f"{args.model}/node*/"
+    print(f"\nweapon models saved ({len(trained)} {unit} heads) -> {dest}  "
           "(LOGO must clearly beat majority; expect this to need many subjects/positions/objects.)")
 
 

@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { clsx } from 'clsx';
-import { Crosshair } from 'lucide-react';
+import { Crosshair, ChevronDown, ChevronRight } from 'lucide-react';
 
 // Static σ²[p] go/no-go before ML. per_link=true scores each directed tx→rx link
 // separately — surfaces which round-robin directions carry weapon signal (NLOS geometry).
+interface HistData { edges: number[]; clear: number[]; weapon: number[]; }
+
 interface LitmusRow {
   label: string;
   ok?: boolean;
@@ -14,6 +16,7 @@ interface LitmusRow {
   n_clear?: number;
   n_weapon?: number;
   verdict?: string;
+  hist?: HistData | null;
 }
 
 function aucColor(auc: number): string {
@@ -22,16 +25,40 @@ function aucColor(auc: number): string {
   return 'text-emerald-400';
 }
 
+// Overlaid density histogram — clear=teal, weapon=red, shared bin grid. Mirrors Yousaf Fig 17.
+function SigmaHist({ hist }: { hist: HistData }) {
+  const W = 220, H = 52;
+  const peak = Math.max(...hist.clear, ...hist.weapon, 1e-12);
+  const bins = hist.clear.length;
+  const bw = W / bins;
+  return (
+    <svg width={W} height={H} className="block">
+      {hist.clear.map((v, i) => {
+        const h = (v / peak) * H;
+        return <rect key={`c${i}`} x={i * bw} y={H - h} width={Math.max(bw - 1, 1)} height={h}
+                     fill="#2dd4bf" fillOpacity={0.55} />;
+      })}
+      {hist.weapon.map((v, i) => {
+        const h = (v / peak) * H;
+        return <rect key={`w${i}`} x={i * bw} y={H - h} width={Math.max(bw - 1, 1)} height={h}
+                     fill="#f43f5e" fillOpacity={0.55} />;
+      })}
+    </svg>
+  );
+}
+
 export function WeaponLitmus() {
   const [root, setRoot] = useState('data');
   const [perLink, setPerLink] = useState(false);
   const [rows, setRows] = useState<LitmusRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const run = async () => {
     setLoading(true);
     setErr(null);
+    setExpanded(new Set());
     try {
       const res = await fetch(
         `/api/weapon/litmus?root=${encodeURIComponent(root)}&per_link=${perLink}`
@@ -44,6 +71,13 @@ export function WeaponLitmus() {
     }
     setLoading(false);
   };
+
+  const toggle = (label: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(label) ? next.delete(label) : next.add(label);
+      return next;
+    });
 
   return (
     <section className="bg-slate-900 rounded-xl border border-slate-800 p-4 space-y-3">
@@ -80,33 +114,57 @@ export function WeaponLitmus() {
 
       {rows && rows.length > 0 && (
         <div className="space-y-1">
-          <div className="grid grid-cols-[72px_56px_36px_1fr] gap-2 text-[9px] uppercase tracking-wider text-slate-600 px-1">
+          <div className="grid grid-cols-[16px_72px_56px_36px_1fr] gap-2 text-[9px] uppercase tracking-wider text-slate-600 px-1">
+            <span />
             <span>{perLink ? 'Link' : 'Node'}</span>
             <span>AUC</span>
             <span>Dir</span>
             <span>Verdict</span>
           </div>
           {rows.map((r) => (
-            <div
-              key={r.label}
-              className="grid grid-cols-[72px_56px_36px_1fr] gap-2 items-center text-[11px] bg-slate-950/60 rounded px-1 py-1 border border-slate-800"
-            >
-              <span className="text-slate-400 font-mono truncate" title={r.label}>{r.label}</span>
-              {r.auc != null ? (
-                <>
-                  <span className={clsx('font-mono font-bold', aucColor(r.auc))}>{r.auc.toFixed(3)}</span>
-                  <span
-                    className={clsx('font-mono', r.lower_when_armed ? 'text-slate-400' : 'text-amber-400')}
-                    title={r.lower_when_armed
-                      ? 'armed σ² lower — matches metal physics'
-                      : 'armed σ² HIGHER — anti-physics (geometry/gain issue)'}
-                  >
-                    {r.lower_when_armed ? 'ok' : 'INV'}
-                  </span>
-                  <span className="text-slate-400 leading-tight">{r.verdict}</span>
-                </>
-              ) : (
-                <span className="col-span-3 text-slate-600 italic">{r.reason}</span>
+            <div key={r.label}>
+              <div
+                className="grid grid-cols-[16px_72px_56px_36px_1fr] gap-2 items-center text-[11px] bg-slate-950/60 rounded px-1 py-1 border border-slate-800 cursor-pointer hover:border-slate-700"
+                onClick={() => r.hist && toggle(r.label)}
+              >
+                <span className="text-slate-600">
+                  {r.hist
+                    ? (expanded.has(r.label) ? <ChevronDown size={10} /> : <ChevronRight size={10} />)
+                    : null}
+                </span>
+                <span className="text-slate-400 font-mono truncate" title={r.label}>{r.label}</span>
+                {r.auc != null ? (
+                  <>
+                    <span className={clsx('font-mono font-bold', aucColor(r.auc))}>{r.auc.toFixed(3)}</span>
+                    <span
+                      className={clsx('font-mono', r.lower_when_armed ? 'text-slate-400' : 'text-amber-400')}
+                      title={r.lower_when_armed
+                        ? 'armed σ² lower — matches metal physics'
+                        : 'armed σ² HIGHER — anti-physics (geometry/gain issue)'}
+                    >
+                      {r.lower_when_armed ? 'ok' : 'INV'}
+                    </span>
+                    <span className="text-slate-400 leading-tight">{r.verdict}</span>
+                  </>
+                ) : (
+                  <span className="col-span-3 text-slate-600 italic">{r.reason}</span>
+                )}
+              </div>
+              {r.hist && expanded.has(r.label) && (
+                <div className="ml-[88px] mt-1 mb-1 space-y-1">
+                  <div className="flex gap-3 text-[9px] text-slate-500">
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block w-2 h-2 rounded-sm bg-teal-400 opacity-70" />clear (n={r.n_clear})
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block w-2 h-2 rounded-sm bg-rose-400 opacity-70" />weapon (n={r.n_weapon})
+                    </span>
+                    {r.cohens_d != null && (
+                      <span className="text-slate-600">d={r.cohens_d.toFixed(2)}</span>
+                    )}
+                  </div>
+                  <SigmaHist hist={r.hist} />
+                </div>
               )}
             </div>
           ))}

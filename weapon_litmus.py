@@ -104,6 +104,17 @@ def separation(clear, weapon):
     }
 
 
+def json_hist(clear, weapon, bins=20):
+    """JSON-serializable overlaid σ²[p] histogram for the web litmus card.
+    Returns density-normalised heights on a shared edge grid. O(N log N)."""
+    lo = float(min(clear.min(), weapon.min()))
+    hi = float(max(clear.max(), weapon.max()))
+    edges = np.linspace(lo, hi, bins + 1)
+    hc, _ = np.histogram(clear, edges, density=True)
+    hw, _ = np.histogram(weapon, edges, density=True)
+    return {"edges": edges.tolist(), "clear": hc.tolist(), "weapon": hw.tolist()}
+
+
 def _verdict(auc):
     """Map direction-folded AUC to a go/no-go call."""
     if auc < 0.55:

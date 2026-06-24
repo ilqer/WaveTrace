@@ -10,6 +10,7 @@ export interface NodeHealth {
   snr_db: number;
   cv: number;
   gain_drift: number | null;
+  loss_pct: number;
   subcarriers: number[];
   last_ts: number;
 }
