@@ -86,8 +86,8 @@ class StartRequest(BaseModel):
     
     # Run
     mode: str = "presence"
-    calibration: str = "output/calib"
-    model: str = "output/model.pkl/model.joblib"
+    calibration: str = "data/2g4_ht40/ui/cal"
+    model: str = "data/2g4_ht40/ui/model/model.joblib"
     gain_lock: bool = True
     vote: bool = True
     frame_average: int = 1
@@ -95,7 +95,7 @@ class StartRequest(BaseModel):
     
     # Calib
     baseline_packets: int = 300
-    cal_out: str = "output/calib"
+    cal_out: str = "data/2g4_ht40/ui/cal"
     
     # Collect
     col_stage: str = "presence"
@@ -106,8 +106,8 @@ class StartRequest(BaseModel):
     
     # Train
     train_backend: str = "mlp"
-    train_out: str = "output/model.pkl"
-    train_data: str = "output/dataset_ui"  # dataset dir or cumulative pool parent (globs node*/)
+    train_out: str = "data/2g4_ht40/ui/model"
+    train_data: str = "data/2g4_ht40/ui/ds"  # dataset dir or cumulative pool parent (globs node*/)
 
     # Hardware
     cam_url: str = "http://192.168.1.100/mjpeg"

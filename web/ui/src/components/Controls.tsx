@@ -23,15 +23,15 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
       cam_url: 'http://192.168.1.100/mjpeg',
       // Run
       mode: 'presence',
-      calibration: 'output/calib',
-      model: 'output/model.pkl/model.joblib',
+      calibration: 'data/2g4_ht40/ui/cal',
+      model: 'data/2g4_ht40/ui/model/model.joblib',
       gain_lock: true,
       vote: true,
       frame_average: 1,
       use_baseline: false,
       // Calib
       baseline_packets: 300,
-      cal_out: 'output/calib',
+      cal_out: 'data/2g4_ht40/ui/cal',
       // Collect
       col_stage: 'presence',
       col_spans: '0:5,10:15,20:25',
@@ -40,7 +40,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
       subtract_ic_baseline: true,
       // Train
       train_backend: 'cnn',
-      train_out: 'output/model.pkl',
+      train_out: 'data/2g4_ht40/ui/model',
       train_data: 'output/dataset_ui',
     });
 

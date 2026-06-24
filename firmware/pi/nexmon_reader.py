@@ -14,9 +14,10 @@ Payload layout (Nexmon CSI, bcm43455c0 — same as the `nexcsi` decoder):
   Errors: malformed/short datagrams are skipped (never raises mid-stream).
 
 NOTE (verify on hardware, Part A step 2): the int16 I/Q ordering below assumes
-[real, imag] per subcarrier. For PRESENCE this is irrelevant (|csi| is identical either
-way and the host normalizes); confirm before using phase or weapon σ². NFFT = FFT size:
-5 GHz HT40 = 128, HT80 = 256 (this deployment uses HT80 -> EXPECT_S = 256).
+[real, imag] per subcarrier. This is irrelevant for any MAGNITUDE feature — presence AND the
+weapon σ²[p] both read |csi|, and |a+bj| = |b+aj|, so an I/Q swap can't change them. Only
+PHASE/CIR methods (Cir.py, complex reconstruction) depend on the ordering — confirm before those.
+NFFT = FFT size: 5 GHz HT40 = 128, HT80 = 256 (this deployment uses HT80 -> EXPECT_S = 256).
 """
 import socket
 import struct

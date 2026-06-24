@@ -150,8 +150,10 @@ def main():
     parser.add_argument("--frames", type=int, default=1500, help="Frames per condition per node (default: 1500)")
     parser.add_argument("--subject", default="p0", help="Subject id for this run (vary it across people!)")
     parser.add_argument("--carry", default="na", help="Carry position label, e.g. waist/chest/ankle (default: na)")
-    parser.add_argument("--bg-subtract", action="store_true", dest="bg_subtract",
-                        help="Subtract the quiet-room baseline from σ²[p] (Item 10/CAUSE 2B); serving mirrors it")
+    parser.add_argument("--bg-subtract", action=argparse.BooleanOptionalAction, dest="bg_subtract",
+                        default=True,
+                        help="Subtract the quiet-room baseline from σ²[p] (Item 10/CAUSE 2B); serving mirrors it. "
+                             "Default ON (matches the web frontend); pass --no-bg-subtract to disable.")
     parser.add_argument("--per-link", action="store_true", dest="per_link",
                         help="Train ONE head per (tx->rx) DIRECTION -> model_weapon/node<id>/link<tag>/ "
                              "instead of pooling a node's directions into one head (WEAPON_NLOS_PLAN §4). "

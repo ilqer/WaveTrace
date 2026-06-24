@@ -19,16 +19,30 @@ cd esp-idf && ./install.sh esp32s3
 
 ### Step 2 — Configure `config.h` (once per deployment)
 
-Open `firmware/esp32_node/main/config.h` and set:
+Open `firmware/esp32_node/main/config.h` and set the four values that are specific to your network:
 
 ```c
-#define WIFI_SSID   "your-router-ssid"
-#define WIFI_PASS   "your-router-password"
-#define PC_IP       "192.168.x.x"    // your Mac's IP on that LAN
-#define MESH_NODES  2                // number of boards you are flashing (start at 2)
+#define ROUTER_SSID  "your-router-ssid"
+#define ROUTER_PASS  "your-router-password"
+#define PC_IP        "192.168.x.x"    // your Mac's LAN IP (run: ipconfig getifaddr en0)
+#define MESH_NODES   2                // number of boards you are flashing right now
 ```
 
-To find your Mac's IP: **System Settings → Network → your Wi-Fi connection → IP address**. Or run `ipconfig getifaddr en0` in the Mac terminal. Give the Mac a static DHCP lease on the router so this IP does not change.
+To find your Mac's IP: `System Settings → Network → your connection → IP address`, or run `ipconfig getifaddr en0`. Give the Mac a static DHCP lease on the router so this IP never changes between sessions.
+
+The remaining settings in `config.h` are tuned for the current 6-node, HT40, channel-6 setup and do not need to change:
+
+| Setting | Value | Meaning |
+|---|---|---|
+| `WT_BW_HT40` | `1` | HT40 bandwidth (router must also be set to 40 MHz) |
+| `BURST_LEN` | `10` | Frames per ESP-NOW burst |
+| `BURST_MS` | `2` | ms between burst frames (requires `CONFIG_FREERTOS_HZ=1000`) |
+| `MAX_NODES` | `16` | Ring capacity; active count is discovered at runtime — no change when adding boards |
+| `CSI_MAX_HZ` | `0` | Uncapped; the host resamples each link to 100 Hz |
+| `SNTP_SERVER` | `PC_IP` | Nodes use the Mac as their NTP clock source (`ntp_server.py`) |
+| `CSI_UDP_PORT` | `9876` | CSI datagrams to the Mac |
+| `HEALTH_UDP_PORT` | `9877` | Per-node heartbeat |
+| `DISCOVERY_PORT` | `9878` | Nodes ping this port to learn the current `PC_IP` |
 
 ### Step 3 — Flash each board
 
@@ -48,15 +62,21 @@ Then flash (run from the repo root):
 
 Each `flash.sh` call builds, flashes, and opens a serial monitor (Ctrl+] to exit). You should see the board print its node ID and associate to the router.
 
-### Step 4 — Verify
+### Step 4 — Start the NTP server and verify
 
-Run from the repo root with the Python venv active and both boards powered (USB only needed for flashing — they can run from any 5 V supply after that):
+The firmware uses the Mac as its SNTP clock source. Run this in a dedicated terminal before verifying or collecting any data:
 
 ```bash
-.venv/bin/python mesh_verify.py
+python ntp_server.py
 ```
 
-Expected output: two lines, one for link `1->2` and one for `2->1`, both with a frame rate > 0. If nothing appears, check `PC_IP` in `config.h` and that the Mac firewall is not blocking UDP 9876 (`System Settings → Network → Firewall`).
+Then verify CSI is arriving (venv active, boards powered — USB only needed for flashing):
+
+```bash
+python mesh_verify.py
+```
+
+Expected output: one line per directed link. With 2 boards: `1->2` and `2->1`, both at a non-zero frame rate. With 6 boards: 30 links (6×5). If nothing appears: wrong `PC_IP` in `config.h`, Mac firewall blocking UDP 9876, or boards not yet associated (wait ~10 s after power-on). Check that the firewall also allows UDP 9877 (health) and 9878 (discovery).
 
 ### Wipe and flash from scratch
 

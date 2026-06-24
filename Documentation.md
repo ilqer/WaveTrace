@@ -64,13 +64,15 @@ Pi 5 GHz nexmon       ─┘         │
 
 | Item | Qty | Notes |
 |---|---|---|
-| ESP32-S3 development board | 2+ | Start with 2 for the proof; scale up to 6. Any ESP32-S3 with a USB port works. |
-| Raspberry Pi 3B+ or 4 | 1 | For the 5 GHz arm. Pi 5 is **not** supported by Nexmon CSI. |
-| Dedicated Wi-Fi router | 1 | Must be lockable to a fixed channel. Do not use a router shared with regular traffic — bursty traffic corrupts the calibration. |
-| Directional TX antenna | 1 | **Required for weapon detection.** A bare PCB antenna is not sensitive enough to detect a small concealed object. A horn or patch antenna with ≥9 dBi gain is the target. |
-| USB cables | 1 per ESP32 | For flashing. After flashing, the boards only need 5 V power. |
-| 5 V power supply | 1 per ESP32 | After flashing, boards can run from any 5 V USB supply. |
-| Ethernet cable | 1 | Wired connection from the Pi to the router. The Pi's Wi-Fi radio is fully occupied by CSI capture. |
+| ESP32-S3-DevKitC-1 | 6 | All six run the same firmware. The only per-board difference is `NODE_ID`. Status LED is GPIO 38 (v1.1 board). |
+| 8dBi RP-SMA omnidirectional antenna | 6 | 160 mm whip, 2.4/5.8 GHz dual-band, vertical polarization, 50 Ω, RP-SMA male connector. One per board. These are **omnidirectional** (radiate in all horizontal directions), not directional — see the note below. |
+| Raspberry Pi 5 | 1 | For the 5 GHz arm. Nexmon CSI on Pi 5 requires a community patch — it is not in the official Nexmon repo. See [`firmware/pi/README.md`](firmware/pi/README.md) for the current status. |
+| Dedicated Wi-Fi router | 1 | Locked to channel 6, 2.4 GHz, 40 MHz (HT40). Do not use a router shared with regular traffic — bursty traffic corrupts the calibration baseline. |
+| USB cables | 1 per ESP32 | For flashing only. After flashing, boards run from any 5 V supply. |
+| 5 V power supply | 1 per ESP32 | Standard USB power banks or phone chargers work fine. |
+| Ethernet cable | 1 | Wired connection from the Pi to the router. The Pi's Wi-Fi radio is in monitor mode for CSI — it cannot simultaneously carry the data backhaul. |
+
+**Antenna note:** The 8dBi omnidirectional antennas are a significant upgrade over the bare PCB trace antennas the boards ship with, and they work well for presence detection. For weapon detection, the research literature uses directional antennas (horn/dish, ≥9 dBi, narrow beam) to focus the signal on the subject and reduce background reflections. The round-robin TX rotation across 6 boards provides spatial diversity across 30 directed links (6×5), which partially compensates — different links cover different angles. The system is likely to work for presence with the current antennas; weapon detection performance relative to the published numbers (which used directional hardware) is an open question to validate on the first real dataset.
 
 ### Software
 
@@ -85,10 +87,14 @@ Pi 5 GHz nexmon       ─┘         │
 
 ### Network setup
 
-- The Mac, router, and all ESP32 boards must be on the **same channel**. Lock the router to a fixed channel (e.g. channel 11 for 2.4 GHz); disable auto-channel selection.
-- Give the Mac a **static DHCP lease** on the router. The MAC address of the Mac is constant; the router assigns it the same IP every time. This IP goes into `config.h` as `PC_IP`. If the IP changes, the boards cannot reach the Mac.
-- The Mac firewall must allow incoming UDP on ports 9876 (CSI) and 9877 (health). Check under `System Settings → Network → Firewall → Options`.
-- Keep the sensing network on a **dedicated router** — not your home or office network. Bursty traffic from other devices causes AGC swings that corrupt the calibration.
+- The router is locked to **channel 6, 2.4 GHz, 40 MHz (HT40)**. All ESP32 boards join it as STAs; this automatically locks every board to channel 6 so they hear each other's ESP-NOW traffic. Do not change the channel after flashing without a full wipe-and-reflash of the boards (stale Wi-Fi NVS caches the old channel).
+- Give the Mac a **static DHCP lease** on the router so the IP is always the same. Set that IP as `PC_IP` in `config.h`. If the IP changes, the boards send CSI into the void.
+- The Mac firewall must allow incoming UDP on these ports. Check under `System Settings → Network → Firewall → Options`:
+  - **9876** — CSI datagrams from all nodes
+  - **9877** — per-node health heartbeats
+  - **9878** — node discovery (boards ping this port to learn the current PC IP)
+- Run `python ntp_server.py` on the Mac **before** running any collect or live script. The ESP32 firmware uses the Mac as its SNTP clock source (`SNTP_SERVER = PC_IP` in `config.h`). Without it, nodes fall back to their own monotonic clock — single-link presence still works, but cross-node timestamp alignment for fusion is unreliable.
+- Keep the sensing network on a **dedicated router** — not your home or office network. Bursty traffic from other devices causes AGC swings that corrupt the calibration baseline.
 
 ---
 
@@ -171,15 +177,23 @@ After flashing, the boards only need a 5 V power supply. The USB cable is only n
 
 ---
 
-### C. Verify hardware
+### C. Start the NTP server (keep this running throughout)
+
+```bash
+python ntp_server.py
+```
+
+Keep this running in a dedicated terminal whenever the boards are on. Boards use the Mac as their SNTP source. Without it they fall back to their own clock — presence on a single link still works, but multi-node timestamp fusion becomes unreliable.
+
+### D. Verify hardware
 
 ```bash
 python mesh_verify.py
 ```
 
-Expected: a line for link `1->2` and a line for `2->1`, both showing a frame rate > 0 (~20–100 Hz).
+With 6 nodes, expect 30 links (6×5 directed pairs), each at a non-zero frame rate. Two nodes gives 2 links (`1->2` and `2->1`). Typical rate per link: 20–100 Hz depending on channel load.
 
-If nothing appears: check `PC_IP` in `config.h`, and check that the Mac firewall is not blocking UDP 9876.
+If nothing appears: wrong `PC_IP` in `config.h`, or the Mac firewall is blocking UDP 9876, or the boards haven't associated yet (give them ~10 s after power-on).
 
 ```bash
 python health_monitor.py    # per-node uptime and free heap; Ctrl-C to stop
@@ -187,7 +201,7 @@ python health_monitor.py    # per-node uptime and free heap; Ctrl-C to stop
 
 ---
 
-### D. Calibrate (empty room)
+### E. Calibrate (empty room)
 
 ```bash
 python collect_baseline.py --root data/2g4_ht40
@@ -199,7 +213,7 @@ Output goes into `data/2g4_ht40/cal/`. The `--root` flag selects the capture pro
 
 ---
 
-### E. Collect presence data and train
+### F. Collect presence data and train
 
 ```bash
 python collect_presence.py --root data/2g4_ht40
@@ -209,7 +223,7 @@ The script walks you through it: it records the empty room first, then tells you
 
 ---
 
-### F. Run live presence detection
+### G. Run live presence detection
 
 ```bash
 python run_live_mesh.py --root data/2g4_ht40
@@ -219,7 +233,7 @@ Expected output: `PRESENT` or `EMPTY` printed every ~0.3 s. Votes from all activ
 
 ---
 
-### G. Weapon mode (only after presence works end to end)
+### H. Weapon mode (only after presence works end to end)
 
 ```bash
 python collect_weapon.py --root data/2g4_ht40 --subject p0 --carry chest
@@ -232,7 +246,7 @@ Do not skip to weapon mode if presence is not working. The pipeline is identical
 
 ---
 
-### H. Web dashboard (optional)
+### I. Web dashboard (optional)
 
 ```bash
 python web/streamer.py      # WebSocket backend on port 8765 — keep this running
@@ -254,19 +268,20 @@ Note: the Train button in the dashboard currently fakes metrics. Real training i
 
 Data from different radio configurations cannot be mixed. A model trained on HT20 data is invalid on HT40, and vice versa. Every `collect_*.py` and `run_*.py` script takes `--root` to pick a profile; all data (calibration, recordings, datasets, models) for that profile lives under that directory.
 
-| Profile (`--root`) | Band | Bandwidth | Subcarriers | Hardware |
-|---|---|---|---|---|
-| `data/2g4_ht20` | 2.4 GHz | 20 MHz | ~52 | ESP32-S3 |
-| `data/2g4_ht40` | 2.4 GHz | 40 MHz | ~114 | ESP32-S3 (`WT_BW_HT40 1` in sdkconfig) |
-| `data/5g_ht40` | 5 GHz | 40 MHz | ~114 | Raspberry Pi / Nexmon |
-| `data/5g_ht80` | 5 GHz | 80 MHz | ~256 | Raspberry Pi / Nexmon |
+| Profile (`--root`) | Band | Bandwidth | Subcarriers | Hardware | Status |
+|---|---|---|---|---|---|
+| `data/2g4_ht20` | 2.4 GHz | 20 MHz | ~52 | ESP32-S3 | legacy only |
+| `data/2g4_ht40` | 2.4 GHz | 40 MHz | ~114 | ESP32-S3 | **current active** |
+| `data/5g_ht40` | 5 GHz | 40 MHz | ~114 | Pi / Nexmon | not yet used |
+| `data/5g_ht80` | 5 GHz | 80 MHz | ~256 | Pi / Nexmon | target for weapon |
 
-**Which one to use:**
+**Current setup:** The firmware has `WT_BW_HT40 1` enabled and the router is set to 40 MHz, so all ESP32 captures go into `data/2g4_ht40`. Use this profile for all collect and run commands until the Pi node is ready.
 
-- Start with `2g4_ht40` (2.4 GHz, 40 MHz). More subcarriers than HT20, and the ESP32-S3 handles it well. Good for presence.
-- For weapon detection, the 5 GHz band is more sensitive to small metal objects (shorter wavelength ≈ 60 mm vs 125 mm at 2.4 GHz). The Pi node runs `5g_ht80` by default. Run both bands and compare.
-- 2.4 GHz has one practical advantage: it diffracts around bodies better, so a blocked link is less likely in a crowded room. 5 GHz blocks harder but is knife-sensitive.
-- Do not mix profiles in one training run. If you change the band or bandwidth, recalibrate and collect fresh data.
+**For weapon detection:** 5 GHz HT80 (`data/5g_ht80`) is better suited because the shorter wavelength (~60 mm vs 125 mm at 2.4 GHz) is closer to the size of a knife or gun, making the metal reflection more measurable. The Pi is configured for channel 36 / HT80 / 256 subcarriers and emits wire format v3 (int16, fixed scale) to preserve absolute amplitude. However, Pi 5 Nexmon support is a community patch and is not yet validated on this hardware — see [`firmware/pi/README.md`](firmware/pi/README.md).
+
+**Do not mix profiles.** If you switch band or bandwidth, recalibrate from scratch. The old `cal/` directory is for a different subcarrier layout and will produce wrong gain-lock values.
+
+**2.4 GHz vs 5 GHz tradeoff:** 2.4 GHz diffracts around bodies better, so links are less likely to be completely blocked in a crowded room. 5 GHz attenuates harder around bodies but gives a stronger material signature for small metal objects. For a crowded-entry deployment (airport/school) the plan is to collect on both and pick the operating point from real data.
 
 ---
 
@@ -276,10 +291,10 @@ Bad data collection produces a model that looks good on paper and fails in the r
 
 ### Room and hardware setup
 
-- **Geometry: non-LOS by default.** Do not place TX and RX facing each other across the doorway a person walks through. A strong direct path (LOS-blocking geometry) masks a small weapon's signal. Instead, put TX and RX on the same side of the room so the signal you measure comes from reflections, not the direct path.
-- **Directional antenna.** Every paper that successfully detected a body-worn weapon used a directional TX antenna. The bare PCB antenna on an ESP32 is unlikely to produce a weapon signal strong enough to measure. Pick the antenna before spending time on DSP.
-- **Fixed hardware.** Do not move the nodes, antenna, or router between calibration and data collection. Even a few centimeters changes the multipath signature. If you move anything, recalibrate.
-- **Dedicated channel.** Lock the router to a fixed channel and make sure no other device is using the same channel nearby. Interference causes random amplitude spikes (Hampel filter catches most of them, but a heavily congested channel degrades signal quality).
+- **Geometry: non-LOS by default.** Do not place TX and RX facing each other with the subject walking between them (LOS-blocking doorway). A strong direct path masks a small weapon's signal. Instead, arrange nodes so the measured signal comes from reflections off walls and the subject, not the direct TX→RX path.
+- **Antenna.** The 8dBi omnidirectional whip antennas provide a solid RF improvement over bare PCB traces and cover all horizontal directions. For weapon detection, the round-robin TX rotation gives 30 directed links from 6 different TX positions, each illuminating the subject from a different angle — this spatial diversity is a partial substitute for a fixed directional TX. If weapon-tier accuracy plateaus, adding a directional antenna on the fixed TX node is the first hardware change to try.
+- **Fixed hardware.** Do not move any node, antenna, or the router between calibration and data collection. Even a few centimeters changes the multipath signature. If you move anything, recalibrate.
+- **Channel lock.** The router is locked to channel 6, 40 MHz. Do not change this between sessions. Confirm no nearby AP is on channel 6 (channels 4–8 overlap with it in 2.4 GHz) — interference causes amplitude spikes that the Hampel filter will mostly catch but a heavily congested channel degrades signal quality.
 
 ### Calibration rules
 
@@ -393,13 +408,13 @@ Do not report accuracy from a random within-session split. It will look impressi
 
 None of the accuracy numbers from synthetic data carry over to real hardware. The following must be verified on a real capture before trusting any results:
 
-- **I/Q byte order** — esp-csi assumes `[imag, real]` pairs. A swap makes all phase data garbage. Verify against a known-still capture.
-- **Subcarrier count and pattern** — the buffer size varies by mode (128/256/384 bytes). The actual subcarrier layout determines whether compressed sensing is usable later.
-- **AGC / PHY gain lock** — verify the lock is engaged by checking that amplitude is stable across two back-to-back empty captures.
-- **Actual CSI sample rate** — the pipeline estimates `fs` from timestamps. Verify it matches expectations (~100 Hz per link).
-- **Directional antenna** — required before weapon-tier work. The bare PCB antenna is not sufficient.
-- **Pi hardware** — must be a Pi 3B+ or Pi 4. Pi 5 is not supported by Nexmon CSI.
-- **All weapon accuracy tiers (7a–7d)** — synthetic numbers are plumbing only. Real accuracy requires real recordings.
+- **I/Q byte order** — esp-csi assumes `[imag, real]` pairs. A swap makes all phase data garbage. Verify against a known-still capture (amplitude should be stable; phase should not spin).
+- **Subcarrier count and pattern** — with `WT_BW_HT40 1` the expected count is ~114 (HT40 on 2.4 GHz). Verify the actual buffer size on the first real capture. This also determines whether compressed sensing is usable later.
+- **AGC / PHY gain lock** — verify the lock is engaged by checking that amplitude is stable across two back-to-back empty captures taken minutes apart.
+- **Actual CSI sample rate** — the firmware targets ~250 Hz per link (burst of 10 frames, 2 ms apart, rotating among 6 nodes). The pipeline estimates `fs` from timestamps; confirm it is within range of the 100 Hz resample target.
+- **Antenna performance on weapon detection** — the 8dBi omnidirectional whip is an upgrade over bare PCB but is not the directional horn used in the published weapon-detection papers. Tier 1 (flat metal plate, static) is the hardware reality check: if σ²[p] distributions don't separate, the antenna or geometry needs adjustment.
+- **Pi 5 Nexmon** — Pi 5 is not in the official Nexmon CSI repo. A community patch exists but is not validated on this hardware. Pi setup is deferred until the ESP mesh baseline is confirmed working.
+- **All weapon accuracy tiers (7a–7d)** — synthetic numbers are plumbing only. Real accuracy requires real recordings with real metal objects.
 
 ### What is not built and not planned
 
@@ -478,7 +493,7 @@ These are mistakes that look reasonable but will waste time or break the system 
 
 **Do not implement on-device model updates (LoRA, EWC) on the ESP32 or Pi.** The adaptation mechanism is per-session recalibration (`collect_baseline.py`) plus retraining on the Mac. That is cheap, reliable, and already built.
 
-**Do not attempt weapon tier 2 or 3 before tier 1 works.** If the σ²[p] distributions for a flat metal plate are not separated from empty room on held-out data, no amount of CNN complexity will fix it. The problem is in the sensor geometry, not the model.
+**Do not attempt weapon tier 2 or 3 before tier 1 works.** If the σ²[p] distributions for a flat metal plate are not separated from empty room on held-out data, no CNN complexity will fix it. The problem is in the sensor (geometry, antenna, gain lock), not the model. Fix the hardware first.
 
 **Do not rename the identifiers listed in the "Skipped — crosses a boundary" section at the bottom of this document.** They cross a firmware ↔ host boundary. A rename that touches only one side will corrupt the wire format silently.
 
@@ -586,4 +601,4 @@ The following identifiers cross a hardware or wire-format boundary. Renaming one
 - CLI flag names: `--root`, `--node`, `--carry`, `--subject`, `--head-mode`, `--stage`, `--vote`
 - `data/` subdirectory names: `cal/`, `model/`, `model_weapon/`, `model_count/`, `2g4_ht20/`, `2g4_ht40/`, `5g_ht40/`, `5g_ht80/`
 - pybind11 binding names in `src/Bindings.cpp` and `wavetrace/_wavetrace.pyi`
-- UDP ports: 9876 (CSI mesh), 5566 (legacy 1-TX rig), 9877 (health monitor), 8765 (WebSocket)
+- UDP ports: 9876 (CSI mesh), 5566 (legacy 1-TX rig), 9877 (health monitor), 9878 (node discovery), 8765 (WebSocket)
