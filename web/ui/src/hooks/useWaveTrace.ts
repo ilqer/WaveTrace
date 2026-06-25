@@ -39,7 +39,7 @@ export interface TrainingMeta {
 }
 
 export interface StartPayload {
-  action: 'run' | 'calib' | 'collect' | 'train';
+  action: 'run' | 'calib' | 'collect' | 'train' | 'camera_collect';
   synthetic?: boolean;
   duration?: number;
   antennas?: number;
@@ -47,6 +47,7 @@ export interface StartPayload {
   fs?: number;
   udp_port?: number;
   cam_url?: string;
+  cam_index?: number;
   mode?: string;
   calibration?: string;
   model?: string;
@@ -63,6 +64,9 @@ export interface StartPayload {
   subtract_ic_baseline?: boolean;
   train_backend?: string;
   train_out?: string;
+  train_data?: string;
+  per_link?: boolean;
+  yolo_weights?: string;
 }
 
 const HISTORY_LEN = 300;
@@ -87,7 +91,7 @@ export function useWaveTrace() {
   const [trainingMetrics, setTrainingMetrics] = useState<TrainingMetrics[]>([]);
   const [trainingMeta, setTrainingMeta] = useState<TrainingMeta | null>(null);
   const [trainingResult, setTrainingResult] = useState<Record<string, unknown> | null>(null);
-  const [camUrl, setCamUrl] = useState<string>('');
+  const [camUrl, setCamUrl] = useState<string>('/api/camera/stream');
 
   const wsStream = useRef<WebSocket | null>(null);
   const wsInference = useRef<WebSocket | null>(null);
@@ -193,13 +197,13 @@ export function useWaveTrace() {
   useEffect(() => { connectRef.current = connect; }, [connect]);
 
   useEffect(() => {
+    // Always connect on mount so the page is live even before Start is pressed.
+    // Also sync isRunning with server state in case the user refreshed mid-run.
     fetch('/api/pipeline/state')
       .then(r => r.json())
-      .then(d => {
-        setIsRunning(d.isRunning ?? false);
-        if (d.isRunning) connect();
-      })
+      .then(d => { setIsRunning(d.isRunning ?? false); })
       .catch(e => console.error(e));
+    connect();
   }, [connect]);
 
   const disconnect = useCallback(() => {
@@ -232,10 +236,12 @@ export function useWaveTrace() {
   const stop = useCallback(async () => {
     addLog('[SYSTEM] Requesting pipeline stop...');
     await fetch('/api/action/stop', { method: 'POST' });
-    disconnect();
+    // Keep WS alive — pipeline_done event will setIsRunning(false).
+    // Do NOT call disconnect() here; that would drop the live socket and
+    // require a page reload to reconnect.
     setIsRunning(false);
     addLog('[SYSTEM] Pipeline stopped.');
-  }, [disconnect, addLog]);
+  }, [addLog]);
 
   return {
     isConnected,
@@ -256,6 +262,7 @@ export function useWaveTrace() {
     camUrl,
     start,
     stop,
+    disconnect,
     addLog,
   };
 }

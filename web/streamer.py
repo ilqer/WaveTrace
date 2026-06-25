@@ -31,6 +31,17 @@ def _occupancy_fallback(image: np.ndarray, G: int = _OCC_GRID) -> np.ndarray:
     return var.astype(np.float32)
 
 
+def _heatmap_grid(head, image: np.ndarray) -> np.ndarray:
+    """Use trained HeatmapHead if loaded, else spectral fallback."""
+    if head is None:
+        return _occupancy_fallback(image)
+    try:
+        x = image[np.newaxis]   # (1, K, W)
+        return head.predict_heatmap(x)[0].flatten().astype(np.float32)
+    except Exception:
+        return _occupancy_fallback(image)
+
+
 def _class_label(mode: str, c: int) -> str:
     """Human-readable class name for the per-class decision readout."""
     c = int(c)
@@ -194,6 +205,36 @@ class WaveTraceRunner:
             elif req.train_backend == "heatmap":
                 m = self._train_heatmap(dataset_path, req, report)
                 self._emit_train({"type": "done", "metrics": m})
+            elif getattr(req, "per_link", False):
+                # Per-link weapon: one head per node*/link*/ dataset subdir
+                n_ok = 0
+                for _nd in sorted(_glob.glob(os.path.join(dataset_path, "node*"))):
+                    _nid_s = os.path.basename(_nd)[4:]
+                    if not _nid_s.isdigit():
+                        continue
+                    for _ld in sorted(_glob.glob(os.path.join(_nd, "link*"))):
+                        _tag = os.path.basename(_ld)[4:]
+                        _subs = [d for d in sorted(_glob.glob(os.path.join(_ld, "*")))
+                                 if os.path.isdir(d) and os.path.exists(os.path.join(d, "X_features.npy"))]
+                        if not _subs:
+                            _subs = [_ld] if os.path.exists(os.path.join(_ld, "X_features.npy")) else []
+                        if not _subs:
+                            continue
+                        _link_out = os.path.join(req.train_out, f"node{_nid_s}", f"link{_tag}")
+                        try:
+                            from wavetrace.groundtruth import load_dataset
+                            from wavetrace.Config import ModelConfig
+                            _ds0 = load_dataset(_subs[0])
+                            _k = int(_ds0.meta["K"])
+                            _cfg = ModelConfig(stage="weapon", k=_k, backend="ic27")
+                            _, _m = train_weapon(_subs, out_dir=_link_out, config=_cfg,
+                                                 feature_mode="ic27")
+                            self._emit_train({"type": "done", "metrics": _m})
+                            n_ok += 1
+                            self.log(f"[WPN] link {_tag}->node{_nid_s} -> {_link_out}")
+                        except Exception as _le:
+                            self.log(f"[WPN] WARN link {_tag}->node{_nid_s}: {_le}")
+                self.log(f"[WPN] Per-link training done: {n_ok} heads.")
             else:
                 from wavetrace.Config import ModelConfig
                 from wavetrace.groundtruth import load_dataset
@@ -320,6 +361,45 @@ class WaveTraceRunner:
             except: _ant_weights = None
             nodes = {0: dict(result=result, lock=gain_lock, intercarrier=intercarrier, pick=pick, session=session, cfg=cfg)}
 
+        # ---- Gap 2: trained heatmap head (replaces _occupancy_fallback when present) ----
+        _model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
+        _hm_path = os.path.join(_model_dir, "heatmap.joblib")
+        heatmap_head = None
+        if os.path.exists(_hm_path):
+            try:
+                from wavetrace.recognition.Heatmap import HeatmapHead
+                heatmap_head = HeatmapHead.load(_hm_path)
+                self.log(f"[HM] Heatmap head loaded ({heatmap_head.grid}×{heatmap_head.grid})")
+            except Exception as _hm_e:
+                self.log(f"[HM] WARNING: heatmap load failed ({_hm_e}); using fallback")
+
+        # ---- Gap 3: per-link weapon entries (auto-detected from node*/link*/ dirs) ------
+        weapon_entries = None
+        if is_mesh and mode == "weapon":
+            _node_dirs = [os.path.join(model_path, b) for b in os.listdir(model_path)
+                          if b.startswith("node") and os.path.isdir(os.path.join(model_path, b))]
+            _has_links = any(
+                any(d.startswith("link") for d in os.listdir(nd))
+                for nd in _node_dirs if os.path.isdir(nd)
+            )
+            if _has_links:
+                try:
+                    from run_weapon import load_weapon_links
+                    weapon_entries = load_weapon_links(calib_dir, model_path)
+                    for (tag, nid), e in weapon_entries.items():
+                        if nid in nodes:
+                            nodes[nid]["weight"] = max(nodes[nid].get("weight", 0.0),
+                                                       e.get("weight", 1.0))
+                    self.log(f"[WEAPON] {len(weapon_entries)} per-link entries loaded")
+                except Exception as _we:
+                    self.log(f"[WEAPON] per-link load failed ({_we}), using per-node")
+
+        def _lookup_entry(key, _we=weapon_entries, _n=nodes):
+            if _we is not None:
+                tx = key[0].replace(":", "") if key[0] else None
+                return _we.get((tx, key[1])) or _we.get((None, key[1]))
+            return _n.get(key[1])
+
         health_meter = NodeHealthMeter()
         alert_guard = AlertGuard()
         _voter_trace: deque[float] = deque(maxlen=60)
@@ -331,7 +411,7 @@ class WaveTraceRunner:
         # Mesh specific state
         import collections
         from wavetrace.Source import parse_batch_links
-        buffers = collections.defaultdict(collections.deque)
+        buffers = collections.defaultdict(lambda: collections.deque(maxlen=300))  # ~3s at 100Hz (#17)
         last_seen = {}
         link_ids = {}
         next_fuse = time.time() + 1.5
@@ -350,7 +430,7 @@ class WaveTraceRunner:
                     try:
                         payload, _ = sock.recvfrom(65535)
                         for key, frames in parse_batch_links(payload).items():
-                            m = nodes.get(key[1])
+                            m = _lookup_entry(key)
                             if m is not None:
                                 buffers[key].extend(frames)
                                 last_seen[key] = now
@@ -367,8 +447,11 @@ class WaveTraceRunner:
                             cutoff = buf[-1].timestamp - 3.0
                             while buf and buf[0].timestamp < cutoff: buf.popleft()
 
-                    static_weights = {lid: nodes[k[1]]["weight"] for k, lid in link_ids.items()}
-                    voter = LinkVoter(static_weights if any(w > 0 for w in static_weights.values()) else None)
+                    _sw = {}
+                    for _k, _lid in link_ids.items():
+                        _e = _lookup_entry(_k)
+                        _sw[_lid] = _e["weight"] if _e else 1.0
+                    voter = LinkVoter(_sw if any(w > 0 for w in _sw.values()) else None)
                     
                     rep_image = None
                     rep_features = None
@@ -378,7 +461,8 @@ class WaveTraceRunner:
                     from wavetrace.Source import resample_uniform
                     for key in sorted(buffers):
                         if now - last_seen.get(key, 0) > 3.0 or len(buffers[key]) < 2: continue
-                        m = nodes[key[1]]
+                        m = _lookup_entry(key)
+                        if m is None: continue
                         
                         # Accumulate node power for UI
                         grids = [np.abs(f.grid).mean() for f in buffers[key]]
@@ -434,7 +518,7 @@ class WaveTraceRunner:
 
                     # Stream payload (use the last valid link's image for visualization)
                     if rep_image is not None:
-                        occ_grid = _occupancy_fallback(rep_image)
+                        occ_grid = _heatmap_grid(heatmap_head, rep_image)
                         np_items = sorted(node_power.items())
                         stream_payload = {
                             "t": float(now), "image": rep_image.tolist(), "features": rep_features.tolist(),
@@ -500,7 +584,7 @@ class WaveTraceRunner:
                     asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps(r)), self.loop)
 
                     node_items = sorted(snooper.node_power.items())
-                    occ_grid = _occupancy_fallback(image)
+                    occ_grid = _heatmap_grid(heatmap_head, image)
                     stream_payload = {
                         "t": float(t), "image": image.tolist(), "features": features.tolist(),
                         "ic": ic.tolist(), "antennas": [p for _, p in node_items], "node_ids": [int(nid) for nid, _ in node_items],
@@ -533,6 +617,188 @@ class WaveTraceRunner:
         finally:
             self._emit_inference({"event": "pipeline_done"})
             self.is_running = False
+
+    def start_camera_collect_managed(self, req):
+        """Camera-supervised collection: concurrent webcam YOLO + mesh CSI -> datasets.
+        Builds per-node presence/weapon datasets, stacked heatmap dataset, and optionally
+        per-link weapon datasets (when col_stage=weapon and per_link=True)."""
+        self.is_running = True
+        import os, glob as _g, socket as _sock, threading, time as _t, collections as _col
+
+        try:
+            from wavetrace.groundtruth.CameraLabeler import (YoloSegLabeler,
+                                                              presence_label_fn, weapon_label_fn)
+            from wavetrace.groundtruth.Webcam import (WebcamCapture, record_labels_online,
+                                                       COCO_WEAPON_CLASSES)
+            from wavetrace.groundtruth.DatasetBuilder import build_dataset_stacked, save_dataset
+            from wavetrace.Source import (parse_batch_links, resample_uniform, bind_udp,
+                                          save_recording, RecordingSource)
+            from wavetrace.Calibration import load_calibration
+            from wavetrace.Cli import collect_source as _collect_source
+        except ImportError as _ie:
+            self.log(f"ERROR: missing dependency: {_ie}")
+            self._emit_inference({"event": "pipeline_done"})
+            self.is_running = False
+            return
+
+        WINDOW, TARGET_FS = 128, 100.0
+        cam_index = int(getattr(req, "cam_index", 0))
+        duration = float(getattr(req, "duration", 30.0))
+        per_link = bool(getattr(req, "per_link", False))
+        root = getattr(req, "train_data", "data/2g4_ht40")
+
+        # ── Load calibrations ──────────────────────────────────────────────
+        # Try per-node layout first (node0/, node1/, …), fall back to flat dir.
+        calibs = {}
+        for d in sorted(_g.glob(f"{req.calibration}/node*")):
+            base = os.path.basename(d)
+            if base[4:].isdigit():
+                calibs[int(base[4:])] = load_calibration(d)
+        if not calibs:
+            # Flat calibration dir (single-node or unified calib) — treat as node 0
+            flat_meta = os.path.join(req.calibration, "meta.json")
+            if os.path.exists(flat_meta):
+                calibs[0] = load_calibration(req.calibration)
+        if not calibs:
+            self.log(f"ERROR: no calibration found at '{req.calibration}' — run Calib first")
+            self._emit_inference({"event": "pipeline_done"})
+            self.is_running = False
+            return
+        cal_nodes = sorted(calibs)
+        self.log(f"[CAM] Nodes: {cal_nodes}. Loading YOLO-seg model...")
+
+        label_fn = weapon_label_fn if req.col_stage == "weapon" else presence_label_fn
+        yolo_weights = getattr(req, "yolo_weights", "yolov8n-seg.pt") or "yolov8n-seg.pt"
+        try:
+            labeler = YoloSegLabeler(yolo_weights, weapon_classes=COCO_WEAPON_CLASSES,
+                                     conf=0.35, label_fn=label_fn)
+        except Exception as _ye:
+            self.log(f"ERROR: YOLO init failed: {_ye}")
+            self._emit_inference({"event": "pipeline_done"})
+            self.is_running = False
+            return
+
+        self.log(f"[CAM] Capturing {duration:g}s  stage={req.col_stage}  cam={cam_index}  port={req.udp_port}")
+        # Camera runs at 5 fps for YOLO labeling — labels change slowly (person enters/leaves room),
+        # CSI windows are 1.28s wide, so one label per 200ms is plenty. Reduces CPU load 3x vs 15fps.
+        CAM_FPS = 5.0
+
+        per_node = _col.defaultdict(list)
+        per_link_csi = _col.defaultdict(list)
+        box: dict = {}
+        cam_stop = threading.Event()  # set this to stop the camera worker early
+
+        def _cam_worker():
+            try:
+                with WebcamCapture(index=cam_index) as cap:
+                    _cnt = {"n": 0}
+                    def _on_label(lb):
+                        _cnt["n"] += 1
+                        if _cnt["n"] % 30 == 0:
+                            self.log(f"[CAM] {_cnt['n']} frames labeled (class={lb.class_id})")
+                    box["labels"] = record_labels_online(
+                        cap.read, labeler, duration,
+                        fps=CAM_FPS, stop=cam_stop, on_label=_on_label,
+                    )
+            except Exception as _ce:
+                box["error"] = str(_ce)
+
+        th = threading.Thread(target=_cam_worker, daemon=True)
+        th.start()
+
+        port = int(getattr(req, "udp_port", 9876))
+        try:
+            s = bind_udp(port, timeout=1.0)
+            t_end = _t.monotonic() + duration
+            while _t.monotonic() < t_end and self.is_running:
+                try:
+                    payload, _ = s.recvfrom(65535)
+                except _sock.timeout:
+                    continue
+                for (tx, rx), frames in parse_batch_links(payload).items():
+                    if rx in cal_nodes or (not cal_nodes and rx == 0):
+                        per_node[rx].extend(frames)
+                        per_link_csi[(tx, rx)].extend(frames)
+        finally:
+            s.close()
+            cam_stop.set()  # signal the camera thread to stop even if duration not elapsed
+
+        th.join(timeout=max(5.0, duration * 0.1))
+        if th.is_alive():
+            self.log("[CAM] Camera worker still running after stop — terminating")
+        if "error" in box:
+            self.log(f"ERROR webcam: {box['error']}")
+            self._emit_inference({"event": "pipeline_done"})
+            self.is_running = False
+            return
+
+        labels = box.get("labels", [])
+        if not labels:
+            self.log("ERROR: no webcam frames — check camera permission or cam_index")
+            self._emit_inference({"event": "pipeline_done"})
+            self.is_running = False
+            return
+
+        n_pos = sum(lb.class_id == 1 for lb in labels)
+        self.log(f"[CAM] {n_pos}/{len(labels)} frames positive ({req.col_stage})")
+
+        sess = "cam_s0"
+        res = {}
+        for nid, frs in per_node.items():
+            rf = resample_uniform(frs, TARGET_FS)
+            for f in rf:
+                f.node_id = nid
+            res[nid] = rf
+
+        # 1) Per-node presence/weapon datasets
+        pres_built = []
+        for nid in cal_nodes:
+            frs = res.get(nid, [])
+            if len(frs) < WINDOW:
+                self.log(f"[CAM] SKIP node {nid}: only {len(frs)} frames")
+                continue
+            rec = f"{root}/cam_rec/{sess}/node{nid}"
+            ds = f"{root}/cam_ds/{req.col_stage}/node{nid}/{sess}"
+            save_recording(frs, rec)
+            _collect_source(RecordingSource(rec), f"{req.calibration}/node{nid}", ds, [],
+                            stage=req.col_stage, labeler=labels,
+                            session_id=sess, subject_id="cam",
+                            subtract_ic_baseline=(req.col_stage == "weapon"))
+            pres_built.append(nid)
+            self.log(f"[CAM] node {nid} -> {ds}")
+
+        # 2) Stacked heatmap dataset (all nodes as channels + occupancy mask)
+        merged = [f for nid in cal_nodes for f in res.get(nid, [])]
+        if merged:
+            hm_dir = f"{root}/cam_ds/heatmap/{sess}"
+            hm_ds = build_dataset_stacked(merged, calibs, labels, window=WINDOW, hop=32,
+                                          session_id=sess, subject_id="cam")
+            save_dataset(hm_ds, hm_dir)
+            n_mask = sum(1 for lb in hm_ds.labels if getattr(lb, "mask", None) is not None)
+            self.log(f"[CAM] heatmap stacked -> {hm_dir} "
+                     f"({hm_ds.X_image.shape[0]} windows, {n_mask} masks)")
+
+        # 3) Per-link weapon datasets (requires per_link=True and stage=weapon)
+        if req.col_stage == "weapon" and per_link:
+            for (tx, rx), frs in per_link_csi.items():
+                if rx not in cal_nodes:
+                    continue
+                rf = resample_uniform(frs, TARGET_FS)
+                if len(rf) < WINDOW:
+                    continue
+                tag = tx.replace(":", "") if tx else "xx"
+                ld = f"{root}/cam_ds/weapon/node{rx}/link{tag}/{sess}"
+                lr = f"{root}/cam_rec/{sess}/link{tag}_node{rx}"
+                save_recording(rf, lr)
+                _collect_source(RecordingSource(lr), f"{req.calibration}/node{rx}", ld, [],
+                                stage="weapon", labeler=labels,
+                                session_id=sess, subject_id="cam",
+                                subtract_ic_baseline=True)
+                self.log(f"[CAM] per-link weapon {tx}->{rx} -> {ld}")
+
+        self.log(f"[CAM] Done. per-node nodes: {pres_built}")
+        self._emit_inference({"event": "pipeline_done"})
+        self.is_running = False
 
     def stop(self):
         self.is_running = False

@@ -20,41 +20,86 @@ from wavetrace import Label
 
 
 class WebcamCapture:
-    """OpenCV webcam wrapper yielding (timestamp_s, RGB frame). On macOS index 0 is the built-in
-    FaceTime camera. `clock` is injectable (defaults to wall-clock `time.time`, matching the CSI
+    """ffmpeg-based webcam wrapper yielding (timestamp_s, RGB ndarray).
+    Uses ffmpeg subprocess for capture (avoids macOS AVFoundation run-loop
+    segfault when cv2.VideoCapture is called from a background thread).
+    On macOS, ffmpeg triggers the system permission dialog on first run—no
+    manual Terminal camera grant needed.
+    `clock` is injectable (defaults to wall-clock `time.time`, matching the CSI
     ntp_ms stamp so labels and CSI windows align). Use as a context manager."""
 
     def __init__(self, index: int = 0, size=(1280, 720), clock=time.time):
         self._index = int(index)
-        self._size = size
+        self._width, self._height = size
         self._clock = clock
-        self._cap = None
-        self._cv2 = None
+        self._proc = None
 
     def open(self) -> "WebcamCapture":
-        import cv2  # lazy: importing this module must not require OpenCV
-        cap = cv2.VideoCapture(self._index)
-        if self._size:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._size[0])
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._size[1])
-        if not cap.isOpened():
-            raise RuntimeError(f"cannot open webcam index {self._index} (grant camera permission / "
-                               "close other apps using it)")
-        self._cap, self._cv2 = cap, cv2
+        import shutil, subprocess
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError(
+                "ffmpeg not found — install it: brew install ffmpeg"
+            )
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error",
+            "-f", "avfoundation",
+            "-framerate", "30",
+            "-video_size", f"{self._width}x{self._height}",
+            "-i", f"{self._index}:none",
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-pix_fmt", "rgb24",
+            "-",
+        ]
+        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        # Verify we can read at least one frame
+        frame_bytes = self._frame_bytes()
+        if frame_bytes is None:
+            self._proc.terminate()
+            self._proc = None
+            raise RuntimeError(
+                f"cannot open webcam index {self._index} via ffmpeg "
+                "(grant camera permission in System Settings → Privacy → Camera)"
+            )
+        self._first_frame = frame_bytes  # buffer the first frame so read() can return it
         return self
 
+    def _frame_bytes(self) -> bytes | None:
+        """Read exactly one raw RGB frame from the ffmpeg pipe, or None on EOF/error."""
+        n = self._width * self._height * 3
+        buf = b""
+        while len(buf) < n:
+            chunk = self._proc.stdout.read(n - len(buf))
+            if not chunk:
+                return None
+            buf += chunk
+        return buf
+
     def read(self):
-        """Grab one frame -> (timestamp_s, RGB ndarray) or None on failure. BGR→RGB so the frame
-        matches what ultralytics/most detectors expect."""
-        ok, bgr = self._cap.read()
-        if not ok:
+        """Grab one frame → (timestamp_s, RGB ndarray) or None on failure."""
+        import numpy as np
+        if self._proc is None:
             return None
-        return self._clock(), self._cv2.cvtColor(bgr, self._cv2.COLOR_BGR2RGB)
+        # Return buffered first frame if present
+        raw = getattr(self, "_first_frame", None)
+        if raw is not None:
+            self._first_frame = None
+        else:
+            raw = self._frame_bytes()
+        if raw is None:
+            return None
+        arr = np.frombuffer(raw, dtype=np.uint8).reshape(self._height, self._width, 3)
+        return self._clock(), arr
 
     def close(self) -> None:
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
+        if self._proc is not None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=2)
+            except Exception:
+                self._proc.kill()
+            self._proc = None
 
     def __enter__(self):
         return self.open()

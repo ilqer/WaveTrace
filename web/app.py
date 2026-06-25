@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import asyncio
@@ -110,7 +111,10 @@ class StartRequest(BaseModel):
     train_data: str = "data/2g4_ht40/ui/ds"  # dataset dir or cumulative pool parent (globs node*/)
 
     # Hardware
-    cam_url: str = "http://192.168.1.100/mjpeg"
+    cam_url: str = "/api/camera/stream"
+    cam_index: int = 0
+    per_link: bool = False
+    yolo_weights: str = "yolov8n-seg.pt"
 
 class MockArgs:
     def __init__(self, **kwargs):
@@ -201,6 +205,8 @@ async def start_inference(req: StartRequest):
                 runner.start_collection_managed(req)
             elif req.action == "train":
                 runner.start_training_managed(req)
+            elif req.action == "camera_collect":
+                runner.start_camera_collect_managed(req)
         except Exception as e:
             loop.call_soon_threadsafe(logs_queue.put_nowait, f"FATAL ERROR: {str(e)}")
 
@@ -365,6 +371,90 @@ async def calib_info(path: str = "output/calib"):
         return {"error": str(e)}
 
 
+@app.get("/api/paths/scan")
+async def scan_paths():
+    """Scan the project tree for existing calibration dirs, model files, and dataset dirs.
+    Used by the UI path-picker dropdowns — lets users click instead of type."""
+    import glob as _glob
+
+    def _scan():
+        # Calibration dirs: any dir containing meta.json
+        cal_dirs = sorted(set(
+            os.path.dirname(p)
+            for p in _glob.glob("data/**/meta.json", recursive=True)
+                       + _glob.glob("output/**/meta.json", recursive=True)
+        ))
+        # Model files: model.joblib anywhere, plus mesh root dirs
+        model_files = sorted(
+            _glob.glob("data/**/model.joblib", recursive=True)
+            + _glob.glob("output/**/model.joblib", recursive=True)
+        )
+        mesh_roots = sorted(set(
+            os.path.dirname(p)
+            for p in _glob.glob("data/**/node*/model.joblib", recursive=True)
+                       + _glob.glob("output/**/node*/model.joblib", recursive=True)
+        ))
+        # Dataset dirs: dirs containing X_features.npy
+        dataset_dirs = sorted(set(
+            os.path.dirname(p)
+            for p in _glob.glob("data/**/X_features.npy", recursive=True)
+                       + _glob.glob("output/**/X_features.npy", recursive=True)
+        ))
+        # Parent dirs of multiple dataset subdirs (cumulative pool roots)
+        pool_dirs = sorted(set(
+            os.path.dirname(os.path.dirname(p))
+            for p in _glob.glob("data/**/X_features.npy", recursive=True)
+                       + _glob.glob("output/**/X_features.npy", recursive=True)
+            if os.path.basename(os.path.dirname(p)) not in (".", "")
+        ))
+        return {
+            "calibrations": cal_dirs,
+            "models": model_files + [r for r in mesh_roots if r not in model_files],
+            "datasets": dataset_dirs + [d for d in pool_dirs if d not in dataset_dirs],
+        }
+
+    return await asyncio.to_thread(_scan)
+
+
+@app.get("/api/paths/browse")
+async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str = ""):
+    """Open a native macOS Finder dialog (via osascript) and return the chosen path.
+    type: 'dir' → choose folder, 'file' → choose file.
+    ext: comma-separated extensions to filter by (file mode only, e.g. 'joblib,pt').
+    Returns {"path": "/abs/path"} or {"path": null} when cancelled."""
+    import subprocess as _sp
+
+    def _open_dialog():
+        if type == "dir":
+            script = f'POSIX path of (choose folder with prompt "{prompt}")'
+        else:
+            if ext:
+                ext_list = "{" + ", ".join(f'"{e.strip()}"' for e in ext.split(",")) + "}"
+                script = (f'POSIX path of (choose file with prompt "{prompt}" '
+                          f'of type {ext_list})')
+            else:
+                script = f'POSIX path of (choose file with prompt "{prompt}")'
+
+        try:
+            result = _sp.run(
+                ["osascript", "-e", script],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                return {"path": None, "cancelled": True}
+            # osascript returns path with trailing newline; strip it
+            chosen = result.stdout.strip().rstrip("/")
+            return {"path": chosen}
+        except _sp.TimeoutExpired:
+            return {"path": None, "cancelled": True}
+        except FileNotFoundError:
+            return {"path": None, "error": "osascript not found — macOS only"}
+        except Exception as e:
+            return {"path": None, "error": str(e)}
+
+    return await asyncio.to_thread(_open_dialog)
+
+
 def _np_empty():
     import numpy as np
     return np.array([])
@@ -473,6 +563,234 @@ async def websocket_device(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         clients_device.discard(websocket)
+
+
+import threading as _threading
+_yolo_cache: dict = {}
+_yolo_lock = _threading.Lock()
+
+
+def _load_yolo(weights: str = "yolov8n-seg.pt"):
+    """Load (and cache) a YOLO model; safe to call from any thread."""
+    with _yolo_lock:
+        if weights not in _yolo_cache:
+            try:
+                from ultralytics import YOLO
+                _yolo_cache[weights] = YOLO(weights)
+            except Exception as e:
+                _yolo_cache[weights] = None   # cache failure so we don't retry every frame
+                print(f"[YOLO] load failed: {e}")
+    return _yolo_cache.get(weights)
+
+
+def _annotate_frame(model, frame, weapon_classes=(43,)):
+    """Draw YOLO seg masks + labels on a copy of frame. Green = person, orange = weapon/knife."""
+    import cv2, numpy as np
+    results = model(frame, verbose=False)
+    out = frame.copy()
+    for r in results:
+        boxes = r.boxes
+        masks = r.masks
+        for i, box in enumerate(boxes):
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
+            is_weapon = cls_id in weapon_classes
+            color = (30, 120, 255) if is_weapon else (50, 220, 80)   # BGR: orange / green
+            label = f"{'WEAPON' if is_weapon else model.names.get(cls_id, str(cls_id))} {conf:.0%}"
+            # Draw filled mask if available
+            if masks is not None and i < len(masks.xy):
+                pts = masks.xy[i].astype(np.int32)
+                overlay = out.copy()
+                cv2.fillPoly(overlay, [pts], color)
+                out = cv2.addWeighted(out, 0.55, overlay, 0.45, 0)
+                cv2.polylines(out, [pts], True, color, 2)
+            # Bounding box + label
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cv2.rectangle(out, (x1, y1), (x2, y2), color, 1)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(out, (x1, y1 - th - 4), (x1 + tw + 2, y1), color, -1)
+            cv2.putText(out, label, (x1 + 1, y1 - 3),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Camera helpers — use ffmpeg subprocess for capture (avoids macOS AVFoundation
+# run-loop segfault when cv2.VideoCapture is called from a background thread).
+# cv2 is kept ONLY for YOLO annotation (no capture = safe on background threads).
+# ---------------------------------------------------------------------------
+
+import subprocess as _subprocess
+import shutil as _shutil
+
+
+def _ffmpeg_bin() -> str:
+    """Return the ffmpeg executable path, or raise RuntimeError."""
+    p = _shutil.which("ffmpeg")
+    if p is None:
+        raise RuntimeError(
+            "ffmpeg not found — install it: brew install ffmpeg"
+        )
+    return p
+
+
+def _ffmpeg_grab_one(index: int) -> bytes | None:
+    """Capture a single JPEG frame from camera `index` via ffmpeg.
+    Returns raw JPEG bytes, or None on failure.
+    macOS: ffmpeg uses AVFoundation natively and triggers the permission dialog
+    on first run — no Terminal camera grant needed."""
+    try:
+        ffmpeg = _ffmpeg_bin()
+    except RuntimeError:
+        return None
+    cmd = [
+        ffmpeg, "-hide_banner", "-loglevel", "error",
+        "-f", "avfoundation",
+        "-framerate", "30",
+        "-video_size", "1280x720",
+        "-i", f"{index}:none",
+        "-vframes", "1",
+        "-f", "image2",
+        "-vcodec", "mjpeg",
+        "-",
+    ]
+    try:
+        result = _subprocess.run(cmd, capture_output=True, timeout=10)
+        return result.stdout if result.returncode == 0 and result.stdout else None
+    except Exception:
+        return None
+
+
+@app.get("/api/camera/check")
+async def camera_check(cam_index: int = 0):
+    """One-frame probe via ffmpeg: checks camera access and returns resolution."""
+    def _probe():
+        try:
+            ffmpeg = _ffmpeg_bin()
+        except RuntimeError as e:
+            return {"ok": False, "error": str(e)}
+        # Use ffprobe to query resolution without capturing
+        import json as _json
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error",
+            "-f", "avfoundation", "-framerate", "30", "-video_size", "1280x720",
+            "-i", f"{cam_index}:none",
+            "-vframes", "1", "-f", "rawvideo", "-vcodec", "rawvideo", "-",
+        ]
+        try:
+            r = _subprocess.run(cmd, capture_output=True, timeout=10)
+            if r.returncode != 0 or not r.stdout:
+                stderr = r.stderr.decode(errors="replace")[-400:]
+                if "permission" in stderr.lower() or "authorization" in stderr.lower():
+                    return {"ok": False,
+                            "error": "Camera permission denied — allow Terminal in System Settings → Privacy → Camera"}
+                return {"ok": False, "error": f"ffmpeg exit {r.returncode}: {stderr}"}
+            # rawvideo at 1280x720 RGB = 1280*720*3 bytes per frame
+            return {"ok": True, "width": 1280, "height": 720, "cam_index": cam_index}
+        except _subprocess.TimeoutExpired:
+            return {"ok": False, "error": "Camera probe timed out"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return await asyncio.to_thread(_probe)
+
+
+_camera_active = False
+
+@app.post("/api/camera/stop")
+def camera_stop():
+    global _camera_active
+    _camera_active = False
+    return {"ok": True}
+
+
+@app.get("/api/camera/stream")
+async def camera_stream(request: Request, index: int = 0, annotate: bool = False,
+                        weights: str = "yolov8n-seg.pt"):
+    """Local webcam MJPEG stream via asyncio subprocess (pure async — no threads, no queues).
+    ffmpeg outputs MJPEG to stdout; we parse JPEG SOI/EOI markers and stream multipart chunks.
+    annotate=true overlays YOLO seg masks (cv2 decode/encode only — no capture)."""
+    global _camera_active
+    _camera_active = True
+    
+    model = await asyncio.to_thread(_load_yolo, weights) if annotate else None
+
+    async def _generate():
+        try:
+            ffmpeg = _ffmpeg_bin()
+        except RuntimeError:
+            return  # ffmpeg not found — browser <img> fires onError
+
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error",
+            "-f", "avfoundation",
+            "-framerate", "30",
+            "-video_size", "1280x720",
+            "-i", f"{index}:none",
+            "-f", "mjpeg",
+            "-q:v", "5",
+            "-",
+        ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+
+        SOI = b"\xff\xd8"
+        EOI = b"\xff\xd9"
+        buf = b""
+        frame_idx = 0
+
+        try:
+            while _camera_active:
+                if await request.is_disconnected():
+                    break
+                    
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                # Extract all complete JPEG frames from the accumulated buffer
+                while True:
+                    s = buf.find(SOI)
+                    if s == -1:
+                        buf = b""
+                        break
+                    e = buf.find(EOI, s + 2)
+                    if e == -1:
+                        buf = buf[s:]   # keep partial frame, wait for more data
+                        break
+                    jpg = buf[s: e + 2]
+                    buf = buf[e + 2:]
+                    
+                    frame_idx += 1
+
+                    if model is not None:
+                        # Throttle YOLO to 5fps (1 out of every 6 frames from 30fps source)
+                        if frame_idx % 6 != 0:
+                            continue
+                            
+                        import cv2, numpy as np
+                        arr = np.frombuffer(jpg, dtype=np.uint8)
+                        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                        if frame is not None:
+                            frame = await asyncio.to_thread(_annotate_frame, model, frame)
+                            _, enc = cv2.imencode(".jpg", frame,
+                                                  [cv2.IMWRITE_JPEG_QUALITY, 75])
+                            jpg = enc.tobytes()
+
+                    yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                           + str(len(jpg)).encode()
+                           + b"\r\n\r\n" + jpg + b"\r\n")
+        finally:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+
+    return StreamingResponse(_generate(),
+                             media_type="multipart/x-mixed-replace; boundary=frame")
 
 
 app.mount("/", StaticFiles(directory="web/ui/dist", html=True), name="static")

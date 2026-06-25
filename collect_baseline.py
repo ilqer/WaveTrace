@@ -59,6 +59,7 @@ def capture_all(n, port, node_ids, timeout_s=20.0, max_capture_s=60.0):
         if frames[nid]:
             S = collections.Counter(f.num_subcarriers for f in frames[nid]).most_common(1)[0][0]
             frames[nid] = [f for f in frames[nid] if f.num_subcarriers == S]
+    print('\a', end='', flush=True)
     return frames
 
 
@@ -113,6 +114,7 @@ def main():
         return
     print(f"\ncalibration written for nodes {calibrated} -> {args.root}/cal/node*/")
 
+    print('\a', end='', flush=True)
 
 if __name__ == "__main__":
     main()

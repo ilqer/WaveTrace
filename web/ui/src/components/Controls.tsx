@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Play, Square, Activity, Database, Brain, Target, Camera, type LucideIcon } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Play, Square, Activity, Database, Brain, Target, Camera, CheckCircle,
+         XCircle, FolderOpen, type LucideIcon } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { StartPayload } from '../hooks/useWaveTrace';
 
@@ -12,37 +13,102 @@ interface ControlsProps {
 
 type Action = 'run' | 'calib' | 'collect' | 'train';
 
+// ---------------------------------------------------------------------------
+// FilePicker — text input + folder/file icon that opens a native OS dialog
+// via the backend /api/paths/browse (osascript on macOS).
+// ---------------------------------------------------------------------------
+interface FilePickerProps {
+  value: string;
+  onChange: (v: string) => void;
+  type?: 'dir' | 'file';
+  prompt?: string;
+  ext?: string;          // comma-separated, file mode only e.g. "joblib,pt"
+  placeholder?: string;
+}
+
+const FilePicker: React.FC<FilePickerProps> = ({
+  value, onChange, type = 'dir', prompt = 'Select path', ext = '', placeholder,
+}) => {
+  const [loading, setLoading] = useState(false);
+
+  const browse = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ type, prompt, ext });
+      const res = await fetch(`/api/paths/browse?${params}`);
+      const d = await res.json();
+      if (d.path) onChange(d.path);
+    } catch {}
+    finally { setLoading(false); }
+  }, [type, prompt, ext, onChange]);
+
+  return (
+    <div className="flex gap-0.5">
+      <input
+        type="text"
+        className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-l-md px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-600 transition-colors"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+      <button
+        type="button"
+        onClick={browse}
+        disabled={loading}
+        title={type === 'dir' ? 'Browse folder…' : 'Browse file…'}
+        className="flex items-center px-2 rounded-r-md border border-l-0 border-slate-700 bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-slate-700 hover:border-emerald-700 transition-colors disabled:opacity-40"
+      >
+        {loading
+          ? <span className="w-3 h-3 border border-slate-500 border-t-transparent rounded-full animate-spin" />
+          : <FolderOpen size={11} />
+        }
+      </button>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
 const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalibDetected }) => {
   const [action, setAction] = useState<Action>('run');
   const [calibBadge, setCalibBadge] = useState<string | null>(null);
-    const [config, setConfig] = useState({
-      antennas: 2,
-      subcarriers: 64,
-      fs: 100.0,
-      udp_port: 9876,
-      cam_url: 'http://192.168.1.100/mjpeg',
-      // Run
-      mode: 'presence',
-      calibration: 'data/2g4_ht40/ui/cal',
-      model: 'data/2g4_ht40/ui/model/model.joblib',
-      gain_lock: true,
-      vote: true,
-      frame_average: 1,
-      use_baseline: false,
-      // Calib
-      baseline_packets: 300,
-      cal_out: 'data/2g4_ht40/ui/cal',
-      // Collect
-      col_stage: 'presence',
-      col_spans: '0:5,10:15,20:25',
-      col_window: 128,
-      col_hop: 32,
-      subtract_ic_baseline: true,
-      // Train
-      train_backend: 'cnn',
-      train_out: 'data/2g4_ht40/ui/model',
-      train_data: 'output/dataset_ui',
-    });
+  const [camCheckStatus, setCamCheckStatus] = useState<{ok: boolean; msg: string} | null>(null);
+
+  const [config, setConfig] = useState({
+    antennas: 2,
+    subcarriers: 64,
+    fs: 100.0,
+    udp_port: 9876,
+    cam_url: '/api/camera/stream',
+    cam_index: 0,
+    // Shared across all tabs
+    calibration: 'data/2g4_ht40/ui/cal',
+    // Run
+    mode: 'presence',
+    model: 'data/2g4_ht40/ui/model/model.joblib',
+    gain_lock: true,
+    vote: true,
+    frame_average: 1,
+    use_baseline: false,
+    // Calib
+    baseline_packets: 300,
+    cal_out: 'data/2g4_ht40/ui/cal',
+    // Collect
+    col_stage: 'presence',
+    col_spans: '0:5,10:15,20:25',
+    col_window: 128,
+    col_hop: 32,
+    subtract_ic_baseline: true,
+    camera_collect: false,
+    cam_duration: 30,
+    yolo_weights: 'yolov8n-seg.pt',
+    // Train
+    train_backend: 'cnn',
+    train_out: 'data/2g4_ht40/ui/model',
+    train_data: 'output/dataset_ui',
+    per_link: false,
+  });
 
   // Fetch pinned subcarrier width whenever the calibration path changes.
   useEffect(() => {
@@ -60,229 +126,321 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
       .catch(() => setCalibBadge(null));
   }, [config.calibration, onCalibDetected]);
 
-    const handleStart = () => {
-      onStart({ action, ...config, synthetic: false, duration: 9999.0 } as StartPayload);
-    };
+  const handleCamCheck = async () => {
+    setCamCheckStatus(null);
+    const res = await fetch(`/api/camera/check?cam_index=${config.cam_index}`);
+    const d = await res.json();
+    setCamCheckStatus(d.ok
+      ? { ok: true, msg: `${d.width}×${d.height}` }
+      : { ok: false, msg: d.error ?? 'failed' });
+  };
 
-    const tabs: { id: Action; label: string; icon: LucideIcon }[] = [
-      { id: 'run', label: 'Run', icon: Activity },
-      { id: 'calib', label: 'Calib', icon: Target },
-      { id: 'collect', label: 'Data', icon: Database },
-      { id: 'train', label: 'Train', icon: Brain },
-    ];
+  const handleStart = () => {
+    const effectiveAction = action === 'collect' && config.camera_collect
+      ? 'camera_collect' : action;
+    const duration = effectiveAction === 'camera_collect' ? config.cam_duration : 9999.0;
+    // Start the action
+    onStart({ action: effectiveAction, ...config, synthetic: false, duration } as StartPayload);
+  };
 
-    return (
-      <div className="flex flex-col gap-4 bg-slate-800 p-4 rounded-xl border border-slate-700">
-        {/* Hardware config — always shown */}
-        <div className="space-y-2 pb-3 border-b border-slate-700">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Hardware Config</p>
-          <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 flex items-center gap-1"><Camera size={10} /> Camera URL</label>
+  const tabs: { id: Action; label: string; icon: LucideIcon }[] = [
+    { id: 'run',     label: 'Run',   icon: Activity  },
+    { id: 'calib',   label: 'Calib', icon: Target     },
+    { id: 'collect', label: 'Data',  icon: Database   },
+    { id: 'train',   label: 'Train', icon: Brain      },
+  ];
+
+  return (
+    <div className="flex flex-col gap-4 bg-slate-800 p-4 rounded-xl border border-slate-700">
+
+      {/* ── Hardware / always-visible ── */}
+      <div className="space-y-2 pb-3 border-b border-slate-700">
+        <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Hardware Config</p>
+
+        {/* Camera URL */}
+        <div className="space-y-1">
+          <label className="text-[10px] text-slate-400 flex items-center gap-1"><Camera size={10} /> Camera URL</label>
+          <div className="flex gap-1">
             <input
               type="text"
-              className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
+              className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
               value={config.cam_url}
-              onChange={(e) => setConfig({ ...config, cam_url: e.target.value })}
-              placeholder="http://..."
+              onChange={e => setConfig({ ...config, cam_url: e.target.value })}
+              placeholder="/api/camera/stream or http://pi:8090/stream.mjpg"
             />
+            <button
+              onClick={handleCamCheck}
+              title="Probe camera (one frame)"
+              className="px-2 py-1 rounded-md bg-slate-900 border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors text-[10px] font-bold"
+            >◎</button>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Bandwidth</label>
-              <div className={clsx(
-                "w-full rounded-md px-2 py-1 text-xs font-mono border",
-                calibBadge
-                  ? "bg-slate-950 border-emerald-800 text-emerald-400"
-                  : "bg-slate-950 border-slate-700 text-slate-600 italic"
-              )}>
-                {calibBadge ?? "run Calib first"}
-              </div>
+          {camCheckStatus && (
+            <div className={clsx("flex items-center gap-1 text-[10px] font-mono",
+              camCheckStatus.ok ? "text-emerald-400" : "text-rose-400")}>
+              {camCheckStatus.ok ? <CheckCircle size={10} /> : <XCircle size={10} />}
+              {camCheckStatus.msg}
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Rate Hz</label>
-              <input
-                type="number"
-                className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
-                value={config.fs}
-                onChange={(e) => setConfig({ ...config, fs: parseFloat(e.target.value) })}
-              />
+          )}
+        </div>
+
+        {/* Cam index */}
+        <div className="space-y-1">
+          <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Cam Index (local)</label>
+          <input
+            type="number" min="0"
+            className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
+            value={config.cam_index}
+            onChange={e => setConfig({ ...config, cam_index: parseInt(e.target.value) || 0 })}
+          />
+        </div>
+
+        {/* Calibration — SHARED across all tabs */}
+        <div className="space-y-1">
+          <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center justify-between">
+            <span>Calibration Dir</span>
+            {calibBadge && (
+              <span className="text-emerald-400 font-mono normal-case tracking-normal text-[9px]">{calibBadge}</span>
+            )}
+          </label>
+          <FilePicker
+            value={config.calibration}
+            onChange={v => setConfig({ ...config, calibration: v, cal_out: v })}
+            type="dir"
+            prompt="Select calibration directory"
+            placeholder="data/2g4_ht40/ui/cal"
+          />
+        </div>
+
+        {/* Bandwidth + Rate */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Bandwidth</label>
+            <div className={clsx(
+              "w-full rounded-md px-2 py-1 text-xs font-mono border",
+              calibBadge
+                ? "bg-slate-950 border-emerald-800 text-emerald-400"
+                : "bg-slate-950 border-slate-700 text-slate-600 italic"
+            )}>
+              {calibBadge ?? "no calib yet"}
             </div>
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">UDP Port (nodes push CSI here — match firmware, default 9876)</label>
+            <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Rate Hz</label>
             <input
               type="number"
               className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
-              value={config.udp_port}
-              onChange={(e) => setConfig({ ...config, udp_port: parseInt(e.target.value) || 9876 })}
+              value={config.fs}
+              onChange={e => setConfig({ ...config, fs: parseFloat(e.target.value) })}
             />
           </div>
         </div>
 
-        {/* Action tabs */}
-        <div className="flex gap-1 p-1 bg-slate-900 rounded-lg shrink-0">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setAction(tab.id)}
-              className={clsx(
-                "flex-1 flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md transition-all",
-                action === tab.id
-                  ? "bg-emerald-600 text-white shadow-lg"
-                  : "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
-              )}
-            >
-              <tab.icon size={14} />
-              <span className="text-[9px] font-bold uppercase tracking-tight leading-none">{tab.label}</span>
-            </button>
-          ))}
+        {/* UDP Port */}
+        <div className="space-y-1">
+          <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">UDP Port</label>
+          <input
+            type="number"
+            className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
+            value={config.udp_port}
+            onChange={e => setConfig({ ...config, udp_port: parseInt(e.target.value) || 9876 })}
+          />
         </div>
+      </div>
 
-        {/* Tab-specific settings */}
-        <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 space-y-3 max-h-[280px] overflow-y-auto pr-1 custom-scrollbar">
-          <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block border-b border-slate-800 pb-1">
-            {tabs.find(t => t.id === action)?.label} Settings
-          </label>
+      {/* ── Action tabs ── */}
+      <div className="flex gap-1 p-1 bg-slate-900 rounded-lg shrink-0">
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setAction(tab.id)}
+            className={clsx(
+              "flex-1 flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md transition-all",
+              action === tab.id
+                ? "bg-emerald-600 text-white shadow-lg"
+                : "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+            )}
+          >
+            <tab.icon size={14} />
+            <span className="text-[9px] font-bold uppercase tracking-tight leading-none">{tab.label}</span>
+          </button>
+        ))}
+      </div>
 
-          {action === 'run' && (
-            <>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-400">Pipeline Mode</label>
-                <select
-                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-sm text-slate-200"
-                  value={config.mode}
-                  onChange={(e) => setConfig({ ...config, mode: e.target.value })}
-                >
-                  <option value="presence">Human Presence</option>
-                  <option value="weapon">Weapon Detection</option>
-                  <option value="count">People Counting</option>
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-400">Model Path (or Root Dir for Mesh)</label>
-                <input
-                  type="text"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
-                  value={config.model}
-                  onChange={(e) => setConfig({ ...config, model: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-400">Calib Directory</label>
-                <input
-                  type="text"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
-                  value={config.calibration}
-                  onChange={(e) => setConfig({ ...config, calibration: e.target.value })}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Temporal Avg</label>
-                  <input
-                    type="number" min="1"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
-                    value={config.frame_average}
-                    onChange={(e) => setConfig({ ...config, frame_average: parseInt(e.target.value) || 1 })}
-                  />
-                </div>
-                <div className="space-y-1 flex flex-col justify-end">
-                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer h-[34px] px-2">
-                    <input type="checkbox" checked={config.use_baseline} onChange={(e) => setConfig({ ...config, use_baseline: e.target.checked })} />
-                    Sub Baseline
-                  </label>
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                  <input type="checkbox" checked={config.gain_lock} onChange={(e) => setConfig({ ...config, gain_lock: e.target.checked })} />
-                  Gain Lock
-                </label>
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                  <input type="checkbox" checked={config.vote} onChange={(e) => setConfig({ ...config, vote: e.target.checked })} />
-                  Voted Mode
-                </label>
-              </div>
-            </>
-          )}
+      {/* ── Tab settings ── */}
+      <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 space-y-3 max-h-[320px] overflow-y-auto pr-1 custom-scrollbar">
+        <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block border-b border-slate-800 pb-1">
+          {tabs.find(t => t.id === action)?.label} Settings
+        </label>
 
-          {action === 'calib' && (
-            <>
+        {/* ── RUN ── */}
+        {action === 'run' && (
+          <>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">Pipeline Mode</label>
+              <select
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-1.5 text-sm text-slate-200"
+                value={config.mode}
+                onChange={e => setConfig({ ...config, mode: e.target.value })}
+              >
+                <option value="presence">Human Presence</option>
+                <option value="weapon">Weapon Detection</option>
+                <option value="count">People Counting</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">Model Path / Mesh Root Dir</label>
+              <FilePicker
+                value={config.model}
+                onChange={v => setConfig({ ...config, model: v })}
+                type="file"
+                prompt="Select model file"
+                ext="joblib"
+                placeholder="data/.../model.joblib"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <label className="text-xs text-slate-400">Baseline Packets (Frames)</label>
+                <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Temporal Avg</label>
                 <input
-                  type="number"
+                  type="number" min="1"
                   className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
-                  value={config.baseline_packets}
-                  onChange={(e) => setConfig({ ...config, baseline_packets: parseInt(e.target.value) })}
+                  value={config.frame_average}
+                  onChange={e => setConfig({ ...config, frame_average: parseInt(e.target.value) || 1 })}
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-400">Output Directory</label>
-                <input
-                  type="text"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
-                  value={config.cal_out}
-                  onChange={(e) => setConfig({ ...config, cal_out: e.target.value })}
-                />
+              <div className="space-y-1 flex flex-col justify-end">
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer h-[34px] px-2">
+                  <input type="checkbox" checked={config.use_baseline} onChange={e => setConfig({ ...config, use_baseline: e.target.checked })} />
+                  Sub Baseline
+                </label>
               </div>
-            </>
-          )}
+            </div>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={config.gain_lock} onChange={e => setConfig({ ...config, gain_lock: e.target.checked })} />
+                Gain Lock
+              </label>
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={config.vote} onChange={e => setConfig({ ...config, vote: e.target.checked })} />
+                Voted Mode
+              </label>
+            </div>
+          </>
+        )}
 
-          {action === 'collect' && (
-            <>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-400">Label Stage</label>
-                <select
-                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-sm text-slate-200"
-                  value={config.col_stage}
-                  onChange={(e) => setConfig({ ...config, col_stage: e.target.value })}
-                >
-                  <option value="presence">Presence</option>
-                  <option value="weapon">Weapon</option>
-                  <option value="count">Count</option>
-                </select>
-              </div>
+        {/* ── CALIB ── */}
+        {action === 'calib' && (
+          <>
+            <p className="text-[10px] text-slate-500 italic">Calibration dir is set in Hardware Config above.</p>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">Output Directory</label>
+              <FilePicker
+                value={config.cal_out}
+                onChange={v => setConfig({ ...config, cal_out: v })}
+                type="dir"
+                prompt="Select calibration output directory"
+                placeholder="data/2g4_ht40/ui/cal"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">Baseline Packets (Frames)</label>
+              <input
+                type="number"
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
+                value={config.baseline_packets}
+                onChange={e => setConfig({ ...config, baseline_packets: parseInt(e.target.value) })}
+              />
+            </div>
+          </>
+        )}
+
+        {/* ── COLLECT ── */}
+        {action === 'collect' && (
+          <>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">Label Stage</label>
+              <select
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-sm text-slate-200"
+                value={config.col_stage}
+                onChange={e => setConfig({ ...config, col_stage: e.target.value })}
+              >
+                <option value="presence">Presence</option>
+                <option value="weapon">Weapon</option>
+                <option value="count">Count</option>
+              </select>
+            </div>
+            {!config.camera_collect && (
               <div className="space-y-1">
                 <label className="text-xs text-slate-400">Time Spans (e.g. 0:5,10:15)</label>
                 <input
                   type="text"
                   className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
                   value={config.col_spans}
-                  onChange={(e) => setConfig({ ...config, col_spans: e.target.value })}
+                  onChange={e => setConfig({ ...config, col_spans: e.target.value })}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Window</label>
-                  <input
-                    type="number"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
-                    value={config.col_window}
-                    onChange={(e) => setConfig({ ...config, col_window: parseInt(e.target.value) })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Hop</label>
-                  <input
-                    type="number"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
-                    value={config.col_hop}
-                    onChange={(e) => setConfig({ ...config, col_hop: parseInt(e.target.value) })}
-                  />
-                </div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Window</label>
+                <input type="number"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
+                  value={config.col_window} onChange={e => setConfig({ ...config, col_window: parseInt(e.target.value) })} />
               </div>
-              {config.col_stage === 'weapon' && (
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
-                       title="Subtract the quiet-room baseline from σ²[p] (Item 10/CAUSE 2B). Serving mirrors it from the model.">
-                  <input type="checkbox" checked={config.subtract_ic_baseline}
-                         onChange={(e) => setConfig({ ...config, subtract_ic_baseline: e.target.checked })} />
-                  Subtract room baseline (σ²[p])
-                </label>
+              <div className="space-y-1">
+                <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Hop</label>
+                <input type="number"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
+                  value={config.col_hop} onChange={e => setConfig({ ...config, col_hop: parseInt(e.target.value) })} />
+              </div>
+            </div>
+            {config.col_stage === 'weapon' && (
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
+                     title="Subtract the quiet-room baseline from σ²[p] (Item 10/CAUSE 2B).">
+                <input type="checkbox" checked={config.subtract_ic_baseline}
+                       onChange={e => setConfig({ ...config, subtract_ic_baseline: e.target.checked })} />
+                Subtract room baseline (σ²[p])
+              </label>
+            )}
+            <div className="pt-1 border-t border-slate-700/50 space-y-2">
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
+                     title="Use webcam + YOLO-seg for live labeling instead of scripted time spans.">
+                <input type="checkbox" checked={config.camera_collect}
+                       onChange={e => setConfig({ ...config, camera_collect: e.target.checked })} />
+                <Camera size={11} /> Camera-supervised (YOLO)
+              </label>
+              {config.camera_collect && (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Capture Duration (s)</label>
+                    <input type="number" min="5"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
+                      value={config.cam_duration}
+                      onChange={e => setConfig({ ...config, cam_duration: parseInt(e.target.value) || 30 })} />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">YOLO Weights Path</label>
+                    <input type="text"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
+                      value={config.yolo_weights}
+                      onChange={e => setConfig({ ...config, yolo_weights: e.target.value })}
+                      placeholder="yolov8n-seg.pt" />
+                  </div>
+                  {config.col_stage === 'weapon' && (
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
+                           title="Also build per-link (tx→rx) weapon datasets for directional heads">
+                      <input type="checkbox" checked={config.per_link}
+                             onChange={e => setConfig({ ...config, per_link: e.target.checked })} />
+                      Per-link weapon datasets
+                    </label>
+                  )}
+                </>
               )}
-            </>
-          )}
+            </div>
+          </>
+        )}
 
+        {/* ── TRAIN ── */}
         {action === 'train' && (
           <>
             <div className="space-y-1">
@@ -290,7 +448,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
               <select
                 className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-sm text-slate-200"
                 value={config.train_backend}
-                onChange={(e) => setConfig({ ...config, train_backend: e.target.value })}
+                onChange={e => setConfig({ ...config, train_backend: e.target.value })}
               >
                 <option value="cnn">CNN (PyTorch)</option>
                 <option value="mlp">MLP Classifier</option>
@@ -300,27 +458,35 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
             </div>
             <div className="space-y-1">
               <label className="text-xs text-slate-400">Dataset Path</label>
-              <input
-                type="text"
-                className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
+              <FilePicker
                 value={config.train_data}
-                onChange={(e) => setConfig({ ...config, train_data: e.target.value })}
+                onChange={v => setConfig({ ...config, train_data: v })}
+                type="dir"
+                prompt="Select dataset directory"
                 placeholder="output/dataset_ui or data/weapon_ds/node0"
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs text-slate-400">Output Model Path</label>
-              <input
-                type="text"
-                className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200 font-mono"
+              <label className="text-xs text-slate-400">Output Model Dir</label>
+              <FilePicker
                 value={config.train_out}
-                onChange={(e) => setConfig({ ...config, train_out: e.target.value })}
+                onChange={v => setConfig({ ...config, train_out: v })}
+                type="dir"
+                prompt="Select model output directory"
+                placeholder="data/2g4_ht40/ui/model"
               />
             </div>
+            <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
+                   title="Train one weapon head per (tx→rx) link direction from node*/link*/ dataset dirs.">
+              <input type="checkbox" checked={config.per_link}
+                     onChange={e => setConfig({ ...config, per_link: e.target.checked })} />
+              Per-link weapon heads
+            </label>
           </>
         )}
       </div>
 
+      {/* ── Start / Stop ── */}
       <div className="flex gap-2 shrink-0 pt-2 mt-auto border-t border-slate-700">
         <button
           onClick={handleStart}

@@ -83,6 +83,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
         if links[key]:
             S = collections.Counter(f.num_subcarriers for f in links[key]).most_common(1)[0][0]
             links[key] = [f for f in links[key] if f.num_subcarriers == S]
+    print('\a', end='', flush=True)
     return dict(links)
 
 
@@ -228,6 +229,7 @@ def main():
     print(f"\nweapon models saved ({len(trained)} {unit} heads) -> {dest}  "
           "(LOGO must clearly beat majority; expect this to need many subjects/positions/objects.)")
 
+    print('\a', end='', flush=True)
 
 if __name__ == "__main__":
     main()

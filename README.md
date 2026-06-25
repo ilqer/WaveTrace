@@ -14,10 +14,13 @@ source .venv/bin/activate
 # 2. build the C++ extension and install the package
 pip install -e .
 
-# 3. flash the ESP32 boards (see firmware/README.md), then verify
+# 3. install macOS system dependencies (reads from Brewfile)
+brew bundle
+
+# 4. flash the ESP32 boards (see firmware/README.md), then verify
 python mesh_verify.py       # expect links 1->2 and 2->1 at a non-zero rate
 
-# 4. calibrate → collect → run
+# 5. calibrate → collect → run
 python collect_baseline.py  --root data/2g4_ht40
 python collect_presence.py  --root data/2g4_ht40
 python run_live_mesh.py     --root data/2g4_ht40
@@ -33,6 +36,7 @@ Full walkthrough with expected outputs and hardware setup: [Documentation.md](Do
 | CMake + C++ compiler | builds `src/` into the `wavetrace` package |
 | ESP-IDF v5.x | flashing ESP32 firmware |
 | Node.js | web dashboard (optional) |
+| **ffmpeg** (`brew bundle`) | local webcam stream + camera-supervised data collection; handles macOS camera permissions natively |
 
 ## Structure
 

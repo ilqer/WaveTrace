@@ -1,4 +1,4 @@
-import { useWaveTrace, type StartPayload } from './hooks/useWaveTrace';
+import { useWaveTrace } from './hooks/useWaveTrace';
 import Controls from './components/Controls';
 import Spectrogram from './components/Spectrogram';
 import VariancePlot from './components/VariancePlot';
@@ -68,6 +68,9 @@ function App() {
   const [view3dMode, setView3dMode] = useState<'manifold' | 'heatmap'>('manifold');
   const [activeTab, setActiveTab] = useState<'sensing' | 'training' | 'diagnostics' | 'devices'>('sensing');
   const [calibK, setCalibK] = useState(64);
+  const [camEnabled, setCamEnabled] = useState(false);
+  const [camAnnotate, setCamAnnotate] = useState(false);
+  const [camSessionId, setCamSessionId] = useState(Date.now());
 
   const verdictInfo = useMemo(() => {
     if (!verdict) return null;
@@ -299,11 +302,34 @@ function App() {
                 <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col">
                   <div className="px-4 py-2 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">AI Vision Overlay</span>
-                    <AlertCircle size={12} className={verdictInfo?.classColor.replace('text', 'text')} />
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider cursor-pointer hover:text-slate-200 transition-colors">
+                        <input type="checkbox" checked={camAnnotate} onChange={(e) => setCamAnnotate(e.target.checked)} className="accent-emerald-500" disabled={!camEnabled} />
+                        YOLO Labels
+                      </label>
+                      <label className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider cursor-pointer hover:text-slate-200 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={camEnabled}
+                          onChange={(e) => {
+                            const isChecked = e.target.checked;
+                            setCamEnabled(isChecked);
+                            if (isChecked) {
+                              setCamSessionId(Date.now());
+                            } else {
+                              fetch('/api/camera/stop', { method: 'POST' }).catch(() => {});
+                            }
+                          }}
+                          className="accent-emerald-500"
+                        />
+                        Camera Power
+                      </label>
+                      <AlertCircle size={12} className={verdictInfo?.classColor.replace('text', 'text')} />
+                    </div>
                   </div>
                   <div className="flex-1 p-2">
                     <MockCamera
-                      camUrl={camUrl}
+                      camUrl={camEnabled ? `${camUrl}${camUrl.includes('?') ? '&' : '?'}annotate=${camAnnotate ? 'true' : 'false'}&_t=${camSessionId}` : ''}
                       label={verdictInfo?.className || ""}
                       isActive={!!verdict && verdict.class === 1}
                     />

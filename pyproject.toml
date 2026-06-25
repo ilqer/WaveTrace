@@ -17,6 +17,9 @@ test = ["pytest>=7.0"]
 # P7 weapon CNN backend (lazy-imported; everything else runs without it). Pi/laptop only.
 cnn = ["torch>=2.0"]
 
+# System dependencies (macOS) — managed via Brewfile, install with: brew bundle
+# ffmpeg: webcam stream + camera-supervised collect (avoids cv2 AVFoundation crash)
+
 [tool.scikit-build]
 # Build the _wavetrace extension into the wavetrace package.
 wheel.packages = ["wavetrace"]

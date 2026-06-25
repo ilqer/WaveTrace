@@ -205,6 +205,7 @@ def _train_heatmap(dataset_dir, out_path, grid):
     HeatmapHead(cfg, grid=grid).fit(ds.X_image[:len(masks)], Y).save(out_path)
     print(f"   [OK] heatmap ({grid}x{grid}, {len(masks)} masks) -> {out_path}")
 
+    print('\a', end='', flush=True)
 
 if __name__ == "__main__":
     main()

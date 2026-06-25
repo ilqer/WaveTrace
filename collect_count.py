@@ -18,6 +18,8 @@ import socket
 import sys
 import time
 
+import numpy as np
+
 from wavetrace.Source import RecordingSource, save_recording, parse_batch_links, resample_uniform, bind_udp
 from wavetrace.Cli import collect_source
 from wavetrace.recognition import train_presence
@@ -83,6 +85,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
         if links[key]:
             S = collections.Counter(f.num_subcarriers for f in links[key]).most_common(1)[0][0]
             links[key] = [f for f in links[key] if f.num_subcarriers == S]
+    print('\a', end='', flush=True)
     return dict(links)
 
 
@@ -133,6 +136,7 @@ def main():
             cap = capture_links(
                 f"Session {i+1}/{args.sessions} — put {label} people in the zone (have them MOVE).",
                 args.frames, args.port, cal_nodes, countdown=5 if c == 0 else 0)
+            print('\a\a\a', end='', flush=True)  # 3 beeps = done, stop moving
             for nid in cal_nodes:
                 # every (tx->rx) link whose RX is this node, windowed CLEANLY on its own TARGET_FS grid,
                 # all labeled count=c, pooled into this node's single head (session_id keeps LOGO folding).
@@ -166,6 +170,13 @@ def main():
         if logo:
             line += f"  LOGO={logo['accuracy']:.3f} (majority {logo['majority_accuracy']:.3f})"
         print(line)
+        if logo and "confusion" in logo:
+            cm = np.asarray(logo["confusion"])
+            row_sums = cm.sum(axis=1)
+            class_names = [count_name(c, args.max_count) for c in counts]
+            per = {class_names[i]: f"{cm[i,i]/row_sums[i]:.0%}" if row_sums[i] > 0 else "n/a"
+                   for i in range(min(len(class_names), cm.shape[0]))}
+            print(f"          per-class: {per}")
         trained.append(nid)
 
     if not trained:
@@ -174,6 +185,7 @@ def main():
     print(f"\ncount models saved for nodes {trained} -> {args.model}/node*/  "
           "(LOGO must clearly beat the majority baseline to be real, not memorized.)")
 
+    print('\a', end='', flush=True)
 
 if __name__ == "__main__":
     main()

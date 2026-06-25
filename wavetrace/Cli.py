@@ -358,6 +358,7 @@ def main(argv=None) -> int:
             results = run_inference(_source_from_args(args), args.calibration, args.model,
                                     args.head_mode, pub, vote=args.vote, guard=args.guard)
         print(f"published {len(results)} verdict(s)", file=sys.stderr)
+    print('\a', end='', flush=True)
     return 0
 
 

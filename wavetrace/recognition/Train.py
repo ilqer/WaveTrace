@@ -53,6 +53,8 @@ def _logo_metrics(X, y, sess, subj, make_head) -> dict:
             rep = leave_one_group_out(X, y, groups, make_head)
             out[axis] = {k: rep[k] for k in ("accuracy", "majority_accuracy") if k in rep}
             out[axis].update({k: rep[k] for k in ("tpr", "fp_rate") if k in rep})
+            if "confusion" in rep:
+                out[axis]["confusion"] = np.asarray(rep["confusion"]).tolist()
     return out
 
 

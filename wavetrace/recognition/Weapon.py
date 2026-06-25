@@ -163,8 +163,11 @@ class WeaponHead:
                 loss.backward()
                 opt.step()
                 ep_loss += loss.item(); nb += 1
+            ep_loss_avg = ep_loss / max(nb, 1)
+            print(f"      cnn ep {ep+1:3d}/{epochs}  loss={ep_loss_avg:.4f}", end="\r", flush=True)
             if report is not None:
-                report(ep + 1, {"loss": ep_loss / max(nb, 1)})
+                report(ep + 1, {"loss": ep_loss_avg})
+        print()
         net.eval()
         self._net = net
 
