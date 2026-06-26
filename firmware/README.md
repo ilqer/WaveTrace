@@ -25,8 +25,9 @@ Open `firmware/esp32_node/main/config.h` and set the four values that are specif
 #define ROUTER_SSID  "your-router-ssid"
 #define ROUTER_PASS  "your-router-password"
 #define PC_IP        "192.168.x.x"    // your Mac's LAN IP (run: ipconfig getifaddr en0)
-#define MESH_NODES   2                // number of boards you are flashing right now
 ```
+
+`NODE_ID` is injected per-board by `flash.sh` as a build flag — no manual edit in `config.h`. The mesh discovers the node count at runtime; no constant needs updating when boards are added.
 
 To find your Mac's IP: `System Settings → Network → your connection → IP address`, or run `ipconfig getifaddr en0`. Give the Mac a static DHCP lease on the router so this IP never changes between sessions.
 
@@ -95,7 +96,7 @@ Use `rm -rf build`, **not** `idf.py fullclean`. `fullclean` can leave stamp file
 
 ### Scale up
 
-Set `MESH_NODES` in `config.h` to the number of boards and flash each one with the matching `NODE_ID`. No Python code change is needed — the aggregator is node-count-agnostic.
+Flash each new board with the next `NODE_ID`. No `config.h` edit and no Python change needed — the mesh discovers the node count at runtime and the host aggregator handles any count dynamically.
 
 ---
 

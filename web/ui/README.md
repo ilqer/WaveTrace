@@ -10,7 +10,7 @@ npm install       # once
 npm run dev       # starts the Vite dev server
 ```
 
-Open `http://localhost:5173` in a browser. The Python backend (`web/streamer.py`) must be running for live data.
+Open `http://localhost:5173` in a browser. The Python backend (`python web/app.py`, port 8000) must be running for live data.
 
 ## Structure
 

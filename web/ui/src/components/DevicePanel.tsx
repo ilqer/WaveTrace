@@ -2,8 +2,7 @@ import { useState, useRef, useLayoutEffect } from 'react';
 import { useDevice } from '../hooks/useDevice';
 import { Usb, RefreshCw, Upload, Terminal, Square, Radio, Cpu, Server, Trash2, X } from 'lucide-react';
 import { clsx } from 'clsx';
-import AnsiImport from 'ansi-to-react';
-const Ansi = (AnsiImport as any).default || AnsiImport;
+import { Ansi } from '../lib/ansi';
 
 const PI_PRESETS: { label: string; cmd: string }[] = [
   { label: 'Start capture', cmd: 'bash ~/wavetrace/firmware/pi/start_capture.sh' },
@@ -21,6 +20,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
   const [role, setRole] = useState<'node' | 'rx' | 'tx'>('node');
   const [nodeId, setNodeId] = useState(1);
   const [piHost, setPiHost] = useState('pi@raspberrypi.local');
+  const [piPreset, setPiPreset] = useState(PI_PRESETS[0].cmd);
   const [piCmd, setPiCmd] = useState(PI_PRESETS[0].cmd);
   const [scriptName, setScriptName] = useState('health_monitor.py');
   const [opts, setOpts] = useState<Record<string, string>>({});  // per-option values for the picked script
@@ -103,6 +103,32 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
       { name: 'cal', flag: '--cal', kind: 'text', help: 'default <root>/cal' },
       { name: 'model', flag: '--model', kind: 'text', help: 'default <root>/model_count' },
       { name: 'max-count', flag: '--max-count', kind: 'number', def: '3' },
+    ],
+    'collect_camera.py': [
+      { name: 'stage', flag: '--stage', kind: 'text', def: 'presence', help: 'presence or weapon' },
+      { name: 'duration', flag: '--duration', kind: 'number', def: '30', help: 'seconds to capture' },
+      { name: 'fps', flag: '--fps', kind: 'number', def: '15', help: 'live label rate' },
+      { name: 'grid', flag: '--grid', kind: 'number', def: '16', help: 'heatmap resolution G×G' },
+      { name: 'cam-index', flag: '--cam-index', kind: 'number', def: '0' },
+      { name: 'weights', flag: '--weights', kind: 'text', help: 'YOLO-seg weights (default yolov8n-seg.pt)' },
+      { name: 'conf', flag: '--conf', kind: 'number', def: '0.35', help: 'detector confidence floor' },
+      { name: 'subject', flag: '--subject', kind: 'text', def: 'cam', help: 'subject id for LOGO grouping' },
+      { name: 'port', flag: '--port', kind: 'number', def: '9876' },
+      { name: 'root', flag: '--root', kind: 'text', def: 'data/2g4_ht40' },
+      { name: 'cal', flag: '--cal', kind: 'text', help: 'default <root>/cal' },
+      { name: 'model', flag: '--model', kind: 'text', help: 'default <root>/model' },
+      { name: 'train', flag: '--train', kind: 'bool', help: 'train presence + heatmap after capture' },
+    ],
+    'weapon_experiments.py': [
+      { name: 'root', flag: '--root', kind: 'text', def: 'data/2g4_ht40/ui', help: 'capture-profile root' },
+      { name: 'skip-cnn', flag: '--skip-cnn', kind: 'bool', help: 'skip slow CPU CNN experiment' },
+    ],
+    'weapon_litmus.py': [
+      { name: 'root', flag: '--root', kind: 'text', def: 'data', help: 'capture-profile root' },
+      { name: 'node', flag: '--node', kind: 'number', help: 'only this node (default: all)' },
+      { name: 'per-link', flag: '--per-link', kind: 'bool', help: 'per-link (tx→rx) litmus' },
+      { name: 'no-hist', flag: '--no-hist', kind: 'bool', help: 'skip ASCII histograms' },
+      { name: 'plot', flag: '--plot', kind: 'bool', help: 'write PNG PDFs (needs matplotlib)' },
     ],
   };
 
@@ -236,12 +262,12 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
           <button
             onClick={() => selectedPort && flash(role, role === 'tx' ? null : nodeId, selectedPort, cleanBuild)}
             disabled={!selectedPort || busy}
-            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40"
+            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-bold bg-slate-600 hover:bg-slate-500 text-white disabled:opacity-40"
           >
             <Upload size={13} /> {busy ? 'Flashing…' : `Build + Flash ${role}${role !== 'tx' ? ' ' + nodeId : ''}`}
           </button>
           <label className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-2 mb-1 cursor-pointer">
-            <input type="checkbox" className="rounded border-slate-700 bg-slate-950 text-emerald-500" checked={cleanBuild} onChange={(e) => setCleanBuild(e.target.checked)} />
+            <input type="checkbox" className="border-slate-700 bg-slate-950 text-emerald-500" checked={cleanBuild} onChange={(e) => setCleanBuild(e.target.checked)} />
             Clean rebuild (apply sdkconfig changes)
           </label>
           <p className="text-[9px] text-slate-600 leading-snug">
@@ -264,16 +290,18 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
           />
           <select
             className="w-full bg-slate-950 border border-slate-700 rounded-md px-2 py-1 text-xs text-slate-200"
-            value={piCmd}
-            onChange={(e) => setPiCmd(e.target.value)}
+            value={piPreset}
+            onChange={(e) => { setPiPreset(e.target.value); if (e.target.value) setPiCmd(e.target.value); }}
           >
+            <option value="">— pick a preset —</option>
             {PI_PRESETS.map((p) => <option key={p.cmd} value={p.cmd}>{p.label}</option>)}
           </select>
           <input
             type="text"
             className="w-full bg-slate-950 border border-slate-700 rounded-md px-2 py-1 text-[10px] text-slate-300 font-mono"
             value={piCmd}
-            onChange={(e) => setPiCmd(e.target.value)}
+            placeholder="or type a custom command…"
+            onChange={(e) => { setPiCmd(e.target.value); setPiPreset(''); }}
           />
           <button
             onClick={() => runPi(piHost, piCmd)}
@@ -411,8 +439,8 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
         >
           {filteredLines.length === 0 ? (
             <div className="text-slate-700 italic p-2">No device output yet…</div>
-          ) : filteredLines.map((l, i) => (
-            <div key={i} className={clsx(
+          ) : filteredLines.map((l) => (
+            <div key={l.id} className={clsx(
               'whitespace-pre-wrap break-all border-l-2 pl-2',
               l.level === 'error' ? 'border-rose-500 text-rose-400'
                 : l.level === 'system' ? 'border-emerald-600 text-emerald-400'

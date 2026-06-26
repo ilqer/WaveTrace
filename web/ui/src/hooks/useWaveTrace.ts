@@ -98,9 +98,22 @@ export function useWaveTrace() {
   const wsLogs = useRef<WebSocket | null>(null);
   const wsTraining = useRef<WebSocket | null>(null);
 
+  // Each connect() call bumps this. onclose handlers capture their generation at
+  // creation time and bail if the counter has moved on — meaning the socket was
+  // intentionally closed by a later connect() or by unmount cleanup.
+  // This replaces the old closingRef+setTimeout(0) hack, which was racy because
+  // WebSocket onclose fires as a macrotask AFTER setTimeout(0) already reset the flag.
+  const generation = useRef(0);
+
   // Reconnect state — exponential backoff capped at 30 s
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(2000);
+  // Independent reconnect for training WS — backend closes it when idle so we
+  // can't use the full connect() path (that would disrupt the live stream).
+  const trainingReconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trainingReconnectDelay = useRef(2000);
+  // Debounce disconnect so brief WebSocket cycles don't flash the disconnected UI
+  const disconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable ref so onclose handlers can always call the latest connect()
   const connectRef = useRef<() => void>(() => {});
 
@@ -110,26 +123,36 @@ export function useWaveTrace() {
   }, []);
 
   const connect = useCallback(() => {
-    // Close any stale sockets before opening new ones
-    wsStream.current?.close();
-    wsInference.current?.close();
-    wsLogs.current?.close();
-    wsTraining.current?.close();
-
     const wsUrl = `ws://${window.location.host}`;
+    // Bump generation — any onclose from a prior generation is stale and ignored.
+    const gen = ++generation.current;
+    const isStale = () => generation.current !== gen;
+
     let streamOpen = false;
     let inferenceOpen = false;
     let logsOpen = false;
 
+    const scheduleDisconnect = () => {
+      if (isStale()) return;
+      if (disconnectTimer.current) return;
+      disconnectTimer.current = setTimeout(() => {
+        disconnectTimer.current = null;
+        if (!isStale()) setIsConnected(false);
+      }, 6000);
+    };
+
     const checkReady = () => {
+      if (isStale()) return;
       if (streamOpen && inferenceOpen && logsOpen) {
+        if (disconnectTimer.current) { clearTimeout(disconnectTimer.current); disconnectTimer.current = null; }
         setIsConnected(true);
-        reconnectDelay.current = 2000; // reset on successful connect
+        reconnectDelay.current = 2000;
       }
     };
 
     const scheduleReconnect = () => {
-      if (reconnectTimer.current) return; // already pending
+      if (isStale()) return;
+      if (reconnectTimer.current) return;
       reconnectTimer.current = setTimeout(() => {
         reconnectTimer.current = null;
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, 30000);
@@ -137,9 +160,17 @@ export function useWaveTrace() {
       }, reconnectDelay.current);
     };
 
+    // Close old sockets. Their onclose will fire later but isStale() returns true
+    // (generation already bumped above), so scheduleReconnect is never called.
+    if (trainingReconnectTimer.current) { clearTimeout(trainingReconnectTimer.current); trainingReconnectTimer.current = null; }
+    wsStream.current?.close();
+    wsInference.current?.close();
+    wsLogs.current?.close();
+    wsTraining.current?.close();
+
     wsStream.current = new WebSocket(`${wsUrl}/ws/stream`);
     wsStream.current.onopen = () => { streamOpen = true; checkReady(); };
-    wsStream.current.onclose = () => { streamOpen = false; setIsConnected(false); scheduleReconnect(); };
+    wsStream.current.onclose = () => { if (isStale()) return; streamOpen = false; scheduleDisconnect(); scheduleReconnect(); };
     wsStream.current.onmessage = (event) => {
       const data: StreamData = JSON.parse(event.data);
       if (data.error) { addLog(`ERROR: ${data.error}`); return; }
@@ -161,12 +192,11 @@ export function useWaveTrace() {
 
     wsInference.current = new WebSocket(`${wsUrl}/ws/inference`);
     wsInference.current.onopen = () => { inferenceOpen = true; checkReady(); };
-    wsInference.current.onclose = () => { inferenceOpen = false; scheduleReconnect(); };
+    wsInference.current.onclose = () => { if (isStale()) return; inferenceOpen = false; scheduleReconnect(); };
     wsInference.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      // Structured control events from the backend — no log-scraping.
       if (data.event === 'pipeline_done') { setIsRunning(false); return; }
-      if (data.event === 'weapon_alert') return;   // consumed by DiagnosticsPanel via telemetry
+      if (data.event === 'weapon_alert') return;
       if (data.event === 'clear') return;
       if (data.event === 'recalibrate_advisory') { setDriftRatio(data.drift ?? null); return; }
       setVerdict(data as InferenceResult);
@@ -174,36 +204,64 @@ export function useWaveTrace() {
 
     wsLogs.current = new WebSocket(`${wsUrl}/ws/logs`);
     wsLogs.current.onopen = () => { logsOpen = true; checkReady(); };
-    wsLogs.current.onclose = () => { logsOpen = false; scheduleReconnect(); };
+    wsLogs.current.onclose = () => { if (isStale()) return; logsOpen = false; scheduleReconnect(); };
     wsLogs.current.onmessage = (event) => {
       addLog(event.data as string);
     };
 
-    wsTraining.current = new WebSocket(`${wsUrl}/ws/training`);
-    wsTraining.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'train_init') {
-        setTrainingMeta({ n_samples: data.n_samples, distribution: data.distribution });
-      } else if (data.type === 'epoch') {
-        setTrainingMetrics(prev => [...prev, data]);
-      } else if (data.type === 'done') {
-        setTrainingResult(data.metrics ?? null);
-        setIsRunning(false);
-      }
+    // Training WS reconnects independently — backend closes it when idle.
+    const openTrainingWs = () => {
+      const ws = new WebSocket(`${wsUrl}/ws/training`);
+      wsTraining.current = ws;
+      ws.onopen = () => { if (!isStale()) trainingReconnectDelay.current = 2000; };
+      ws.onclose = () => {
+        if (isStale()) return;
+        if (wsTraining.current !== ws) return; // superseded by a newer openTrainingWs call
+        if (trainingReconnectTimer.current) return;
+        trainingReconnectTimer.current = setTimeout(() => {
+          trainingReconnectTimer.current = null;
+          if (isStale()) return;
+          trainingReconnectDelay.current = Math.min(trainingReconnectDelay.current * 2, 30000);
+          openTrainingWs();
+        }, trainingReconnectDelay.current);
+      };
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'train_init') {
+          setTrainingMeta({ n_samples: data.n_samples, distribution: data.distribution });
+        } else if (data.type === 'epoch') {
+          setTrainingMetrics(prev => [...prev, data]);
+        } else if (data.type === 'done') {
+          setTrainingResult(data.metrics ?? null);
+          setIsRunning(false);
+        }
+      };
     };
+    openTrainingWs();
   }, [addLog]);
 
   // Keep connectRef in sync so reconnect closures call the latest version
   useEffect(() => { connectRef.current = connect; }, [connect]);
 
   useEffect(() => {
-    // Always connect on mount so the page is live even before Start is pressed.
-    // Also sync isRunning with server state in case the user refreshed mid-run.
     fetch('/api/pipeline/state')
       .then(r => r.json())
       .then(d => { setIsRunning(d.isRunning ?? false); })
       .catch(e => console.error(e));
     connect();
+
+    // Cleanup: bump generation to invalidate all pending onclose/timer handlers,
+    // then close sockets and cancel timers.
+    return () => {
+      ++generation.current;
+      if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+      if (disconnectTimer.current) { clearTimeout(disconnectTimer.current); disconnectTimer.current = null; }
+      if (trainingReconnectTimer.current) { clearTimeout(trainingReconnectTimer.current); trainingReconnectTimer.current = null; }
+      wsStream.current?.close();
+      wsInference.current?.close();
+      wsLogs.current?.close();
+      wsTraining.current?.close();
+    };
   }, [connect]);
 
   const disconnect = useCallback(() => {
@@ -226,19 +284,26 @@ export function useWaveTrace() {
     setDriftRatio(null);
     setIsRunning(true);
     addLog(`[SYSTEM] Triggering action: ${payload.action.toUpperCase()}`);
-    await fetch('/api/action/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const res = await fetch('/api/action/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        setIsRunning(false);
+        addLog(`[ERROR] Start failed: ${(err as any).error ?? res.statusText}`);
+      }
+    } catch {
+      setIsRunning(false);
+      addLog(`[ERROR] Could not reach server — is the backend running?`);
+    }
   }, [isConnected, connect, addLog]);
 
   const stop = useCallback(async () => {
     addLog('[SYSTEM] Requesting pipeline stop...');
     await fetch('/api/action/stop', { method: 'POST' });
-    // Keep WS alive — pipeline_done event will setIsRunning(false).
-    // Do NOT call disconnect() here; that would drop the live socket and
-    // require a page reload to reconnect.
     setIsRunning(false);
     addLog('[SYSTEM] Pipeline stopped.');
   }, [addLog]);

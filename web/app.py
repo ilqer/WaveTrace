@@ -796,4 +796,6 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
 app.mount("/", StaticFiles(directory="web/ui/dist", html=True), name="static")
 
 if __name__ == "__main__":
-    uvicorn.run("web.app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("web.app:app", host="0.0.0.0", port=8000, reload=True,
+                reload_dirs=["web", "wavetrace"],
+                reload_includes=["*.py"])

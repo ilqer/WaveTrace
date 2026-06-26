@@ -11,8 +11,7 @@ import { WeaponLitmus } from './components/WeaponLitmus';
 import { DevicePanel } from './components/DevicePanel';
 import { Activity, Terminal, Wifi, BarChart3, AlertCircle, Box, Map as MapIcon, BrainCircuit, LayoutDashboard, Gauge, AlertTriangle, Upload, Usb, Crosshair } from 'lucide-react';
 import { clsx } from 'clsx';
-import AnsiImport from 'ansi-to-react';
-const Ansi = (AnsiImport as any).default || AnsiImport;
+import { Ansi } from './lib/ansi';
 import { useState, useMemo, useRef } from 'react';
 
 function App() {
@@ -40,6 +39,8 @@ function App() {
 
   const modelUploadRef = useRef<HTMLInputElement>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const uploadClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleModelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -49,18 +50,23 @@ function App() {
     const CHUNK = 8192;
     for (let i = 0; i < bytes.length; i += CHUNK)
       b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+    if (uploadClearRef.current) clearTimeout(uploadClearRef.current);
     setUploadStatus('Uploading…');
+    setIsUploading(true);
     try {
       const res = await fetch('/api/model/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_b64: b64, dest: `output/model.pkl/${file.name}` }),
+        body: JSON.stringify({ file_b64: b64, dest: `output/${file.name}` }),
       });
       const data = await res.json();
       setUploadStatus(data.error ? `Error: ${data.error}` : `Uploaded → ${data.dest}`);
       addLog(`[MODEL] ${data.error ? 'Upload failed: ' + data.error : 'Uploaded: ' + data.dest}`);
-    } catch (err) {
+    } catch {
       setUploadStatus(`Upload failed`);
+    } finally {
+      setIsUploading(false);
+      uploadClearRef.current = setTimeout(() => setUploadStatus(null), 4000);
     }
     e.target.value = '';
   };
@@ -148,7 +154,8 @@ function App() {
             <input ref={modelUploadRef} type="file" accept=".joblib,.pkl" className="hidden" onChange={handleModelUpload} />
             <button
               onClick={() => modelUploadRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-slate-400 text-xs font-bold hover:border-slate-500 hover:text-slate-200 transition-all"
+              disabled={isUploading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-slate-400 text-xs font-bold hover:border-slate-500 hover:text-slate-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               title={uploadStatus ?? 'Upload model .joblib'}
             >
               <Upload size={12} />
@@ -159,253 +166,281 @@ function App() {
             "flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-bold transition-all",
             isConnected
               ? "bg-emerald-900/20 border-emerald-500/50 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]"
-              : "bg-slate-900 border-slate-700 text-slate-500"
+              : "bg-amber-950/40 border-amber-600/70 text-amber-400"
           )}>
             <span className={clsx(
               "w-2.5 h-2.5 rounded-full",
-              isConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-600"
+              isConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
             )}></span>
             {isConnected ? "LIVE STREAMING" : "DISCONNECTED"}
           </div>
         </div>
       </header>
 
-      <main className="grid grid-cols-12 gap-6 max-w-[1600px] mx-auto">
-        {/* Left Column: Controls and Antennas */}
-        <div className="col-span-3 space-y-6 flex flex-col">
-          <Controls
-            onStart={start}
-            onStop={stop}
-            isRunning={isRunning}
-            onCalibDetected={setCalibK}
-          />
-          
-          <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
-            <div className="flex items-center gap-2 mb-4 text-slate-400">
-              <BarChart3 size={18} />
-              <h2 className="text-xs font-bold uppercase tracking-widest">Node Power</h2>
-            </div>
-            <div className="space-y-4">
-              {antennas.length > 0 ? antennas.map((pwr, idx) => {
-                // normalize to the strongest node so a dead board reads ~0 and balance is visible
-                const maxPwr = Math.max(...antennas, 1e-9);
-                const pct = Math.min(100, Math.max(0, (pwr / maxPwr) * 100));
-                return (
-                  <div key={nodeIds[idx] ?? idx} className="flex flex-col gap-1.5">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-slate-400 font-medium">Node {nodeIds[idx] ?? idx + 1}</span>
-                      <span className="font-mono text-emerald-400 font-bold">{pwr.toFixed(3)}</span>
-                    </div>
-                    <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
-                      <div 
-                        className="bg-emerald-500 h-full transition-all duration-300 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.4)]" 
-                        style={{ width: `${pct}%` }}
-                      ></div>
-                    </div>
+      <main className="max-w-[1600px] mx-auto">
+        {/* Full-width layout — Devices and Diagnostics own the full canvas */}
+        {activeTab === 'devices' || activeTab === 'diagnostics' ? (
+          <div className="grid grid-cols-12 gap-6">
+            <div className="col-span-12">
+              {activeTab === 'devices' ? (
+                <section className="bg-slate-900 rounded-xl border border-slate-800 flex flex-col" style={{ minHeight: '700px' }}>
+                  <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 shrink-0">
+                    <Usb size={14} className="text-emerald-500" />
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Hardware — Flash · Serial · Pi
+                    </span>
                   </div>
-                );
-              }) : (
-                <p className="text-xs text-slate-600 italic">No data active</p>
-              )}
-            </div>
-          </section>
-        </div>
-
-        {/* Middle Column: Visualizations */}
-        <div className="col-span-6 space-y-6">
-          {activeTab === 'devices' ? (
-            <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[624px]">
-              <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 shrink-0">
-                <Usb size={14} className="text-emerald-500" />
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Hardware — Flash · Serial · Pi
-                </span>
-              </div>
-              <div className="flex-1 min-h-0">
-                <ErrorBoundary label="Device panel error">
-                  <DevicePanel subcarriers={calibK} />
-                </ErrorBoundary>
-              </div>
-            </section>
-          ) : activeTab === 'diagnostics' ? (
-            <div className="flex flex-col gap-4 h-[624px] overflow-auto custom-scrollbar">
-              {/* Weapon litmus is offline — give it its own clearly-labelled section */}
-              <section className="bg-slate-900 rounded-xl border border-slate-800 shrink-0">
-                <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50">
-                  <Crosshair size={14} className="text-emerald-500" />
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Weapon Litmus — Offline
-                  </span>
-                </div>
-                <div className="p-4">
-                  <WeaponLitmus />
-                </div>
-              </section>
-              <section className="bg-slate-900 rounded-xl border border-slate-800 flex flex-col flex-1 min-h-0">
-                <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 shrink-0">
-                  <Gauge size={14} className="text-emerald-500" />
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Live Node Diagnostics
-                  </span>
-                </div>
-                <div className="flex-1 min-h-0 overflow-auto p-4">
-                  <DiagnosticsPanel />
-                </div>
-              </section>
-            </div>
-          ) : activeTab === 'sensing' ? (
-            <>
-              <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[400px]">
-                <div className="px-4 py-2 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                    <div className="flex gap-4">
-                      <button 
-                        onClick={() => setView3dMode('manifold')}
-                        className={clsx("flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors", 
-                          view3dMode === 'manifold' ? "text-emerald-400" : "text-slate-500 hover:text-slate-300")}
-                      >
-                        <Box size={12} />
-                        Signal Manifold
-                      </button>
-                      <button 
-                        onClick={() => setView3dMode('heatmap')}
-                        className={clsx("flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors", 
-                          view3dMode === 'heatmap' ? "text-emerald-400" : "text-slate-500 hover:text-slate-300")}
-                      >
-                        <MapIcon size={12} />
-                        Spatial Heatmap
-                      </button>
-                    </div>
-                    <Activity size={12} className="text-emerald-500" />
-                  </div>
-                  <div className="flex-1 relative">
-                    <ErrorBoundary label="3D view error">
-                    <SpatialView
-                      spectrogramData={spectrogram}
-                      heatmapGrid={heatmapGrid}
-                      gridSize={gridSize}
-                      persons={verdict?.pos ? [{ position: verdict.pos }] : []}
-                      mode={view3dMode}
-                    />
+                  <div className="flex-1 min-h-0">
+                    <ErrorBoundary label="Device panel error">
+                      <DevicePanel subcarriers={calibK} />
                     </ErrorBoundary>
                   </div>
-              </section>
-
-              <div className="grid grid-cols-2 gap-6 h-[200px]">
-                <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col">
-                  <div className="px-4 py-2 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">2D Spectrogram</span>
-                  </div>
-                  <div className="flex-1 p-2">
-                    <Spectrogram data={spectrogram} />
-                  </div>
                 </section>
-                <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col">
-                  <div className="px-4 py-2 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">AI Vision Overlay</span>
-                    <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider cursor-pointer hover:text-slate-200 transition-colors">
-                        <input type="checkbox" checked={camAnnotate} onChange={(e) => setCamAnnotate(e.target.checked)} className="accent-emerald-500" disabled={!camEnabled} />
-                        YOLO Labels
-                      </label>
-                      <label className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider cursor-pointer hover:text-slate-200 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={camEnabled}
-                          onChange={(e) => {
-                            const isChecked = e.target.checked;
-                            setCamEnabled(isChecked);
-                            if (isChecked) {
-                              setCamSessionId(Date.now());
-                            } else {
-                              fetch('/api/camera/stop', { method: 'POST' }).catch(() => {});
-                            }
-                          }}
-                          className="accent-emerald-500"
-                        />
-                        Camera Power
-                      </label>
-                      <AlertCircle size={12} className={verdictInfo?.classColor.replace('text', 'text')} />
+              ) : (
+                <div className="flex flex-col gap-4" style={{ minHeight: '700px' }}>
+                  <section className="bg-slate-900 rounded-xl border border-slate-800 shrink-0">
+                    <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50">
+                      <Crosshair size={14} className="text-emerald-500" />
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Weapon Litmus — Offline
+                      </span>
                     </div>
+                    <div className="p-4">
+                      <WeaponLitmus />
+                    </div>
+                  </section>
+                  <section className="bg-slate-900 rounded-xl border border-slate-800 flex flex-col flex-1 min-h-0">
+                    <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 shrink-0">
+                      <Gauge size={14} className="text-emerald-500" />
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Live Node Diagnostics
+                      </span>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-auto p-4">
+                      <DiagnosticsPanel />
+                    </div>
+                  </section>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* 3-column layout — sensing and training tabs */
+          <div className="grid grid-cols-12 gap-6">
+            {/* Left Column: Controls and Node Power */}
+            <div className="col-span-3 space-y-6 flex flex-col">
+              <Controls
+                onStart={start}
+                onStop={stop}
+                isRunning={isRunning}
+                isConnected={isConnected}
+                onCalibDetected={setCalibK}
+              />
+
+              <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
+                <div className="flex items-center gap-2 mb-4 text-slate-400">
+                  <BarChart3 size={18} />
+                  <h2 className="text-xs font-bold uppercase tracking-widest">Node Power</h2>
+                </div>
+                <div className="space-y-4">
+                  {antennas.length > 0 ? antennas.map((pwr, idx) => {
+                    const maxPwr = Math.max(...antennas, 1e-9);
+                    const pct = Math.min(100, Math.max(0, (pwr / maxPwr) * 100));
+                    return (
+                      <div key={nodeIds[idx] ?? idx} className="flex flex-col gap-1.5">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-slate-400 font-medium">Node {nodeIds[idx] ?? idx + 1}</span>
+                          <span className="font-mono text-slate-300 font-bold">{pwr.toFixed(3)}</span>
+                        </div>
+                        <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
+                          <div
+                            className="bg-slate-400 h-full transition-all duration-300 rounded-full"
+                            style={{ width: `${pct}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <p className="text-xs text-slate-600 italic">No data active</p>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            {/* Middle Column */}
+            <div className="col-span-6 space-y-6">
+              {activeTab === 'sensing' ? (
+                <>
+                  <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[400px]">
+                    <div className="px-4 py-2 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                      <div className="flex gap-4">
+                        <button
+                          onClick={() => setView3dMode('manifold')}
+                          className={clsx("flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors",
+                            view3dMode === 'manifold' ? "text-emerald-400" : "text-slate-500 hover:text-slate-300")}
+                        >
+                          <Box size={12} />
+                          Signal Manifold
+                          <span className="text-[8px] text-slate-600 normal-case tracking-normal ml-0.5">(PCA of CSI amplitude)</span>
+                        </button>
+                        <button
+                          onClick={() => setView3dMode('heatmap')}
+                          className={clsx("flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors",
+                            view3dMode === 'heatmap' ? "text-emerald-400" : "text-slate-500 hover:text-slate-300")}
+                        >
+                          <MapIcon size={12} />
+                          Spatial Heatmap
+                        </button>
+                      </div>
+                      <Activity size={12} className="text-emerald-500" />
+                    </div>
+                    <div className="flex-1 relative">
+                      <ErrorBoundary label="3D view error">
+                        <SpatialView
+                          spectrogramData={spectrogram}
+                          heatmapGrid={heatmapGrid}
+                          gridSize={gridSize}
+                          persons={verdict?.pos ? [{ position: verdict.pos }] : []}
+                          mode={view3dMode}
+                        />
+                      </ErrorBoundary>
+                      {!isConnected && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-900/75 backdrop-blur-sm">
+                          <AlertTriangle size={18} className="text-amber-500" />
+                          <p className="text-xs font-semibold text-amber-400">No UDP stream</p>
+                          <p className="text-[10px] text-slate-500 text-center max-w-[200px]">
+                            Flash a node in{' '}
+                            <button onClick={() => setActiveTab('devices')} className="underline hover:text-slate-300">Devices</button>
+                            , then press Start Inference.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  <div className="grid grid-cols-2 gap-6 h-[200px]">
+                    <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col">
+                      <div className="px-4 py-2 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">2D Spectrogram</span>
+                      </div>
+                      <div className="flex-1 p-2">
+                        <Spectrogram data={spectrogram} />
+                      </div>
+                    </section>
+                    <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col">
+                      <div className="px-4 py-2 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">AI Vision Overlay</span>
+                        <div className="flex items-center gap-3">
+                          <label className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider cursor-pointer hover:text-slate-200 transition-colors">
+                            <input type="checkbox" checked={camAnnotate} onChange={(e) => setCamAnnotate(e.target.checked)} className="accent-emerald-500" disabled={!camEnabled} />
+                            YOLO Labels
+                          </label>
+                          <label className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider cursor-pointer hover:text-slate-200 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={camEnabled}
+                              onChange={(e) => {
+                                const isChecked = e.target.checked;
+                                setCamEnabled(isChecked);
+                                if (isChecked) {
+                                  setCamSessionId(Date.now());
+                                } else {
+                                  fetch('/api/camera/stop', { method: 'POST' }).catch(() => {});
+                                }
+                              }}
+                              className="accent-emerald-500"
+                            />
+                            Camera Power
+                          </label>
+                          <AlertCircle size={12} className={verdictInfo?.classColor ?? 'text-slate-500'} />
+                        </div>
+                      </div>
+                      <div className="flex-1 p-2">
+                        <MockCamera
+                          camUrl={camEnabled ? `${camUrl}${camUrl.includes('?') ? '&' : '?'}annotate=${camAnnotate ? 'true' : 'false'}&_t=${camSessionId}` : ''}
+                          label={verdictInfo?.className || ""}
+                          isActive={!!verdict && verdict.class === 1}
+                        />
+                      </div>
+                    </section>
                   </div>
-                  <div className="flex-1 p-2">
-                    <MockCamera
-                      camUrl={camEnabled ? `${camUrl}${camUrl.includes('?') ? '&' : '?'}annotate=${camAnnotate ? 'true' : 'false'}&_t=${camSessionId}` : ''}
-                      label={verdictInfo?.className || ""}
-                      isActive={!!verdict && verdict.class === 1}
-                    />
+
+                  {/* Temporal Variance — sensing tab only */}
+                  <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2 text-slate-400">
+                        <Activity size={18} />
+                        <h2 className="text-xs font-bold uppercase tracking-widest">Temporal Variance</h2>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {verdict && (
+                          <>
+                            <span className={clsx("text-sm font-bold", verdictInfo?.classColor)}>
+                              {verdictInfo?.className}
+                            </span>
+                            <span className="text-xs text-slate-500 font-mono">
+                              Conf: {(verdict.conf * 100).toFixed(1)}% | t={verdict.t.toFixed(2)}s
+                            </span>
+                          </>
+                        )}
+                        {spatial && (
+                          <span className="text-[10px] font-mono text-sky-400 border border-sky-800 bg-sky-900/20 rounded px-2 py-0.5">
+                            AoA ({spatial.x.toFixed(2)}, {spatial.y.toFixed(2)}m) {(spatial.conf * 100).toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-slate-950 p-2 rounded-lg border border-slate-800 h-[220px]">
+                      <VariancePlot data={varianceData} />
+                    </div>
+                  </section>
+                </>
+              ) : (
+                /* Training tab */
+                <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[700px]">
+                  <div className="px-4 py-3 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 shrink-0">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <BrainCircuit size={14} className="text-emerald-500" />
+                      Live Training Performance
+                    </span>
+                    <span className="text-[10px] text-slate-600">
+                      Use <span className="font-mono text-slate-500">Fit Model</span> in the left panel to start a run
+                    </span>
+                  </div>
+                  <div className="flex-1 min-h-0">
+                    <ErrorBoundary label="Training dashboard error">
+                      <TrainingDashboard metrics={trainingMetrics} meta={trainingMeta} result={trainingResult} />
+                    </ErrorBoundary>
                   </div>
                 </section>
-              </div>
-            </>
-          ) : (
-            <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[624px]">
-              <div className="px-4 py-3 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 shrink-0">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <BrainCircuit size={14} className="text-emerald-500" />
-                  Live Training Performance
-                </span>
-              </div>
-              <div className="flex-1 min-h-0">
-                <ErrorBoundary label="Training dashboard error">
-                  <TrainingDashboard metrics={trainingMetrics} meta={trainingMeta} result={trainingResult} />
-                </ErrorBoundary>
-              </div>
-            </section>
-          )}
-
-          <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
-             <div className="flex items-center justify-between mb-4">
-               <div className="flex items-center gap-2 text-slate-400">
-                <Activity size={18} />
-                <h2 className="text-xs font-bold uppercase tracking-widest">Temporal Variance</h2>
-              </div>
-              <div className="flex items-center gap-3">
-                {verdict && (
-                  <>
-                    <span className={clsx("text-sm font-bold", verdictInfo?.classColor)}>
-                      {verdictInfo?.className}
-                    </span>
-                    <span className="text-xs text-slate-500 font-mono">
-                      Conf: {(verdict.conf * 100).toFixed(1)}% | t={verdict.t.toFixed(2)}s
-                    </span>
-                  </>
-                )}
-                {spatial && (
-                  <span className="text-[10px] font-mono text-sky-400 border border-sky-800 bg-sky-900/20 rounded px-2 py-0.5">
-                    AoA ({spatial.x.toFixed(2)}, {spatial.y.toFixed(2)}m) {(spatial.conf * 100).toFixed(0)}%
-                  </span>
-                )}
-              </div>
+              )}
             </div>
-            <div className="bg-slate-950 p-2 rounded-lg border border-slate-800 h-[220px]">
-              <VariancePlot data={varianceData} />
-            </div>
-          </section>
-        </div>
 
-        {/* Right Column: Logs */}
-        <div className="col-span-3 flex flex-col min-h-[600px]">
-           <section className="bg-slate-900 rounded-xl border border-slate-800 flex flex-col flex-1 overflow-hidden h-full">
-             <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50">
-               <Terminal size={16} className="text-slate-500" />
-               <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">System Logs</h2>
-             </div>
-             <div className="flex-1 p-4 font-mono text-[11px] overflow-y-auto space-y-1 bg-slate-950/50 custom-scrollbar">
-                {logs.length > 0 ? logs.map((log) => (
-                  <div key={log.id} className={clsx(
-                    "border-l-2 pl-2",
-                    log.text.includes('ERROR') ? "border-rose-500 text-rose-400 bg-rose-500/5" :
-                    log.text.includes('[SYSTEM]') ? "border-emerald-500 text-emerald-400 bg-emerald-500/5" :
-                    "border-slate-800 text-slate-500"
-                  )}>
-                    <Ansi>{log.text}</Ansi>
-                  </div>
-                )) : (
-                  <div className="text-slate-700 italic">No logs yet...</div>
-                )}
-             </div>
-           </section>
-        </div>
+            {/* Right Column: System Logs */}
+            <div className="col-span-3 flex flex-col min-h-[600px]">
+              <section className="bg-slate-900 rounded-xl border border-slate-800 flex flex-col flex-1 overflow-hidden h-full">
+                <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50">
+                  <Terminal size={16} className="text-slate-500" />
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">System Logs</h2>
+                </div>
+                <div className="flex-1 p-4 font-mono text-[11px] overflow-y-auto space-y-1 bg-slate-950/50 custom-scrollbar">
+                  {logs.length > 0 ? logs.map((log) => (
+                    <div key={log.id} className={clsx(
+                      "border-l-2 pl-2",
+                      log.text.includes('ERROR') ? "border-rose-500 text-rose-400 bg-rose-500/5" :
+                      log.text.includes('[SYSTEM]') ? "border-emerald-500 text-emerald-400 bg-emerald-500/5" :
+                      "border-slate-800 text-slate-500"
+                    )}>
+                      <Ansi>{log.text}</Ansi>
+                    </div>
+                  )) : (
+                    <div className="text-slate-700 italic">No logs yet...</div>
+                  )}
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

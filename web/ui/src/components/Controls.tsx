@@ -8,6 +8,7 @@ interface ControlsProps {
   onStart: (payload: StartPayload) => void;
   onStop: () => void;
   isRunning: boolean;
+  isConnected: boolean;
   onCalibDetected: (k: number) => void;
 }
 
@@ -70,8 +71,15 @@ const FilePicker: React.FC<FilePickerProps> = ({
 // ---------------------------------------------------------------------------
 // Controls
 // ---------------------------------------------------------------------------
-const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalibDetected }) => {
+const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConnected, onCalibDetected }) => {
   const [action, setAction] = useState<Action>('run');
+
+  const START_LABEL: Record<Action, string> = {
+    run: 'Start Inference',
+    calib: 'Run Calibration',
+    collect: 'Collect Data',
+    train: 'Fit Model',
+  };
   const [calibBadge, setCalibBadge] = useState<string | null>(null);
   const [camCheckStatus, setCamCheckStatus] = useState<{ok: boolean; msg: string} | null>(null);
 
@@ -107,7 +115,8 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
     train_backend: 'cnn',
     train_out: 'data/2g4_ht40/ui/model',
     train_data: 'output/dataset_ui',
-    per_link: false,
+    col_per_link: false,
+    train_per_link: false,
   });
 
   // Fetch pinned subcarrier width whenever the calibration path changes.
@@ -128,26 +137,33 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
 
   const handleCamCheck = async () => {
     setCamCheckStatus(null);
-    const res = await fetch(`/api/camera/check?cam_index=${config.cam_index}`);
-    const d = await res.json();
-    setCamCheckStatus(d.ok
-      ? { ok: true, msg: `${d.width}×${d.height}` }
-      : { ok: false, msg: d.error ?? 'failed' });
+    try {
+      const res = await fetch(`/api/camera/check?cam_index=${config.cam_index}`);
+      const d = await res.json();
+      setCamCheckStatus(d.ok
+        ? { ok: true, msg: `${d.width}×${d.height}` }
+        : { ok: false, msg: d.error ?? 'failed' });
+    } catch {
+      setCamCheckStatus({ ok: false, msg: 'network error' });
+    }
   };
 
   const handleStart = () => {
+    if (action === 'calib' && !window.confirm('This will overwrite calibration files in the output directory. Continue?')) return;
+    if (action === 'train' && !window.confirm('This will overwrite model files in the output directory. Continue?')) return;
     const effectiveAction = action === 'collect' && config.camera_collect
       ? 'camera_collect' : action;
     const duration = effectiveAction === 'camera_collect' ? config.cam_duration : 9999.0;
-    // Start the action
-    onStart({ action: effectiveAction, ...config, synthetic: false, duration } as StartPayload);
+    const perLink = action === 'collect' ? config.col_per_link : config.train_per_link;
+    onStart({ action: effectiveAction, ...config, per_link: perLink, synthetic: false, duration } as StartPayload);
   };
 
-  const tabs: { id: Action; label: string; icon: LucideIcon }[] = [
-    { id: 'run',     label: 'Run',   icon: Activity  },
-    { id: 'calib',   label: 'Calib', icon: Target     },
-    { id: 'collect', label: 'Data',  icon: Database   },
-    { id: 'train',   label: 'Train', icon: Brain      },
+  // Ordered to match the workflow: Calib → Data → Fit → Run
+  const tabs: { id: Action; label: string; icon: LucideIcon; step: number }[] = [
+    { id: 'calib',   label: 'Calib', icon: Target,   step: 1 },
+    { id: 'collect', label: 'Data',  icon: Database, step: 2 },
+    { id: 'train',   label: 'Fit',   icon: Brain,    step: 3 },
+    { id: 'run',     label: 'Run',   icon: Activity, step: 4 },
   ];
 
   return (
@@ -156,6 +172,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
       {/* ── Hardware / always-visible ── */}
       <div className="space-y-2 pb-3 border-b border-slate-700">
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Hardware Config</p>
+        <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600 pl-1.5 border-l-2 border-slate-600">Camera</p>
 
         {/* Camera URL */}
         <div className="space-y-1">
@@ -194,6 +211,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
           />
         </div>
 
+        <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600 pl-1.5 border-l-2 border-sky-800 mt-1">RF Capture</p>
         {/* Calibration — SHARED across all tabs */}
         <div className="space-y-1">
           <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center justify-between">
@@ -204,7 +222,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
           </label>
           <FilePicker
             value={config.calibration}
-            onChange={v => setConfig({ ...config, calibration: v, cal_out: v })}
+            onChange={v => setConfig({ ...config, calibration: v })}
             type="dir"
             prompt="Select calibration directory"
             placeholder="data/2g4_ht40/ui/cal"
@@ -216,10 +234,8 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
           <div className="space-y-1">
             <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Bandwidth</label>
             <div className={clsx(
-              "w-full rounded-md px-2 py-1 text-xs font-mono border",
-              calibBadge
-                ? "bg-slate-950 border-emerald-800 text-emerald-400"
-                : "bg-slate-950 border-slate-700 text-slate-600 italic"
+              "w-full px-2 py-1 text-xs font-mono",
+              calibBadge ? "text-emerald-400" : "text-slate-600 italic"
             )}>
               {calibBadge ?? "no calib yet"}
             </div>
@@ -249,17 +265,22 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
 
       {/* ── Action tabs ── */}
       <div className="flex gap-1 p-1 bg-slate-900 rounded-lg shrink-0">
-        {tabs.map(tab => (
+        {tabs.map((tab, i) => (
           <button
             key={tab.id}
             onClick={() => setAction(tab.id)}
             className={clsx(
-              "flex-1 flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md transition-all",
+              "flex-1 flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md transition-all relative",
               action === tab.id
-                ? "bg-emerald-600 text-white shadow-lg"
+                ? "bg-slate-700 text-white shadow-lg ring-1 ring-slate-500"
                 : "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
             )}
           >
+            {/* step connector */}
+            {i < tabs.length - 1 && (
+              <span className="absolute -right-0.5 top-1/2 -translate-y-1/2 text-slate-700 text-[8px] z-10">›</span>
+            )}
+            <span className="absolute top-1 left-1.5 text-[7px] font-bold text-slate-500 leading-none">{tab.step}</span>
             <tab.icon size={14} />
             <span className="text-[9px] font-bold uppercase tracking-tight leading-none">{tab.label}</span>
           </button>
@@ -269,7 +290,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
       {/* ── Tab settings ── */}
       <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 space-y-3 max-h-[320px] overflow-y-auto pr-1 custom-scrollbar">
         <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block border-b border-slate-800 pb-1">
-          {tabs.find(t => t.id === action)?.label} Settings
+          {action === 'run' ? 'Inference' : action === 'calib' ? 'Calibration' : action === 'collect' ? 'Data Collection' : 'Fit Model'} Settings
         </label>
 
         {/* ── RUN ── */}
@@ -429,8 +450,8 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
                   {config.col_stage === 'weapon' && (
                     <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
                            title="Also build per-link (tx→rx) weapon datasets for directional heads">
-                      <input type="checkbox" checked={config.per_link}
-                             onChange={e => setConfig({ ...config, per_link: e.target.checked })} />
+                      <input type="checkbox" checked={config.col_per_link}
+                             onChange={e => setConfig({ ...config, col_per_link: e.target.checked })} />
                       Per-link weapon datasets
                     </label>
                   )}
@@ -478,8 +499,8 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
             </div>
             <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
                    title="Train one weapon head per (tx→rx) link direction from node*/link*/ dataset dirs.">
-              <input type="checkbox" checked={config.per_link}
-                     onChange={e => setConfig({ ...config, per_link: e.target.checked })} />
+              <input type="checkbox" checked={config.train_per_link}
+                     onChange={e => setConfig({ ...config, train_per_link: e.target.checked })} />
               Per-link weapon heads
             </label>
           </>
@@ -490,16 +511,20 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, onCalib
       <div className="flex gap-2 shrink-0 pt-2 mt-auto border-t border-slate-700">
         <button
           onClick={handleStart}
-          disabled={isRunning}
+          disabled={isRunning || (action !== 'train' && !isConnected)}
+          title={action !== 'train' && !isConnected ? 'Not connected — open Devices to flash firmware, then ensure UDP stream is active' : undefined}
           className={clsx(
             "flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-bold transition-all",
-            isRunning
+            isRunning || (action !== 'train' && !isConnected)
               ? "bg-slate-700 text-slate-500 cursor-not-allowed"
+              : action === 'calib'   ? "bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/20 active:scale-95"
+              : action === 'collect' ? "bg-sky-600 hover:bg-sky-500 text-white shadow-lg shadow-sky-900/20 active:scale-95"
+              : action === 'train'   ? "bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-900/20 active:scale-95"
               : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20 active:scale-95"
           )}
         >
           <Play size={18} fill="currentColor" />
-          {isRunning ? 'Running…' : 'Start'}
+          {isRunning ? 'Running…' : (action !== 'train' && !isConnected) ? 'Not Connected' : START_LABEL[action]}
         </button>
         <button
           onClick={onStop}

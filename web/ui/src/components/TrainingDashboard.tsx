@@ -56,8 +56,15 @@ function ResultCard({ result }: { result: Record<string, any> }) {
   const logoAcc = result.logo_accuracy != null
     ? (result.logo_accuracy * 100).toFixed(2) + '%'
     : Object.keys(result.logo ?? {}).length > 0
-      ? Object.values(result.logo as Record<string, number>)
-          .map(v => (v * 100).toFixed(1) + '%')
+      ? Object.values(result.logo as Record<string, any>)
+          .map(v => {
+            if (typeof v === 'number') return (v * 100).toFixed(1) + '%';
+            if (typeof v === 'object' && v !== null) {
+              const scalar = v.accuracy ?? v.tpr;
+              return scalar != null ? (scalar * 100).toFixed(1) + '%' : '—';
+            }
+            return '—';
+          })
           .join(', ')
       : '—';
   const fitS = result.fit_seconds != null ? result.fit_seconds.toFixed(2) + 's' : '—';
@@ -166,22 +173,42 @@ function ResultCard({ result }: { result: Record<string, any> }) {
 const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, result }) => {
   const distributionData = useMemo(() => {
     if (!meta?.distribution) return [];
+    const stage = result?.stage;
+    const classLabel = (cls: string) => {
+      if (stage === 'weapon') return cls === '0' ? 'No Weapon' : 'Weapon';
+      if (stage === 'count') return `${cls} person${cls !== '1' ? 's' : ''}`;
+      return cls === '0' ? 'Absent' : 'Present';
+    };
     return Object.entries(meta.distribution).map(([cls, count]) => ({
-      name: cls === '0' ? 'Absent' : 'Present',
+      name: classLabel(cls),
       count: Number(count),
     }));
-  }, [meta]);
+  }, [meta, result]);
 
   if (metrics.length === 0 && !meta && !result) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-2">
-        <div className="animate-pulse bg-slate-800 p-4 rounded-full">
-          <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="flex flex-col items-center justify-center h-full text-slate-500 p-8 space-y-5">
+        <div className="bg-slate-800/60 p-4 rounded-full">
+          <svg className="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
               d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
         </div>
-        <p className="text-sm font-medium tracking-wide">Awaiting training session…</p>
+        <div className="text-center space-y-1.5">
+          <p className="text-sm font-semibold text-slate-400">No active training session</p>
+          <p className="text-xs text-slate-600 max-w-[260px] leading-relaxed">
+            Select a dataset and backend in the left panel under <span className="font-mono text-slate-500">Fit Model</span>,
+            then press <span className="font-mono text-slate-500">Fit Model</span> to start.
+            Results appear here in real-time.
+          </p>
+        </div>
+        <div className="border border-slate-800 rounded-lg px-4 py-3 text-[10px] text-slate-600 space-y-1 w-full max-w-[300px]">
+          <p className="font-bold uppercase tracking-widest text-slate-700 mb-2">Quick-start workflow</p>
+          <p><span className="text-slate-500 font-mono">1 Calib</span> — capture empty-room baseline</p>
+          <p><span className="text-slate-500 font-mono">2 Data</span> &nbsp;— record labeled sessions</p>
+          <p><span className="text-slate-500 font-mono">3 Fit</span> &nbsp;&nbsp;— train model (results here)</p>
+          <p><span className="text-slate-500 font-mono">4 Run</span> &nbsp;&nbsp;— live inference</p>
+        </div>
       </div>
     );
   }

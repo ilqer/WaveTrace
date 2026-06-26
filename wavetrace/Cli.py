@@ -75,7 +75,12 @@ def collect_source(source, calib_dir, out_dir, spans, *, stage="presence", windo
         label_fn = weapon_label_fn if stage == "weapon" else presence_label_fn
         labeler = ScriptedLabeler([(s, e, True) for s, e in spans], label_fn=label_fn)
     intercarrier = stage == "weapon"
-    ds = build_dataset(list(source.frames()), result, gain_lock, labeler, window=window, hop=hop,
+    # weapon IC and CNN paths must see raw (un-locked) magnitudes: the IC contract in
+    # Features.hpp forbids gain-locking (per-frame mean-scale cancels sigma2[p], the metal
+    # discriminator), and _serving_plan already sets apply_lock=False for all weapon backends.
+    # Passing None here aligns training with serving so the model sees the same distribution.
+    effective_lock = None if intercarrier else gain_lock
+    ds = build_dataset(list(source.frames()), result, effective_lock, labeler, window=window, hop=hop,
                        session_id=session_id, subject_id=subject_id, intercarrier=intercarrier,
                        frame_average=frame_average, subtract_baseline=subtract_baseline,
                        subtract_ic_baseline=subtract_ic_baseline)

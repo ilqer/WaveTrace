@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
 export interface DeviceLine {
+  id: number;
   source: 'monitor' | 'flash' | 'pi' | 'script';
   line: string;
   level: 'info' | 'system' | 'error';
@@ -23,11 +24,12 @@ export function useDevice() {
   const [runningScripts, setRunningScripts] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const ws = useRef<WebSocket | null>(null);
+  const lineIdCounter = useRef(0);
 
   useEffect(() => {
     const sock = new WebSocket(`ws://${window.location.host}/ws/device`);
     sock.onmessage = (e) => {
-      const d: DeviceLine = JSON.parse(e.data);
+      const d: DeviceLine = { ...JSON.parse(e.data), id: ++lineIdCounter.current };
       setLines((prev) => {
         let sourceCount = 0;
         let oldestIdx = -1;

@@ -3,7 +3,7 @@
 Automated test suite. All tests run on synthetic or recorded data — no hardware required.
 
 ```bash
-pytest tests/ -q    # run everything; expect ~271 tests all passing
+pytest tests/ -q    # run everything; expect ~295 tests all passing
 ```
 
 ## What is tested
