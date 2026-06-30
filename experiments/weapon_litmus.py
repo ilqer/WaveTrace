@@ -12,9 +12,9 @@ subcarriers — not the presence subset (diagnosis 5B). Metal physics: weapon ->
 Reads the recordings collect_weapon.py already saves:
     <root>/weapon_rec/<session>/<clear|weapon>/node<id>/link_<tag>/grid.npy
 
-    .venv/bin/python weapon_litmus.py                 # all nodes under data/
-    .venv/bin/python weapon_litmus.py --root data/5g_ht80 --node 2
-    .venv/bin/python weapon_litmus.py --plot          # also write PNG PDFs if matplotlib present
+    .venv/bin/python experiments/weapon_litmus.py                 # all nodes under data/
+    .venv/bin/python experiments/weapon_litmus.py --root data/5g_ht80 --node 2
+    .venv/bin/python experiments/weapon_litmus.py --plot          # also write PNG PDFs if matplotlib present
 
 Per-node breakdown is deliberate: gain=LOCK vs gain=SKIP boards live on different amplitude scales
 (diagnosis CAUSE 10), so a pooled PDF can blur a node that actually separates. Judge each node.

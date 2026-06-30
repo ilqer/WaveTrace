@@ -155,18 +155,26 @@ class WeaponHead:
         loss_fn = torch.nn.CrossEntropyLoss()
         gen = torch.Generator().manual_seed(self.config.seed)
         net.train()
+        n = xt.shape[0]
         for ep in range(epochs):
-            ep_loss = 0.0; nb = 0
-            for idx in torch.randperm(xt.shape[0], generator=gen).split(batch_size):
+            batch_losses = []
+            for idx in torch.randperm(n, generator=gen).split(batch_size):
                 opt.zero_grad()
                 loss = loss_fn(net(xt[idx]), yt[idx])
                 loss.backward()
                 opt.step()
-                ep_loss += loss.item(); nb += 1
-            ep_loss_avg = ep_loss / max(nb, 1)
+                batch_losses.append(loss.item())
+            ep_loss_avg = float(np.mean(batch_losses)) if batch_losses else 0.0
             print(f"      cnn ep {ep+1:3d}/{epochs}  loss={ep_loss_avg:.4f}", end="\r", flush=True)
             if report is not None:
-                report(ep + 1, {"loss": ep_loss_avg})
+                # within-epoch batch-loss spread = the confidence band on the live training curve
+                # (notebook-style report); train accuracy from an eval-mode pass (cheap on small data).
+                ep_loss_std = float(np.std(batch_losses)) if len(batch_losses) > 1 else 0.0
+                net.eval()
+                with torch.no_grad():
+                    acc = float((net(xt).argmax(1) == yt).float().mean())
+                net.train()
+                report(ep + 1, {"loss": ep_loss_avg, "loss_std": ep_loss_std, "acc": acc})
         print()
         net.eval()
         self._net = net

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from weapon_litmus import (  # noqa: E402
+from experiments.weapon_litmus import (  # noqa: E402
     sigma2_per_frame, separation, gather_sigma2, _node_of, _verdict,
 )
 

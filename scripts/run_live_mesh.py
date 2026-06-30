@@ -7,7 +7,7 @@ features stay per-link to keep all N(N-1) views. LinkVoter blends every live lin
 head's decision margin, so a blocked/confused link down-weights itself and a node that drops just
 removes its links from the vote (redundancy). Ctrl+C to stop.
 
-    .venv/bin/python run_live_mesh.py
+    .venv/bin/python scripts/run_live_mesh.py
 """
 
 import argparse

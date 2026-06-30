@@ -11,7 +11,7 @@ degenerate and are skipped by _logo_metrics. Static-subject capture -> the per-l
 stationary, so the combined stack aligns the 12 links index-wise per (session,condition) (identical
 100 Hz grid + hop); a 1-2 window phase slip is immaterial for a stationary signal.
 
-    .venv/bin/python weapon_experiments.py --root data/2g4_ht40/ui
+    .venv/bin/python experiments/weapon_experiments.py --root data/2g4_ht40/ui
 """
 
 import argparse

@@ -141,6 +141,7 @@ def train_weapon(
     out_dir="models/weapon",
     config: ModelConfig | None = None,
     feature_mode: str = "ic27",
+    report=None,
 ) -> tuple[WeaponHead, dict]:
     """Train the Stage-E weapon head and persist it.
 
@@ -186,7 +187,7 @@ def train_weapon(
     head = WeaponHead(config)
     head.feature_mode = feature_mode  # self-describing: Cli.run reads it to assemble x at serve time
     t0 = time.perf_counter()
-    head.fit(X, y)
+    head.fit(X, y, report=report)  # report fires per epoch on the cnn backend (live UI curves); ignored otherwise
     fit_s = time.perf_counter() - t0
 
     classes, counts = np.unique(y, return_counts=True)

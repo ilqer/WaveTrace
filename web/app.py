@@ -289,7 +289,11 @@ async def model_weights(model: str, mode: str = "weapon"):
     from wavetrace.recognition import mode_session
     from wavetrace.recognition.Explain import cnn_channel_weights
     try:
-        sess = mode_session(mode, model)
+        safe_model = _safe_output_path(model)
+    except ValueError:
+        return {"error": "model path must be inside output/ and must not escape it"}
+    try:
+        sess = mode_session(mode, safe_model)
         w = cnn_channel_weights(sess.head)
         return {"per_antenna": w.tolist() if w is not None else None}
     except Exception as e:
@@ -311,7 +315,7 @@ async def fusion_weights(path: str):
 async def weapon_litmus(root: str = "data", node: int | None = None, per_link: bool = False):
     """Static σ²[p] go/no-go: per-node (default) or per directed tx→rx link (per_link=true).
     Rows are sorted by AUC descending. Each row includes histogram bins for the PDF overlay."""
-    from weapon_litmus import gather_sigma2, separation, _verdict, _key_label, json_hist
+    from experiments.weapon_litmus import gather_sigma2, separation, _verdict, _key_label, json_hist
     try:
         data = gather_sigma2(root, node, per_link=per_link)
         if not data:

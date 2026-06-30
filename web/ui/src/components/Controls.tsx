@@ -476,6 +476,13 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
                 <option value="svm">SVM (calibrated)</option>
                 <option value="variance">Variance Threshold (weapon baseline)</option>
               </select>
+              {config.train_backend === 'cnn' && (
+                <p className="text-[10px] text-amber-400/80 leading-snug">
+                  CNN wants hundreds+ of windows. On small or weapon datasets it overfits — start with
+                  {' '}<span className="font-mono">Variance Threshold</span>, the honest baseline, and only
+                  move to CNN once it clears the σ²[p] litmus.
+                </p>
+              )}
             </div>
             <div className="space-y-1">
               <label className="text-xs text-slate-400">Dataset Path</label>

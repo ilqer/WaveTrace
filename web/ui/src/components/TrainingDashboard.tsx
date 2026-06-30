@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell,
+  BarChart, Bar, Cell, Area, ComposedChart,
 } from 'recharts';
 import type { TrainingMetrics, TrainingMeta } from '../hooks/useWaveTrace';
 import { ConfusionMatrix } from './ConfusionMatrix';
@@ -185,6 +185,16 @@ const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, re
     }));
   }, [meta, result]);
 
+  // Loss curve + within-epoch ±σ confidence band (notebook-style report). band=[lo,hi] renders a
+  // shaded range area in recharts; only present when the cnn head reported a batch-loss std.
+  const lossData = useMemo(() => metrics.map(m => ({
+    epoch: m.epoch,
+    loss: m.loss,
+    val_loss: m.val_loss,
+    band: m.loss_std ? [m.loss - m.loss_std, m.loss + m.loss_std] : undefined,
+  })), [metrics]);
+  const hasBand = useMemo(() => lossData.some(d => d.band !== undefined), [lossData]);
+
   if (metrics.length === 0 && !meta && !result) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-500 p-8 space-y-5">
@@ -271,20 +281,21 @@ const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, re
               <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Loss</h3>
               <div className="flex gap-4 text-[10px]">
                 <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-rose-500 inline-block" /> Train</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-rose-300 inline-block" /> Val</span>
+                {hasBand && <span className="flex items-center gap-1"><span className="w-2 h-2 bg-rose-500/20 inline-block rounded-sm" /> ±σ (batch)</span>}
               </div>
             </div>
             <div className="h-[200px]">
               {metrics.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={metrics}>
+                  <ComposedChart data={lossData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                     <XAxis dataKey="epoch" stroke="#475569" fontSize={10} />
                     <YAxis stroke="#475569" fontSize={10} />
                     <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px' }} labelStyle={{ color: '#94a3b8' }} />
+                    <Area isAnimationActive={false} type="monotone" dataKey="band" stroke="none" fill="#f43f5e" fillOpacity={0.15} />
                     <Line isAnimationActive={false} type="monotone" dataKey="loss" stroke="#f43f5e" strokeWidth={2} dot={{ r: 2, fill: '#f43f5e' }} />
-                    <Line isAnimationActive={false} type="monotone" dataKey="val_loss" stroke="#fda4af" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 2, fill: '#fda4af' }} />
-                  </LineChart>
+                    <Line isAnimationActive={false} type="monotone" dataKey="val_loss" stroke="#fda4af" strokeWidth={2} strokeDasharray="5 5" dot={false} connectNulls={false} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               ) : (
                 <EmptyChart label="Waiting for first epoch…" />

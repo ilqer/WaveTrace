@@ -78,7 +78,7 @@ def main():
     nodes = detect_nodes(args.port)
     if not nodes:
         print(f"\n[ERROR] No active nodes detected on UDP port {args.port}. "
-              "Are mesh boards powered and flooding? Run `mesh_verify.py` to confirm.", file=sys.stderr)
+              "Are mesh boards powered and flooding? Run `scripts/mesh_verify.py` to confirm.", file=sys.stderr)
         return
     if args.node is not None:
         if args.node not in nodes:

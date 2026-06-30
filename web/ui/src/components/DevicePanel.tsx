@@ -22,7 +22,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
   const [piHost, setPiHost] = useState('pi@raspberrypi.local');
   const [piPreset, setPiPreset] = useState(PI_PRESETS[0].cmd);
   const [piCmd, setPiCmd] = useState(PI_PRESETS[0].cmd);
-  const [scriptName, setScriptName] = useState('health_monitor.py');
+  const [scriptName, setScriptName] = useState('scripts/health_monitor.py');
   const [opts, setOpts] = useState<Record<string, string>>({});  // per-option values for the picked script
   const [cleanBuild, setCleanBuild] = useState(false);
   const [logFilter, setLogFilter] = useState('All');
@@ -43,20 +43,20 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
   // the command, instead of a freeform args string. `flag` omitted => positional (order = schema).
   type Opt = { name: string; flag?: string; kind: 'text' | 'number' | 'bool'; def?: string; help?: string };
   const SCRIPT_SCHEMA: Record<string, Opt[]> = {
-    'health_monitor.py': [{ name: 'port', kind: 'number', def: '9877', help: 'positional UDP port' }],
-    'mesh_verify.py': [
+    'scripts/health_monitor.py': [{ name: 'port', kind: 'number', def: '9877', help: 'positional UDP port' }],
+    'scripts/mesh_verify.py': [
       { name: 'port', kind: 'number', def: '9876', help: 'positional UDP port' },
       { name: 'seconds', kind: 'number', def: '', help: 'positional run time (blank = until stopped)' },
     ],
-    'ntp_server.py': [{ name: 'port', kind: 'number', def: '123', help: 'positional UDP port' }],
-    'collect_baseline.py': [
+    'scripts/ntp_server.py': [{ name: 'port', kind: 'number', def: '123', help: 'positional UDP port' }],
+    'scripts/collect_baseline.py': [
       { name: 'node', flag: '--node', kind: 'number', help: 'only this node (blank = all)' },
       { name: 'port', flag: '--port', kind: 'number', def: '9876' },
       { name: 'frames', flag: '--frames', kind: 'number', def: '3000' },
       { name: 'min-frames', flag: '--min-frames', kind: 'number', def: '300' },
       { name: 'root', flag: '--root', kind: 'text', def: 'data' },
     ],
-    'collect_presence.py': [
+    'scripts/collect_presence.py': [
       { name: 'node', flag: '--node', kind: 'number', help: 'only this node (blank = all)' },
       { name: 'port', flag: '--port', kind: 'number', def: '9876' },
       { name: 'sessions', flag: '--sessions', kind: 'number', def: '3' },
@@ -64,7 +64,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
       { name: 'root', flag: '--root', kind: 'text', def: 'data' },
       { name: 'cal', flag: '--cal', kind: 'text', help: 'default <root>/cal' },
     ],
-    'collect_weapon.py': [
+    'scripts/collect_weapon.py': [
       { name: 'node', flag: '--node', kind: 'number', help: 'only this node (blank = all)' },
       { name: 'port', flag: '--port', kind: 'number', def: '9876' },
       { name: 'sessions', flag: '--sessions', kind: 'number', def: '3' },
@@ -76,7 +76,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
       { name: 'cal', flag: '--cal', kind: 'text', help: 'default <root>/cal' },
       { name: 'model', flag: '--model', kind: 'text', help: 'default <root>/model_weapon' },
     ],
-    'collect_count.py': [
+    'scripts/collect_count.py': [
       { name: 'node', flag: '--node', kind: 'number', help: 'only this node (blank = all)' },
       { name: 'port', flag: '--port', kind: 'number', def: '9876' },
       { name: 'sessions', flag: '--sessions', kind: 'number', def: '3' },
@@ -85,26 +85,26 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
       { name: 'root', flag: '--root', kind: 'text', def: 'data' },
       { name: 'cal', flag: '--cal', kind: 'text', help: 'default <root>/cal' },
     ],
-    'run_live_mesh.py': [
+    'scripts/run_live_mesh.py': [
       { name: 'port', flag: '--port', kind: 'number', def: '9876' },
       { name: 'root', flag: '--root', kind: 'text', def: 'data' },
       { name: 'cal', flag: '--cal', kind: 'text', help: 'default <root>/cal' },
       { name: 'model', flag: '--model', kind: 'text', help: 'default <root>/model' },
     ],
-    'run_weapon.py': [
+    'scripts/run_weapon.py': [
       { name: 'port', flag: '--port', kind: 'number', def: '9876' },
       { name: 'root', flag: '--root', kind: 'text', def: 'data' },
       { name: 'cal', flag: '--cal', kind: 'text', help: 'default <root>/cal' },
       { name: 'model', flag: '--model', kind: 'text', help: 'default <root>/model_weapon' },
     ],
-    'run_count.py': [
+    'scripts/run_count.py': [
       { name: 'port', flag: '--port', kind: 'number', def: '9876' },
       { name: 'root', flag: '--root', kind: 'text', def: 'data' },
       { name: 'cal', flag: '--cal', kind: 'text', help: 'default <root>/cal' },
       { name: 'model', flag: '--model', kind: 'text', help: 'default <root>/model_count' },
       { name: 'max-count', flag: '--max-count', kind: 'number', def: '3' },
     ],
-    'collect_camera.py': [
+    'scripts/collect_camera.py': [
       { name: 'stage', flag: '--stage', kind: 'text', def: 'presence', help: 'presence or weapon' },
       { name: 'duration', flag: '--duration', kind: 'number', def: '30', help: 'seconds to capture' },
       { name: 'fps', flag: '--fps', kind: 'number', def: '15', help: 'live label rate' },
@@ -119,11 +119,11 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
       { name: 'model', flag: '--model', kind: 'text', help: 'default <root>/model' },
       { name: 'train', flag: '--train', kind: 'bool', help: 'train presence + heatmap after capture' },
     ],
-    'weapon_experiments.py': [
+    'experiments/weapon_experiments.py': [
       { name: 'root', flag: '--root', kind: 'text', def: 'data/2g4_ht40/ui', help: 'capture-profile root' },
       { name: 'skip-cnn', flag: '--skip-cnn', kind: 'bool', help: 'skip slow CPU CNN experiment' },
     ],
-    'weapon_litmus.py': [
+    'experiments/weapon_litmus.py': [
       { name: 'root', flag: '--root', kind: 'text', def: 'data', help: 'capture-profile root' },
       { name: 'node', flag: '--node', kind: 'number', help: 'only this node (default: all)' },
       { name: 'per-link', flag: '--per-link', kind: 'bool', help: 'per-link (tx→rx) litmus' },

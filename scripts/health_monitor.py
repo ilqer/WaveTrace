@@ -3,8 +3,8 @@
 Each node sends a heartbeat every HEALTH_MS (2 s). This prints a live table so you can see, at a
 glance, which boards are up, their CSI rate, gain state, RSSI, free heap, leader, and clock-sync.
 
-    .venv/bin/python health_monitor.py          # port 9877
-    .venv/bin/python health_monitor.py 9877
+    .venv/bin/python scripts/health_monitor.py          # port 9877
+    .venv/bin/python scripts/health_monitor.py 9877
 
 A node going RED/STALE (no heartbeat > 6 s) is the "not delivering to PC" signal; the on-board USB
 serial log is the complementary health view when a node has no PC link at all."""

@@ -24,14 +24,14 @@ brew bundle          # macOS system dependencies (Brewfile)
 
 ## Usage
 
-Flash the firmware first (see [firmware/README.md](firmware/README.md)), then:
+Flash the firmware first (see [firmware/README.md](firmware/README.md)), then run everything from the project root:
 
 ```bash
-python ntp_server.py                              # keep running — boards use this as their clock
-python mesh_verify.py                             # confirm CSI is arriving from each node
-python collect_baseline.py --root data/2g4_ht40  # calibrate (empty room, ~30 s)
-python collect_presence.py --root data/2g4_ht40  # collect data and train
-python run_live_mesh.py    --root data/2g4_ht40  # live presence detection
+python scripts/ntp_server.py                              # keep running — boards use this as their clock
+python scripts/mesh_verify.py                             # confirm CSI is arriving from each node
+python scripts/collect_baseline.py --root data/2g4_ht40  # calibrate (empty room, ~30 s)
+python scripts/collect_presence.py --root data/2g4_ht40  # collect data and train
+python scripts/run_live_mesh.py    --root data/2g4_ht40  # live presence detection
 ```
 
 Full walkthrough with expected outputs: [Documentation.md](Documentation.md).
@@ -50,7 +50,8 @@ A second independent mode detects whether the person is carrying concealed metal
 | `firmware/pi/` | Nexmon CSI capture and UDP stream scripts for the Raspberry Pi |
 | `src/` | C++ signal processing compiled into the package via pybind11 |
 | `wavetrace/` | Python library: calibration, pipeline, training, inference, CLI |
-| `collect_*.py` / `run_*.py` | top-level scripts you run at the terminal |
+| `scripts/` | terminal scripts: calibrate, collect data, run live detection (see [scripts/README.md](scripts/README.md)) |
+| `experiments/` | offline analysis: σ²[p] litmus check, model bake-off |
 | `web/` | FastAPI backend and React dashboard |
 | `tests/` | pytest suite (~295 tests, all offline) |
 | `data/` | captured data, models, calibration (git-ignored) |

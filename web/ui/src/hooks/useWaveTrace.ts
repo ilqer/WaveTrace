@@ -28,9 +28,10 @@ export interface StreamData {
 export interface TrainingMetrics {
   epoch: number;
   loss: number;
-  val_loss: number;
+  loss_std?: number;       // within-epoch batch-loss spread → curve confidence band
   accuracy: number;
-  val_accuracy: number;
+  val_loss?: number;       // optional: the cnn head trains without a held-out val split
+  val_accuracy?: number;
 }
 
 export interface TrainingMeta {

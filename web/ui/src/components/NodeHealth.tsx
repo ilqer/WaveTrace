@@ -1,12 +1,45 @@
 import { clsx } from 'clsx';
-import type { NodeHealth, SyncInfo } from '../hooks/useTelemetry';
+import type { NodeHealth, SyncInfo, LinkHealth } from '../hooks/useTelemetry';
 
 interface Props {
   nodes: NodeHealth[];
   sync: SyncInfo;
+  links?: LinkHealth[];
 }
 
-export function NodeHealthTable({ nodes, sync }: Props) {
+// Per directed (tx→rx) link: delivered rate + missing-frame fraction. The node table aggregates per
+// RX board; this breaks it down by direction so a single weak round-robin link is visible.
+function LinkHealthTable({ links }: { links: LinkHealth[] }) {
+  if (links.length === 0) return null;
+  return (
+    <div className="mt-3">
+      <h3 className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Per-link rate</h3>
+      <table className="w-full text-[10px] border-collapse">
+        <thead>
+          <tr className="text-slate-600 border-b border-slate-800">
+            <th className="text-left py-0.5">link (tx→rx)</th>
+            <th className="text-right">Hz</th>
+            <th className="text-right">missing</th>
+          </tr>
+        </thead>
+        <tbody>
+          {links.map(l => (
+            <tr key={`${l.tx}-${l.rx}`} className="border-b border-slate-900 text-slate-300">
+              <td className="py-0.5 font-mono">{l.tx}→{l.rx}</td>
+              <td className="text-right font-mono">{l.hz}</td>
+              <td className={clsx("text-right font-mono",
+                l.miss > 0.2 ? "text-rose-400" : l.miss > 0.05 ? "text-amber-400" : "")}>
+                {(l.miss * 100).toFixed(0)}%{l.miss > 0.1 && <span className="ml-0.5">⚠</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function NodeHealthTable({ nodes, sync, links }: Props) {
   if (nodes.length === 0) {
     return <div className="text-slate-600 text-xs italic">no nodes yet</div>;
   }
@@ -58,6 +91,7 @@ export function NodeHealthTable({ nodes, sync }: Props) {
           ))}
         </tbody>
       </table>
+      {links && <LinkHealthTable links={links} />}
     </div>
   );
 }

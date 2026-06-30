@@ -7,7 +7,7 @@ means "N or more people". Per-(tx->rx)-LINK + TARGET_FS resample, pooled into ea
 multi-class head (same train/serve parity as the presence path). Calibration is shared and reused from
 collect_baseline (data/cal/node{id}) — gain/NBVI are per-node, count-independent.
 
-    .venv/bin/python collect_count.py --max-count 3 --sessions 3
+    .venv/bin/python scripts/collect_count.py --max-count 3 --sessions 3
 """
 
 import argparse

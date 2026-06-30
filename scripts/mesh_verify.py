@@ -1,8 +1,8 @@
 """Full-mesh bring-up check: count CSI arrivals per directed (tx -> rx) link and their rates.
 
 Run on the PC while on the mesh router, with the nodes powered on:
-    .venv/bin/python mesh_verify.py            # port 9876, prints once per second
-    .venv/bin/python mesh_verify.py 9876 20    # explicit port, run 20 s
+    .venv/bin/python scripts/mesh_verify.py            # port 9876, prints once per second
+    .venv/bin/python scripts/mesh_verify.py 9876 20    # explicit port, run 20 s
 
 Wire format (binary, little-endian): each datagram = a 13-byte header {magic,ver,node,ntp_ms,n}
 where `node` is the RECEIVER and ver is 2 (ESP int8) or 3 (Pi int16), followed by `n` records

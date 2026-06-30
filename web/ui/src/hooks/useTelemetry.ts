@@ -20,6 +20,14 @@ export interface SyncInfo {
   ok: boolean;
 }
 
+// Per directed (tx→rx) link: delivered rate + missing-frame fraction (run_weapon._link_health).
+export interface LinkHealth {
+  tx: string;
+  rx: number;
+  hz: number;
+  miss: number;
+}
+
 export interface Telemetry {
   nodes: NodeHealth[];
   sync: SyncInfo;
@@ -31,6 +39,7 @@ export interface Telemetry {
   alert_active?: boolean;
   drift_ratio?: number;
   voter_trace?: number[];
+  links?: LinkHealth[];
 }
 
 export function useTelemetry(

@@ -5,7 +5,7 @@ Run on the PC (the one at PC_IP). The ESP nodes have SNTP_SERVER=PC_IP, so they 
 clocks to this machine and the PC can align CSI frames across nodes (ms-level; that is all the
 learned fusion needs — there is no cross-node phase coherence regardless).
 
-    sudo .venv/bin/python ntp_server.py        # UDP port 123 needs root
+    sudo .venv/bin/python scripts/ntp_server.py        # UDP port 123 needs root
 
 If the deployment router DOES have internet, you don't need this — point SNTP_SERVER at a real NTP
 host instead. Without a synced clock the mesh still runs; only cross-node fusion alignment is lost.
@@ -34,7 +34,7 @@ def main():
     except PermissionError:
         sys.exit(f"ERROR: Permission denied for udp/{port}. \n"
                  f"Standard NTP uses port 123, which requires root on this OS.\n"
-                 f"Run with: sudo .venv/bin/python ntp_server.py\n"
+                 f"Run with: sudo .venv/bin/python scripts/ntp_server.py\n"
                  f"(Or use a high port for testing: ntp_server.py 1230, but ESP nodes won't find it by default)")
     except Exception as e:
         sys.exit(f"ERROR: Could not bind to udp/{port}: {e}")

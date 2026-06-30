@@ -10,8 +10,8 @@ pooled into each node's single head (same parity as the presence/count paths).
 CUMULATIVE: every run appends its datasets under data/weapon_ds/ and RETRAINS each node on the whole
 pool, so you build subject/position diversity over many runs. Run once per subject AND carry position:
 
-    .venv/bin/python collect_weapon.py --subject p1 --carry waist --sessions 3
-    .venv/bin/python collect_weapon.py --subject p2 --carry chest --sessions 3   # adds to the pool
+    .venv/bin/python scripts/collect_weapon.py --subject p1 --carry waist --sessions 3
+    .venv/bin/python scripts/collect_weapon.py --subject p2 --carry chest --sessions 3   # adds to the pool
 
 WEAPON detection is hard and data-hungry: vary SUBJECTS, CARRY POSITIONS and OBJECTS, and judge it by
 LOGO (held-out session/subject), never train accuracy. Static-first: the subject stands STILL.

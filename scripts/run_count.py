@@ -7,7 +7,7 @@ different class subsets, so each proba is expanded into the GLOBAL class space (
 fusion. LinkVoter blends them weighted by static reliability (per-node LOGO accuracy, chance=1/K) x live
 decision margin; the blended vector's argmax is the reported count, plus an expected-value estimate.
 
-    .venv/bin/python run_count.py --max-count 3
+    .venv/bin/python scripts/run_count.py --max-count 3
 """
 
 import argparse

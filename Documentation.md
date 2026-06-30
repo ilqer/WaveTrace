@@ -58,6 +58,81 @@ Pi 5 GHz nexmon       ─┘         │
 
 ---
 
+## Pipeline internals
+
+Skip this if you just want to run the scripts. Read it if you want to understand why the code is structured the way it is.
+
+### Frames
+
+Every ESP32 burst is decoded into a `CsiFrame` by `wavetrace/Source.py`:
+- `grid` — shape `(A, S)` complex64: amplitude + phase per antenna × subcarrier
+- `timestamp` — float seconds
+- `node_id` — which node TX'd the burst
+
+`save_recording` writes these to disk as `grid.npy` (F, A, S), `t.npy` (F,), `node_id.npy` (F,), `meta.json`.
+
+### Calibration
+
+Calibrate on an empty-room recording before collecting labeled data. Calibration does two things:
+
+1. **GainLock** — fits a per-node AGC normalizer on the empty-room amplitudes. This corrects for hardware gain differences between boards.
+2. **NBVI** — picks the K=12 subcarriers with the highest variance-to-noise ratio. These carry the most presence signal.
+
+Output goes to `output/calib/`:
+- `baseline_mag.npy` — mean amplitude per subcarrier in the empty baseline
+- `baseline_diff.npy` — mean conjugate-phase difference across antennas
+- `meta.json` — the K NBVI subcarrier indices + `image_subcarriers` (all noise-gate-passing indices, used for spectrograms; different set from NBVI K)
+
+### Feature window loop
+
+`Frontend.iter_windows` slides a window of `window` frames with stride `hop` across the recording. Per window it extracts three things in this order:
+
+1. **IC features** — 27 numbers from **raw (pre-lock)** magnitudes. Structure: 3 series (µ, σ², CV) × 9 statistics = 27. This must be computed before gain lock. Gain lock removes the per-packet amplitude variance that distinguishes metal from body tissue — apply it first and σ²[p] disappears.
+2. **Presence features** — gain lock applied, then K=12 NBVI subcarriers selected, then 9 statistics per subcarrier → 9·K = 108 numbers.
+3. **Spectrogram image** — shape `(K_img, window)` using all noise-gate-passing subcarriers. K_img is not the same as the NBVI K.
+
+### Dataset
+
+`build_dataset` runs the window loop with a labeler attached and collects:
+
+| field | shape | content |
+|---|---|---|
+| `X_features` | `(n, 9·K)` | presence features (post-lock, NBVI) |
+| `X_image` | `(n, K_img, window)` | spectrograms (all valid subcarriers) |
+| `X_intercarrier` | `(n, 27)` | weapon IC features (pre-lock) |
+| `y` | `(n,)` | class labels |
+| `session_ids`, `subject_ids` | `(n,)` | group IDs for LOGO cross-validation |
+
+`save_dataset` writes: `features.npy`, `images.npy`, `features_ic.npy`, `manifest.jsonl`, `meta.json`.
+
+### Training
+
+Presence and weapon each train a separate head. They don't share the same features.
+
+**Presence**: trains on `X_features`. Default backend is a calibrated SVM (`CalibratedClassifierCV(SVC())`). Also available: `mlp`, `variance`.
+
+**Weapon**: 4 backends. All except `cnn` train on `X_intercarrier`:
+- `variance` — threshold on column 9 of the IC block (mean σ² of the σ² series). No model file, just a threshold.
+- `mlp`, `svm` — full 27-feature IC head.
+- `cnn` — trains on `X_image` instead.
+
+Each run saves `output/model/model.pkl` and `metrics.json` with LOGO accuracy.
+
+### Serving
+
+`mode_session(mode, model_path)` loads the trained head and returns an `InferenceSession`. The session's `_serving_plan` tells the front-end what to extract:
+
+| backend | input | gain lock? |
+|---|---|---|
+| presence / mlp / svm | `X_features` (NBVI stats) | yes |
+| weapon / mlp / svm | `X_intercarrier` (IC 27) | no |
+| weapon / cnn | `X_image` reshaped | no |
+| weapon / variance | IC column 9 only | no |
+
+`session.predict(window)` returns `(class_id, confidence)`. Multi-node serving in `run_live_mesh` votes across all nodes weighted by each node's LOGO accuracy.
+
+---
+
 ## 4. Prerequisites
 
 ### Hardware
@@ -91,7 +166,7 @@ Pi 5 GHz nexmon       ─┘         │
   - **9876** — CSI datagrams from all nodes
   - **9877** — per-node health heartbeats
   - **9878** — node discovery
-- Run `python ntp_server.py` on the Mac before any collect or live script. The ESP32 firmware uses the Mac as its SNTP clock source. Without it, nodes fall back to their own monotonic clock — single-link presence still works, but cross-node timestamp alignment is unreliable.
+- Run `python scripts/ntp_server.py` on the Mac before any collect or live script. The ESP32 firmware uses the Mac as its SNTP clock source. Without it, nodes fall back to their own monotonic clock — single-link presence still works, but cross-node timestamp alignment is unreliable.
 - Keep the sensing network on a **dedicated router**. Traffic from other devices causes AGC swings that corrupt the calibration baseline.
 
 ---
@@ -120,18 +195,22 @@ wavetrace/          the Python library
 ├── output/         result publisher (JSONL default; WebSocket seam for the dashboard)
 └── diagnostics/    per-node health telemetry
 
-collect_baseline.py   record quiet empty room → saves calibration under data/<profile>/cal/
-collect_presence.py   record presence sessions → trains per-node presence models
-collect_weapon.py     record weapon sessions (open/wrapped/concealed) → trains weapon model
-collect_count.py      record people-count sessions → trains count model
+scripts/              terminal scripts you run at the command line (always from the project root)
+├── collect_baseline.py   record quiet empty room → saves calibration under data/<profile>/cal/
+├── collect_presence.py   record presence sessions → trains per-node presence models
+├── collect_weapon.py     record weapon sessions (open/wrapped/concealed) → trains weapon model
+├── collect_count.py      record people-count sessions → trains count model
+├── collect_camera.py     simultaneous CSI + webcam capture with live YOLO-seg labeling
+├── run_live_mesh.py      live presence detection (all nodes voted)
+├── run_weapon.py         live weapon detection
+├── run_count.py          live people count
+├── mesh_verify.py        listen on UDP 9876 and print which (tx, rx) links are arriving and at what rate
+├── health_monitor.py     per-node uptime, free heap, frame rate — refreshes every second
+└── ntp_server.py         SNTP server the ESP32 nodes use as their shared clock source
 
-run_live_mesh.py      live presence detection (all nodes voted)
-run_weapon.py         live weapon detection
-run_count.py          live people count
-
-mesh_verify.py        listen on UDP 9876 and print which (tx, rx) links are arriving and at what rate
-health_monitor.py     per-node uptime, free heap, frame rate — refreshes every second
-ntp_server.py         SNTP server the ESP32 nodes use as their shared clock source
+experiments/          offline analysis scripts — run after you have data, not part of the live pipeline
+├── weapon_litmus.py      σ²[p] PDF go/no-go check: do the clear and weapon distributions actually separate?
+└── weapon_experiments.py model bake-off (per-node vs per-link vs combined CNN) with LOGO evaluation
 
 web/
 ├── app.py            FastAPI routes and WebSocket endpoints (port 8000)
@@ -139,9 +218,27 @@ web/
 ├── device_ctl.py     DeviceHub — serial monitor, firmware flash, Pi SSH, script runner
 └── ui/               React + Vite + TypeScript dashboard
 
-tests/                pytest suite (~295 tests; all offline on synthetic data — no hardware needed)
+tests/                pytest suite (295 tests; all offline on synthetic data — no hardware needed)
 data/                 git-ignored; created by the collect scripts
 ```
+
+---
+
+### Where to run the scripts from
+
+Everything in `scripts/` must be run from the project root — the folder that contains `wavetrace/`, `web/`, `scripts/`, etc. The scripts import from the `wavetrace` package, and Python only finds it if you're in the right place.
+
+```bash
+# this is correct
+cd WaveTrace/
+python scripts/collect_baseline.py --root data/2g4_ht40
+
+# this breaks
+cd WaveTrace/scripts/
+python collect_baseline.py    # can't find wavetrace
+```
+
+The same goes for the analysis scripts in `experiments/`. Run them from the project root too.
 
 ---
 
@@ -185,7 +282,7 @@ After flashing, boards only need a 5 V power supply. USB is only needed for flas
 ### C. Start the NTP server (keep this running throughout)
 
 ```bash
-python ntp_server.py
+python scripts/ntp_server.py
 ```
 
 Keep this running in a dedicated terminal whenever the boards are on.
@@ -195,7 +292,7 @@ Keep this running in a dedicated terminal whenever the boards are on.
 ### D. Verify hardware
 
 ```bash
-python mesh_verify.py
+python scripts/mesh_verify.py
 ```
 
 With 2 boards, expect links `1->2` and `2->1` at a non-zero frame rate. With 6 boards: 30 links (6×5). Typical rate per link: 20–100 Hz depending on channel load.
@@ -203,7 +300,7 @@ With 2 boards, expect links `1->2` and `2->1` at a non-zero frame rate. With 6 b
 If nothing appears: wrong `PC_IP` in `config.h`, Mac firewall blocking UDP 9876, or boards haven't associated yet (wait ~10 s after power-on).
 
 ```bash
-python health_monitor.py    # per-node uptime and free heap; Ctrl-C to stop
+python scripts/health_monitor.py    # per-node uptime and free heap; Ctrl-C to stop
 ```
 
 ---
@@ -211,7 +308,7 @@ python health_monitor.py    # per-node uptime and free heap; Ctrl-C to stop
 ### E. Calibrate (empty room)
 
 ```bash
-python collect_baseline.py --root data/2g4_ht40
+python scripts/collect_baseline.py --root data/2g4_ht40
 ```
 
 The room must be completely empty and still — no people, no movement, no fans. This records what the empty room looks like and locks the AGC gain so later captures are comparable. Takes about 30 seconds.
@@ -225,7 +322,7 @@ Use the same `--root` for every step in a session. If you move hardware, change 
 ### F. Collect presence data and train
 
 ```bash
-python collect_presence.py --root data/2g4_ht40
+python scripts/collect_presence.py --root data/2g4_ht40
 ```
 
 The script walks you through it: records the empty room, then tells you to walk around. When finished, it trains a per-node model and saves it to `data/2g4_ht40/model/`.
@@ -235,7 +332,7 @@ The script walks you through it: records the empty room, then tells you to walk 
 ### G. Run live presence detection
 
 ```bash
-python run_live_mesh.py --root data/2g4_ht40
+python scripts/run_live_mesh.py --root data/2g4_ht40
 ```
 
 Expected output: `PRESENT` or `absent` printed every ~1.5 s, with a per-link breakdown and confidence bar. Votes from all active links are combined into one verdict weighted by each node's LOGO accuracy.
@@ -245,8 +342,8 @@ Expected output: `PRESENT` or `absent` printed every ~1.5 s, with a per-link bre
 ### H. Weapon mode (only after presence works end to end)
 
 ```bash
-python collect_weapon.py --root data/2g4_ht40 --subject p0 --carry chest
-python run_weapon.py     --root data/2g4_ht40
+python scripts/collect_weapon.py --root data/2g4_ht40 --subject p0 --carry chest
+python scripts/run_weapon.py     --root data/2g4_ht40
 ```
 
 `--subject p0` is a label for the person (used for leave-one-subject-out evaluation). `--carry chest` is the carry position. Collect multiple sessions — vary subjects and carry positions — before training. The script retrains on the full cumulative pool after each run.
@@ -335,7 +432,7 @@ Weapon detection is feasibility-gated. Each tier is a checkpoint. If a tier fail
 Reproduce the setup from Yousaf et al. (2025): directional TX, non-LOS geometry, subject stands still with a flat metal plate at chest level. Run the σ²[p] variance threshold baseline:
 
 ```bash
-python collect_weapon.py --root data/2g4_ht40 --subject p0 --carry chest
+python scripts/collect_weapon.py --root data/2g4_ht40 --subject p0 --carry chest
 wavetrace train data/2g4_ht40/weapon_ds --stage weapon --backend variance --out data/2g4_ht40/model_weapon
 ```
 
@@ -356,7 +453,7 @@ Target: FP ≤ 10% and TPR ≥ 90% on held-out sessions.
 The person walks while carrying a concealed weapon. Requires at least 2–3 RX nodes at different angles and multiple training sessions:
 
 ```bash
-python run_weapon.py --root data/2g4_ht40
+python scripts/run_weapon.py --root data/2g4_ht40
 ```
 
 Voting is handled automatically by `run_weapon.py` — each link contributes weighted by its LOGO accuracy.
@@ -404,7 +501,7 @@ Do not report accuracy from a random within-session split.
 - CLI: `wavetrace capture / calibrate / collect-data / train / localize / run`.
 - Web dashboard: spectrograms, node health, live predictions. (Train button returns placeholder metrics — real training runs from the terminal.)
 - Pi 5 GHz node: `firmware/pi/` is implemented and tested against `wavetrace/Source.py` via `TestPiPublisher.py`. Not yet validated on real Pi hardware.
-- All 295 pytest tests pass offline.
+- All 295 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
 
 ### What is blocked on hardware
 
@@ -413,6 +510,7 @@ None of the accuracy numbers from synthetic data carry over to real hardware. Th
 - **I/Q byte order** — esp-csi assumes `[imag, real]` pairs. A swap makes all phase data wrong. Verify against a known-still capture (amplitude stable; phase not spinning).
 - **Subcarrier count and pattern** — with `WT_BW_HT40 1` the expected count is ~114. Verify on the first real capture.
 - **AGC / PHY gain lock** — confirm the lock is stable across two back-to-back empty captures taken minutes apart.
+- **You can't throw away bad-gain frames on the PC.** When a node's automatic gain control (AGC) saturates, that node's σ²[p] feature goes garbage. You might think to drop those frames during weapon training — but you can't from the host. The ESP only sends `mac | timestamp | length | CSI`, so the gain value never leaves the board. If we ever want this, the firmware has to either report the gain or skip those frames itself.
 - **Actual CSI sample rate** — the firmware targets ~250 Hz per link. The pipeline estimates `fs` from timestamps; confirm it is within range of the 100 Hz resample target.
 - **Antenna performance on weapon detection** — the 8dBi omnidirectional whip is not the directional horn used in the published weapon-detection papers. Tier 1 (flat metal plate, static) is the reality check.
 - **Pi 5 Nexmon** — Pi 5 is not in the official Nexmon CSI repo. A community patch exists but is not validated on this hardware.
@@ -454,7 +552,7 @@ In order of likelihood:
 
 1. Did not recalibrate after moving hardware. Recalibrate; collect fresh data.
 2. Mixed capture profiles. Check that you used the same `--root` for baseline, collection, and training.
-3. Room not empty during calibration. Re-run `collect_baseline.py` with the room actually empty.
+3. Room not empty during calibration. Re-run `scripts/collect_baseline.py` with the room actually empty.
 4. Too few training sessions. Collect more; 3–5 session pairs is the minimum.
 5. Wrong evaluation method. Use LOGO, not a random split.
 
@@ -506,7 +604,7 @@ source .venv/bin/activate
 pytest tests/ -q
 ```
 
-All tests run on synthetic data. No hardware needed. Expected: ~295 passed. If a test fails after a code change, fix the test and the code in the same commit.
+All tests run on synthetic data. No hardware needed. Expected: 295 passed. If a test fails after a code change, fix the test and the code in the same commit.
 
 ### Rebuilding the C++ extension after a change in `src/`
 

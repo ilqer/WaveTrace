@@ -7,8 +7,8 @@ together, run YOLO ONLINE (live) to label each frame, and build BOTH datasets fr
 
 One camera supervises the entire test: its labels are time-aligned to every node's CSI windows.
 
-    .venv/bin/python collect_camera.py --duration 30 --train          # presence + heatmap, then train both
-    .venv/bin/python collect_camera.py --stage weapon --duration 30   # open-carry weapon + weapon "where"
+    .venv/bin/python scripts/collect_camera.py --duration 30 --train          # presence + heatmap, then train both
+    .venv/bin/python scripts/collect_camera.py --stage weapon --duration 30   # open-carry weapon + weapon "where"
 
 Training-only: the deployed detector needs no camera. HONEST SCOPE: a camera can't see a CONCEALED
 weapon (use collect_weapon.py for that) and stock COCO has no firearm class (knife=43; pass a custom

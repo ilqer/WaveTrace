@@ -1,6 +1,6 @@
 # WaveTrace — Project Progress Report
 
-Last updated: 2026-06-26 | Tests passing: 295
+Last updated: 2026-06-30 | Tests passing: 295
 
 ---
 
@@ -75,6 +75,8 @@ These are finalized. Do not revisit without strong new evidence.
 8. **Feature-level concat for multi-node fusion** — Each node is processed independently; feature vectors are concatenated. Cross-node phase math is forbidden.
 9. **ISTA over OMP for CIR** — OMP commits permanently on each iteration. When body and object fall in the same Nyquist bin, OMP picks wrong early and cannot recover. ISTA's soft thresholding degrades gracefully.
 10. **Static TX buffers in firmware** — Dynamic TX buffers (sdkconfig default) compete with the CSI queue for DRAM. With a 128-entry HT40 queue (~50 KB), dynamic buffers cause ENOMEM under load. Static buffers (TX_BUFFER_TYPE=0) are pre-allocated and cannot be starved.
+11. **AoA / `Localize.py` parked** — Analytic angle-of-arrival needs ≥ 2 phase-coherent receive chains. Both candidate radios are 1×1 (ESP32-S3 single RX chain; Pi CYW43455 single stream), so AoA is not achievable on current hardware. `Localize.py` stays in-tree but unused.
+12. **No usable body-worn weapon signal at 2.4 GHz, omni antennas, LOS** — Three real datasets across three environments give ic27 AUC 0.29–0.46 (inverted or near-chance). The ceiling is physics — omnidirectional antennas in line-of-sight geometry — not the model. Above-chance weapon detection requires NLOS geometry and ideally a directional TX (Yousaf 2025 used a >25 dBi dish). Do not interpret a weak model as a tuning problem.
 
 ---
 
@@ -222,7 +224,7 @@ These are finalized. Do not revisit without strong new evidence.
 ### 6.1 Stage 0 — Calibration
 
 - `Calibration.observe(frame)` feeds quiet-baseline frames into the GainLock accumulator
-- `Calibration.ready()` returns True after ≥300 baseline packets
+- `Calibration.ready` (property) returns True after ≥300 baseline packets
 - `Calibration.finalize()` locks the reference amplitude scale (median of per-frame mean magnitudes)
 - `GainLock.apply(frame)` rescales every sample by referenceScale / frameScale(frame); phase is untouched
 - `GainLock.coefficientOfVariation()` fallback when locking is impossible (CV = σ/μ, gain-invariant)
@@ -230,7 +232,7 @@ These are finalized. Do not revisit without strong new evidence.
 **Calibration save/load:**
 - `GainLock.lockTo(scale)` (C++): bypasses observe→finalize, directly sets referenceScale. Lets Python reconstruct a locked GainLock from a persisted scalar without re-running baseline capture.
 - `save_calibration()`: writes meta.json (reference_scale, subcarriers, num_baseline), baseline_mag.npy, baseline_diff.npy
-- `load_calibration()`: reads files, calls gain_lock.lock_to(ref); returns None for gain lock when use_gain_lock=False
+- `load_calibration()`: reads files, calls gain_lock.lock_to(ref); returns `(CalibrationResult, GainLock | None)` — the GainLock is None when reference_scale is NaN (gain lock was disabled at calibration time)
 - Backward compat: meta.get("image_subcarriers", meta["subcarriers"]) — old calibrations without the key fall back to the NBVI set
 
 ### 6.2 Stage 2 — C++ Preprocessing
@@ -359,7 +361,7 @@ The ESP32 AGC varies transmit power, which changes amplitudes in ways unrelated 
 - 8c: Publisher ABC + JsonlPublisher (zero-dep, JSONL, flush every write)
 - 8d: CsiSource / SyntheticSource / RecordingSource + serialization; SerialReader = documented Phase-0 seam
 - 8e: WeaponHead feature_mode stamped into saved head; _serving_plan reads it to determine apply_lock, intercarrier, input pick
-- 8f: Cli.py (argparse, 5 modes: capture / calibrate / collect-data / train / run)
+- 8f: Cli.py (argparse, 6 modes: capture / calibrate / collect-data / train / localize / run)
 - 8g: TestPipeline.py (10 tests)
 
 Rebuild required after touching C++: `pip install -e . --no-build-isolation`
@@ -452,7 +454,7 @@ ISTA vs OMP: OMP commits permanently on each iteration; body+object may fall in 
 - Unified firmware: every board runs the same binary; NODE_ID is the only per-board difference
 - esp32_rx / esp32_tx are legacy firmware; do NOT set CSI bandwidth
 - Token-ring TDMA: BURST_LEN=10 frames, BURST_MS=2 → 20 ms/burst per turn
-- Leader = lowest active node ID; TURN_TIMEOUT_MS=300 self-heal; LIVE_TIMEOUT_MS=1500 eviction; 5s re-discovery
+- Leader = lowest active node ID; TURN_TIMEOUT_MS=80 self-heal; LIVE_TIMEOUT_MS=1500 eviction; 5s re-discovery (admitted nodes), DISCOVERY_MS=300 aggressive announce (joiners)
 - Dynamic ring: no hardcoded node count; active count learned live; MAX_NODES=16 is array capacity only
 - TOKEN_REPEAT=3: handoff carried on the last 3 burst frames → survives single-frame loss
 - WT_BW_HT40=1 activates HT40; requires router also on 40 MHz (silent fallback to legacy otherwise)
@@ -595,7 +597,7 @@ Leakage caveat: 3 back-to-back sessions captured minutes apart; LOGO may be meas
 
 ### 9.3 Per-Link Litmus Discovery (2026-06-23)
 
-weapon_litmus.py had been grouping σ² by RX node, pooling all TX directions into one node head. Per-node pooling averages 1 good NLOS direction with noise links → sign-flip and washout.
+experiments/weapon_litmus.py had been grouping σ² by RX node, pooling all TX directions into one node head. Per-node pooling averages 1 good NLOS direction with noise links → sign-flip and washout.
 
 Per-link results (6 active links):
 
@@ -608,11 +610,11 @@ Per-link results (6 active links):
 | 64b8→1 | 0.509 | inverted |
 | 4f9c→1 | 0.504 | ok |
 
-Node 2 pooled: AUC=0.537 inverted — sign-flipped by mixing links; signal was present, pooling destroyed it. Fix: added --per-link flag to weapon_litmus.py; groups by (rx_node, tx_tag).
+Node 2 pooled: AUC=0.537 inverted — sign-flipped by mixing links; signal was present, pooling destroyed it. Fix: added --per-link flag to experiments/weapon_litmus.py; groups by (rx_node, tx_tag).
 
 ### 9.4 Backend Bake-Off — Experiments A–E (2026-06-25)
 
-Central harness: weapon_experiments.py. Evaluated on session-LOGO only (3 sessions → 3 folds).
+Central harness: experiments/weapon_experiments.py. Evaluated on session-LOGO only (3 sessions → 3 folds).
 
 **Experiment A — Per-node, four backends:**
 
@@ -709,10 +711,10 @@ Design: weight = max(LOGO_acc − 0.5, 0) × 2 from TRAIN folds only; final scor
 
 **Experiment protocol (gated):**
 1. Center-aim antennas
-2. `collect_baseline.py --root data/2g4_ht40` (recalibrate at new geometry)
+2. `scripts/collect_baseline.py --root data/2g4_ht40` (recalibrate at new geometry)
 3. One condition at a time; large metal plate (30–45 cm) first; sessions on different days
-4. `collect_weapon.py --root data/2g4_ht40 --subject plate --carry chest --sessions 5`
-5. `weapon_litmus.py --root data/2g4_ht40 --per-link --plot` — GATE: AUC >= 0.65 on at least 1 direction before any ML
+4. `scripts/collect_weapon.py --root data/2g4_ht40 --subject plate --carry chest --sessions 5`
+5. `python experiments/weapon_litmus.py --root data/2g4_ht40 --per-link --plot` — GATE: AUC >= 0.65 on at least 1 direction before any ML
 6. If plate separates → shrink object stepwise: plate → laptop → large knife → pistol; find the boundary
 
 **Planned per-link model refactor (gated on litmus):**
@@ -751,14 +753,14 @@ Preprocessing tricks alone cannot rescue the data-scale ceiling.
 ### 9.9 Moving-Subject Weapon Collection Protocol
 
 - New baseline required before any new weapon collection
-- `collect_baseline.py --frames 3000 --root data/2g4_ht40/ui`
-- `collect_weapon.py --subject ilker --carry metal_walk --sessions 3 --frames 1500 --per-link --root data/2g4_ht40/ui`
+- `scripts/collect_baseline.py --frames 3000 --root data/2g4_ht40/ui`
+- `scripts/collect_weapon.py --subject ilker --carry metal_walk --sessions 3 --frames 1500 --per-link --root data/2g4_ht40/ui`
 - Script prompts twice per session: "clear" (walk without weapon), "weapon" (walk with metal object)
 - 4 nodes auto-detected from data/2g4_ht40/ui/cal/node*/
 
 ### 9.10 People Count Pipeline
 
-**collect_count.py:**
+**scripts/collect_count.py:**
 - Prompts per count level (0, 1, 2, 3+) per session
 - Cumulative index i is within the current run; back-to-back 3-session runs overwrite count_ds_0/1/2 from prior runs
 
@@ -904,7 +906,7 @@ Note: Pi 5 Nexmon has not been set up. All of the following is designed only.
 
 | Feature | What changed |
 |---|---|
-| σ²[p] PDF histogram in Litmus Card | json_hist(clear, weapon, bins=20) added to weapon_litmus.py; SigmaHist SVG component (220×52px, teal/red overlay) in WeaponLitmus.tsx |
+| σ²[p] PDF histogram in Litmus Card | json_hist(clear, weapon, bins=20) added to experiments/weapon_litmus.py; SigmaHist SVG component (220×52px, teal/red overlay) in WeaponLitmus.tsx |
 | subtract_ic_baseline badge | Amber badge in TrainingDashboard.tsx when model was trained with background subtraction |
 | Carry axis in confusion-matrix selector | buildMatrix(logo, classCounts, axis?) accepts optional axis; availableAxes auto-detected from metrics |
 | Missing-rate per link in NodeHealth | loss_pct = (target_hz - hz) / target_hz × 100; red when >20%, amber when >5% |
@@ -928,7 +930,7 @@ Note: Pi 5 Nexmon has not been set up. All of the following is designed only.
 - app.py:264–270: writes base64 to any dest path, even creating dirs; chains with above (write a model then load it = RCE)
 - Fix: same _safe_output_path() applied to model_upload dest
 
-**app.py:240 model_weights loads arbitrary client model path via mode_session — same RCE class; NOT YET FIXED**
+**app.py:~287 model_weights loads arbitrary client model path via mode_session — same RCE class; NOT YET FIXED**
 
 **BackgroundTasks dead handle (low severity):**
 - runner_task = background_tasks.add_task(run_blocking) returns None; stop path was dead
@@ -1020,7 +1022,7 @@ Weapon datasets were collected in three physically distinct environments (differ
 ### 12.1 Critical (blocking next experiment)
 
 - **NLOS litmus gate not cleared.** Antennas are aimed toward center, but AUC >= 0.65 on at least one link has not been verified on new geometry data. No ML training should happen until this gate clears.
-- **app.py:240 security hole.** model_weights loads an arbitrary client model path via mode_session — same RCE class as fusion_weights; not yet fixed.
+- **app.py:~287 security hole.** model_weights loads an arbitrary client model path via mode_session — same RCE class as fusion_weights; not yet fixed.
 
 ### 12.2 Known Bugs
 

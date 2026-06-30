@@ -6,7 +6,7 @@ Each link's RX-node WeaponHead emits P(weapon); LinkVoter blends them weighted b
 (per-node LOGO accuracy via accuracy_weights) x live decision margin. A node validated at/below chance
 gets weight 0 and drops out.
 
-    .venv/bin/python run_weapon.py
+    .venv/bin/python scripts/run_weapon.py
 """
 
 import argparse
@@ -47,26 +47,34 @@ def _logo_acc(metrics_path):
     return None
 
 
-def _dwell_proba(frames, fs, result, gain_lock, cfg, intercarrier, pick, session, ic_baseline=None):
-    """Resample one link's frames to fs, window them, and return the TEMPORAL VOTE across the whole
-    dwell — the mean class-proba over every window in the buffer (BUFFER_S of history), not just the
-    last one (diagnosis CAUSE 5C: Zhou's per-crossing aggregation lifted single-window 51% -> 93%).
-    Soft mean (not hard majority) so it composes with the soft cross-link LinkVoter. None if no full
-    window fits. ic_baseline (Item 10/CAUSE 2B): the node's quiet-room baseline, subtracted from the
-    IC path when this head was trained that way — MUST match training (set from the head config)."""
+def dwell_proba_detailed(frames, fs, m):
+    """SINGLE SOURCE OF TRUTH for one link's serving math, shared by run_weapon and the web streamer
+    (P5: don't reimplement the vote loop twice). `m` is a serving entry — the dict from
+    load_weapon_links OR a mesh node dict; both carry result/lock/cfg/intercarrier/pick/session and an
+    optional ic_baseline.
+
+    Resamples to fs, windows the dwell, and returns the TEMPORAL VOTE — the mean class-proba over every
+    window in the buffer (BUFFER_S of history), not just the last (diagnosis CAUSE 5C: Zhou's
+    per-crossing aggregation lifted single-window 51% -> 93%). Soft mean (not hard majority) so it
+    composes with the soft cross-link LinkVoter. Also returns the LAST window's (image, features, ic)
+    for the web spectrogram, and the window count. Returns (None, None, None, None, 0) if no full
+    window fits. ic_baseline (Item 10/CAUSE 2B): subtracted from the IC path when this head was trained
+    that way — MUST match training (carried on the entry)."""
     res = resample_uniform(frames, fs)
+    cfg = m["cfg"]
     if len(res) < cfg.window:
-        return None
+        return None, None, None, None, 0
     probas = []
+    image = features = ic = None
     for _t, features, image, ic in iter_windows(
-        res, result.subcarriers, gain_lock,
-        window=cfg.window, hop=cfg.hop, intercarrier=intercarrier,
-        image_subcarriers=result.image_subcarriers, ic_baseline=ic_baseline,
+        res, m["result"].subcarriers, m["lock"],
+        window=cfg.window, hop=cfg.hop, intercarrier=m["intercarrier"],
+        image_subcarriers=m["result"].image_subcarriers, ic_baseline=m.get("ic_baseline"),
     ):
-        probas.append(session.predict_proba_window(pick(features, image, ic)))
+        probas.append(m["session"].predict_proba_window(m["pick"](features, image, ic)))
     if not probas:
-        return None
-    return np.mean(probas, axis=0)  # temporal (soft) majority vote over the dwell
+        return None, None, None, None, 0
+    return np.mean(probas, axis=0), image, features, ic, len(probas)  # temporal (soft) vote
 
 
 def load_weapon_links(cal_root, model_root):
@@ -222,9 +230,7 @@ def main():
                 if now - last_seen.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
                 m = _entry_for(entries, key)
-                proba = _dwell_proba(list(buffers[key]), TARGET_FS, m["result"], m["lock"],
-                                     m["cfg"], m["intercarrier"], m["pick"], m["session"],
-                                     ic_baseline=m["ic_baseline"])
+                proba, *_ = dwell_proba_detailed(list(buffers[key]), TARGET_FS, m)
                 if proba is None:
                     continue
                 wi = m["weapon_i"]

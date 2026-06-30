@@ -192,9 +192,8 @@ class WaveTraceRunner:
                 "type": "epoch",
                 "epoch": epoch,
                 "loss": float(m.get("loss", 0.0)),
-                "val_loss": float(m.get("val_loss", m.get("loss", 0.0))),
-                "accuracy": float(m.get("acc", 0.0)),
-                "val_accuracy": float(m.get("val_acc", 0.0)),
+                "loss_std": float(m.get("loss_std", 0.0)),  # within-epoch batch spread -> curve band
+                "accuracy": float(m.get("acc", m.get("accuracy", 0.0))),
             })
             self.log(f"Epoch {epoch}: loss={m.get('loss', 0):.4f}")
 
@@ -241,8 +240,9 @@ class WaveTraceRunner:
                 k = int(load_dataset(ds_dirs[0]).meta["K"])
                 cfg = ModelConfig(stage="weapon", k=k, backend=req.train_backend)
                 fm = "cnn" if req.train_backend == "cnn" else "ic27"
+                # report streams per-epoch curves to the dashboard (cnn only; ignored by ic27/variance)
                 _, m = train_weapon(ds_dirs, out_dir=req.train_out, config=cfg,
-                                    feature_mode=fm)
+                                    feature_mode=fm, report=report)
                 self._emit_train({"type": "done", "metrics": m})
             self.log(f"Training complete -> {req.train_out}")
         except KeyboardInterrupt:
@@ -384,7 +384,7 @@ class WaveTraceRunner:
             )
             if _has_links:
                 try:
-                    from run_weapon import load_weapon_links
+                    from scripts.run_weapon import load_weapon_links
                     weapon_entries = load_weapon_links(calib_dir, model_path)
                     for (tag, nid), e in weapon_entries.items():
                         if nid in nodes:
@@ -419,6 +419,10 @@ class WaveTraceRunner:
         self.log("Stream started.")
         try:
             if is_mesh:
+                # P5: per-link serving math lives once in run_weapon; the streamer calls it so a
+                # weapon-serving change is made in a single place. Works for all mesh modes (the dwell
+                # vote is head-agnostic), so presence/count/weapon share it.
+                from scripts.run_weapon import dwell_proba_detailed, _link_health
                 # Use raw UDP ingestion for parse_batch_links instead of snooper.frames()
                 import socket
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -457,35 +461,27 @@ class WaveTraceRunner:
                     rep_features = None
                     rep_ic = None
                     node_power = {nid: 0.0 for nid in nodes}
-                    
-                    from wavetrace.Source import resample_uniform
+                    link_stats = []  # per (tx->rx) delivered Hz + missing-frame fraction (C9b) for the UI
+
                     for key in sorted(buffers):
                         if now - last_seen.get(key, 0) > 3.0 or len(buffers[key]) < 2: continue
                         m = _lookup_entry(key)
                         if m is None: continue
-                        
+
                         # Accumulate node power for UI
                         grids = [np.abs(f.grid).mean() for f in buffers[key]]
                         node_power[key[1]] = float(np.mean(grids))
+                        _hz, _miss = _link_health(list(buffers[key]))
+                        link_stats.append({"tx": key[0], "rx": key[1],
+                                           "hz": round(_hz, 1), "miss": round(_miss, 3)})
 
-                        res = resample_uniform(list(buffers[key]), 100.0)
-                        if len(res) < m["cfg"].window: continue
-                        
-                        win_probs = []
-                        for t, features, image, ic in iter_windows(
-                            res, m["result"].subcarriers, m["lock"],
-                            window=m["cfg"].window, hop=m["cfg"].hop, intercarrier=m["intercarrier"],
-                            image_subcarriers=m["result"].image_subcarriers,
-                            ic_baseline=m.get("ic_baseline"),
-                        ):
-                            win_probs.append(m["session"].predict_proba_window(m["pick"](features, image, ic)))
-                            rep_image, rep_features, rep_ic = image, features, ic
+                        # Shared dwell vote (run_weapon.dwell_proba_detailed) — temporal soft vote over
+                        # the buffer + the last window's image/features/ic for the spectrogram.
+                        last_probs, image, features, ic, _nw = dwell_proba_detailed(
+                            list(buffers[key]), 100.0, m)
+                        if last_probs is None: continue
+                        rep_image, rep_features, rep_ic = image, features, ic
 
-                        if not win_probs: continue
-                        # Item 12/CAUSE 5C: temporal (soft) vote across the whole dwell, not just the
-                        # last window — matches run_weapon._dwell_proba (Zhou 51%->93%).
-                        last_probs = np.mean(win_probs, axis=0)
-                        
                         if mode == "count":
                             g = np.zeros(len(global_classes), dtype=np.float64)
                             for j, col in enumerate(m["col_map"]): g[col] = last_probs[j]
@@ -540,6 +536,7 @@ class WaveTraceRunner:
                                 "drift_ratio": _drift_ratio,
                                 "voter_trace": list(_voter_trace),
                                 "contribution": contrib,
+                                "links": link_stats,
                             })
 
                 sock.close()

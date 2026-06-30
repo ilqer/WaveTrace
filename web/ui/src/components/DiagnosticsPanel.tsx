@@ -38,7 +38,7 @@ export function DiagnosticsPanel() {
             </span>
           )}
         </div>
-        <NodeHealthTable nodes={t.nodes} sync={t.sync} />
+        <NodeHealthTable nodes={t.nodes} sync={t.sync} links={t.links} />
         <AntennaWeights weights={t.antenna_weights} />
         <FusionWeights bands={t.fusion?.bands} weights={t.fusion?.weights} />
         <DecisionContribution contribution={t.contribution} />
