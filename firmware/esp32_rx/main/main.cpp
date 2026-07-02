@@ -1,12 +1,5 @@
-// ESP32-S3 CSI receiver — APSTA mode:
-//   SoftAP "WaveTrace-RX1": TX joins and floods UDP; CSI is captured from those data frames.
-//   STA: joins the home router (ROUTER_SSID) so the RX has a real IP and can send CSI unicast
-//        to the PC (PC_IP) over the same LAN. PC stays on the router — no need to join
-//        WaveTrace-RX1. macOS subnet-broadcast blocking is bypassed entirely.
-//
-// Channel note: in APSTA mode the SoftAP channel is forced to match the router's channel
-// after STA connects. TX discovers the SoftAP on whatever channel it lands on via a scan.
-// Build with ESP-IDF v5.x (esp32s3). Console baud 921600 (see sdkconfig).
+// ESP32-S3 CSI receiver, APSTA: SoftAP "WaveTrace-RX1" captures CSI from the TX's UDP flood, STA joins the router so CSI can be unicast to PC_IP, sidestepping macOS's subnet-broadcast blocking.
+// SoftAP channel is forced to match the router's once STA connects; TX finds it via scan. ESP-IDF v5.x (esp32s3), console baud 921600.
 
 #include <stdio.h>
 #include <string.h>
@@ -29,7 +22,7 @@
 
 static const char *TAG = "wt_rx";
 
-static char data_buf[384 * 8 + 8];  // JSON int-array scratch (single-threaded csi_cb)
+static char data_buf[384 * 8 + 8];  // scratch buffer for the JSON int array; csi_cb is single-threaded
 static QueueHandle_t s_csi_q;        // queue of malloc'd (char *) UDP parse_batch packets
 static volatile uint32_t s_csi_count = 0;
 
@@ -51,7 +44,7 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info) {
     data_buf[dpos++] = ']'; data_buf[dpos] = '\0';
     uint32_t ts_us = (uint32_t)(esp_timer_get_time() & 0xFFFFFFFF);
 
-    // Build parse_batch packet and enqueue for UDP sender task
+    // build the parse_batch packet and hand it to the UDP sender task
     size_t cap = (size_t)dpos + 200;
     char *pkt = (char *)malloc(cap);
     if (!pkt) return;
@@ -67,7 +60,7 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info) {
     s_csi_count++;
 }
 
-// 1-second heartbeat: safe to printf here because this is NOT the Wi-Fi task.
+// 1-second heartbeat; printf is safe here since this isn't the Wi-Fi task.
 static void stats_task(void *) {
     uint32_t last = 0;
     for (;;) {
@@ -78,7 +71,6 @@ static void stats_task(void *) {
     }
 }
 
-// Unicast CSI packets to PC_IP:CSI_UDP_PORT over the router (STA) interface.
 static void udp_sender_task(void *) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in dst = {};
@@ -96,7 +88,7 @@ static void udp_sender_task(void *) {
 
 static void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG, "router disconnected — reconnecting");
+        ESP_LOGI(TAG, "router disconnected, reconnecting");
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
@@ -116,7 +108,7 @@ extern "C" void app_main(void) {
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);
 
-    // APSTA: SoftAP for TX + STA for router backhaul
+    // APSTA: SoftAP for the TX, STA for the router backhaul
     esp_wifi_set_mode(WIFI_MODE_APSTA);
 
     wifi_config_t ap_cfg = {};
@@ -134,9 +126,9 @@ extern "C" void app_main(void) {
     esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
 
     esp_wifi_start();
-    esp_wifi_connect();  // STA connects to router
+    esp_wifi_connect();
 
-    // CSI capture (all preamble fields on; no channel filter/scale)
+    // CSI capture: all preamble fields on, no channel filter or scaling
     wifi_csi_config_t csi_cfg = {
         .lltf_en = true, .htltf_en = true, .stbc_htltf2_en = true,
         .ltf_merge_en = true, .channel_filter_en = false, .manu_scale = false,
@@ -149,7 +141,7 @@ extern "C" void app_main(void) {
     xTaskCreate(udp_sender_task, "csi_udp", 4096, NULL, 5, NULL);
     xTaskCreate(stats_task, "stats", 4096, NULL, 2, NULL);
 
-    // Drain TX's UDP flood on port UDP_PORT (prevents LWIP buffer exhaustion)
+    // drain the TX's UDP flood on UDP_PORT so lwIP buffers don't fill up
     int s = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in a = {};
     a.sin_family = AF_INET; a.sin_addr.s_addr = INADDR_ANY; a.sin_port = htons(UDP_PORT);

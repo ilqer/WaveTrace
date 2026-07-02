@@ -85,7 +85,6 @@ class LinkVoter:
         blended = self._wsum / self._total
         cls = int(np.argmax(blended))
         result = (cls, blended.astype(np.float32))
-        # reset for reuse
         self._wsum = None
         self._total = 0.0
         self._C = None

@@ -14,10 +14,7 @@ interface ControlsProps {
 
 type Action = 'run' | 'calib' | 'collect' | 'train';
 
-// ---------------------------------------------------------------------------
-// FilePicker — text input + folder/file icon that opens a native OS dialog
-// via the backend /api/paths/browse (osascript on macOS).
-// ---------------------------------------------------------------------------
+// text input + folder/file icon that opens a native OS dialog via /api/paths/browse (osascript on macOS)
 interface FilePickerProps {
   value: string;
   onChange: (v: string) => void;
@@ -68,9 +65,6 @@ const FilePicker: React.FC<FilePickerProps> = ({
   );
 };
 
-// ---------------------------------------------------------------------------
-// Controls
-// ---------------------------------------------------------------------------
 const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConnected, onCalibDetected }) => {
   const [action, setAction] = useState<Action>('run');
 
@@ -169,12 +163,11 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
   return (
     <div className="flex flex-col gap-4 bg-slate-800 p-4 rounded-xl border border-slate-700">
 
-      {/* ── Hardware / always-visible ── */}
+      {/* Hardware config: shown regardless of the selected action tab */}
       <div className="space-y-2 pb-3 border-b border-slate-700">
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Hardware Config</p>
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600 pl-1.5 border-l-2 border-slate-600">Camera</p>
 
-        {/* Camera URL */}
         <div className="space-y-1">
           <label className="text-[10px] text-slate-400 flex items-center gap-1"><Camera size={10} /> Camera URL</label>
           <div className="flex gap-1">
@@ -200,7 +193,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
           )}
         </div>
 
-        {/* Cam index */}
         <div className="space-y-1">
           <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Cam Index (local)</label>
           <input
@@ -212,7 +204,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
         </div>
 
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600 pl-1.5 border-l-2 border-sky-800 mt-1">RF Capture</p>
-        {/* Calibration — SHARED across all tabs */}
+        {/* shared across all action tabs */}
         <div className="space-y-1">
           <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center justify-between">
             <span>Calibration Dir</span>
@@ -229,7 +221,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
           />
         </div>
 
-        {/* Bandwidth + Rate */}
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
             <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Bandwidth</label>
@@ -251,7 +242,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
           </div>
         </div>
 
-        {/* UDP Port */}
         <div className="space-y-1">
           <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">UDP Port</label>
           <input
@@ -263,7 +253,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
         </div>
       </div>
 
-      {/* ── Action tabs ── */}
       <div className="flex gap-1 p-1 bg-slate-900 rounded-lg shrink-0">
         {tabs.map((tab, i) => (
           <button
@@ -287,7 +276,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
         ))}
       </div>
 
-      {/* ── Tab settings ── */}
       <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 space-y-3 max-h-[320px] overflow-y-auto pr-1 custom-scrollbar">
         <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block border-b border-slate-800 pb-1">
           {action === 'run' ? 'Inference' : action === 'calib' ? 'Calibration' : action === 'collect' ? 'Data Collection' : 'Fit Model'} Settings

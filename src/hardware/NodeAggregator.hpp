@@ -8,18 +8,12 @@
 
 namespace wavetrace {
 
-// Buffers the latest CsiFrame from each of any number of independent-clock nodes (multistatic
-// capture). Separate ESP32 nodes have independent CFO/SFO, so they CANNOT be conjugate-multiplied
-// across nodes (plan §2.8) — each self-cancels, then fuses at the feature/label level. This class
-// is that fusion staging point: it groups the most recent frame per node id and returns the set
-// whose timestamps agree within a tolerance, the time-synced bundle a fuser consumes.
-//
-// m = number of nodes (small). submit is O(n) (copies one frame's grid into its node slot);
-// synced/numNodes are O(m).
+// Buffers the latest CsiFrame per node (multistatic capture). Nodes have independent CFO/SFO so they
+// can't be conjugate-multiplied across nodes; this stages fusion by grouping frames within a timestamp tolerance.
+// m = number of nodes (small): submit is O(n) (one frame's grid), synced/numNodes are O(m).
 class NodeAggregator {
 public:
-  // Store or overwrite the latest frame for its node id. The per-node slot is reused after the
-  // node is first seen (vector assignment keeps capacity), so only a new node id allocates.
+  // Slot is reused after the node is first seen, so only a new node id allocates.
   void submit(const CsiFrame& frame) {
     auto it = nodes_.find(frame.nodeId());
     if (it == nodes_.end()) {
@@ -32,8 +26,7 @@ public:
 
   size_t numNodes() const { return nodes_.size(); }
 
-  // Latest frame from every node whose timestamp is within `tolerance` seconds of the newest
-  // submitted frame — the synchronized set to fuse. Returns copies (safe across the FFI; m small).
+  // Frames within `tolerance` seconds of the newest submitted frame; returns copies (safe across the FFI; m small).
   std::vector<CsiFrame> synced(double tolerance) const {
     std::vector<CsiFrame> out;
     out.reserve(nodes_.size());

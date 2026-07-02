@@ -52,7 +52,7 @@ class Handler(server.BaseHTTPRequestHandler):
                 self.wfile.write(frame)
                 self.wfile.write(b"\r\n")
         except (BrokenPipeError, ConnectionResetError):
-            pass  # client (PC) disconnected — normal
+            pass  # client disconnected, normal
 
 
 class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
@@ -64,7 +64,7 @@ picam2 = Picamera2()
 picam2.configure(picam2.create_video_configuration(main={"size": SIZE}))
 output = StreamingOutput()
 picam2.start_recording(MJPEGEncoder(), FileOutput(output))
-print(f"camera streaming on http://0.0.0.0:{PORT}/stream.mjpg")
+print(f"streaming camera on http://0.0.0.0:{PORT}/stream.mjpg")
 try:
     StreamingServer(("", PORT), Handler).serve_forever()
 finally:

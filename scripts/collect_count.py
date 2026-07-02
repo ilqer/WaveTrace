@@ -42,7 +42,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     single-channel stream. Keeps the dominant subcarrier width per link. Stops when every expected RX
     node has appeared AND all known links reach n, OR max_capture_s elapses (the recv timeout fires only
     on TOTAL silence, so the wall-clock deadline is what stops a lone quiet link from stalling)."""
-    print(f"\n>> {prompt}\n   Press Enter to start...", flush=True)
+    print(f"\n>> {prompt}\n   press Enter to start...", flush=True)
     input()
     if countdown:
         for d in range(countdown, 0, -1):
@@ -55,7 +55,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     want = set(node_ids)
     sock = bind_udp(port, timeout=15.0)
     start = time.time()
-    last_print = start
+    lastPrint = start
     try:
         while True:
             try:
@@ -71,13 +71,13 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
                 break
             if now - start > max_capture_s:
                 short = [k for k, v in sorted(links.items()) if len(v) < n]
-                print(f"\n[WARN] capture deadline {max_capture_s:g}s hit; links short of {n}: {short}")
+                print(f"\n[WARN] deadline {max_capture_s:g}s hit; links short of {n}: {short}")
                 break
-            if now - last_print >= 1.0:
-                per_node = dict(sorted(collections.Counter(k[1] for k in links).items()))
+            if now - lastPrint >= 1.0:
+                perNode = dict(sorted(collections.Counter(k[1] for k in links).items()))
                 mn = min((len(v) for v in links.values()), default=0)
-                print(f"   links/node {per_node}  min {mn}/{n}...", end="\r")
-                last_print = now
+                print(f"   links/node {perNode}  min {mn}/{n}...", end="\r")
+                lastPrint = now
     finally:
         sock.close()
     print()
@@ -109,63 +109,62 @@ def main():
     if args.max_count < 1:
         print("[ERROR] --max-count must be >= 1 (need at least empty vs one person).", file=sys.stderr)
         return
-    counts = list(range(args.max_count + 1))  # 0,1,...,N ; class_id == count
+    counts = list(range(args.max_count + 1))  # 0,1,...,N; class_id == count
 
-    # Target nodes = those with a calibration from collect_baseline, optionally narrowed by --node.
-    cal_nodes = sorted(int(os.path.basename(d)[len("node"):])
+    # nodes with a calibration from collect_baseline, optionally narrowed by --node
+    calNodes = sorted(int(os.path.basename(d)[len("node"):])
                        for d in glob.glob(os.path.join(args.cal, "node*"))
                        if os.path.basename(d)[len("node"):].isdigit())
-    if not cal_nodes:
-        print(f"\n[ERROR] No per-node calibrations in {args.cal}/node*. Run collect_baseline.py first.",
+    if not calNodes:
+        print(f"\n[ERROR] no per-node calibrations in {args.cal}/node*. Run collect_baseline.py first.",
               file=sys.stderr)
         return
     if args.node is not None:
-        cal_nodes = [args.node] if args.node in cal_nodes else []
-        if not cal_nodes:
-            print(f"\n[ERROR] --node {args.node} has no calibration in {args.cal}.", file=sys.stderr)
+        calNodes = [args.node] if args.node in calNodes else []
+        if not calNodes:
+            print(f"\n[ERROR] node {args.node} has no calibration in {args.cal}.", file=sys.stderr)
             return
     labels = [count_name(c, args.max_count) for c in counts]
-    print(f"Will train nodes: {cal_nodes}; count classes: {labels}")
+    print(f"training nodes: {calNodes}; count classes: {labels}")
 
     os.makedirs(args.model, exist_ok=True)
-    ds_dirs = {nid: [] for nid in cal_nodes}
+    dsDirs = {nid: [] for nid in calNodes}
 
     for i in range(args.sessions):
         for c in counts:
             label = count_name(c, args.max_count)
             cap = capture_links(
-                f"Session {i+1}/{args.sessions} — put {label} people in the zone (have them MOVE).",
-                args.frames, args.port, cal_nodes, countdown=5 if c == 0 else 0)
+                f"session {i+1}/{args.sessions} — put {label} people in the zone and have them move.",
+                args.frames, args.port, calNodes, countdown=5 if c == 0 else 0)
             print('\a\a\a', end='', flush=True)  # 3 beeps = done, stop moving
-            for nid in cal_nodes:
-                # every (tx->rx) link whose RX is this node, windowed CLEANLY on its own TARGET_FS grid,
-                # all labeled count=c, pooled into this node's single head (session_id keeps LOGO folding).
+            for nid in calNodes:
+                # every (tx->rx) link on this node, resampled on its own grid, pooled into one head
                 for key in sorted(k for k in cap if k[1] == nid):
                     fr = resample_uniform(cap.get(key, []), TARGET_FS)
                     if len(fr) < WINDOW:
                         continue
                     span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
-                    tag = key[0].replace(":", "")  # tx mac-short, ':'-free for a path segment
+                    tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
                     rec = f"{args.root}/count_sess_{i}/c{c}/node{nid}/link_{tag}"
                     ds = f"{args.root}/count_ds_{i}/c{c}/node{nid}/link_{tag}"
                     save_recording(fr, rec)
-                    # constant-count labeler: every window in this segment carries class_id = c.
+                    # constant-count labeler: every window in this segment gets class_id = c
                     lab = ScriptedLabeler([(span[0], span[1], True)],
                                           label_fn=lambda raw, t, _c=c, _n=label: (_c, _n))
                     collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
                                    stage="presence", session_id=f"sess{i}", subject_id=SUBJECT,
                                    labeler=lab)
-                    ds_dirs[nid].append(ds)
+                    dsDirs[nid].append(ds)
 
-    print("\nTraining per-node count models...")
+    print("\ntraining per-node count models...")
     trained = []
-    for nid in cal_nodes:
-        if not ds_dirs[nid]:
-            print(f"   [SKIP] Node {nid}: no usable segments.")
+    for nid in calNodes:
+        if not dsDirs[nid]:
+            print(f"   [SKIP] node {nid}: no usable segments.")
             continue
-        _, m = train_presence(ds_dirs[nid], out_dir=f"{args.model}/node{nid}")
+        _, m = train_presence(dsDirs[nid], out_dir=f"{args.model}/node{nid}")
         logo = m.get("logo", {}).get("session")
-        line = (f"   [OK]   Node {nid}: samples={m['n_samples']} class_counts={m['class_counts']} "
+        line = (f"   [OK]   node {nid}: samples={m['n_samples']} class_counts={m['class_counts']} "
                 f"train_acc={m['train_accuracy']:.3f}")
         if logo:
             line += f"  LOGO={logo['accuracy']:.3f} (majority {logo['majority_accuracy']:.3f})"
@@ -180,10 +179,10 @@ def main():
         trained.append(nid)
 
     if not trained:
-        print("\n[ERROR] No node trained — check the boards / run mesh_verify.py.", file=sys.stderr)
+        print("\n[ERROR] no node trained — check the boards or run mesh_verify.py.", file=sys.stderr)
         return
     print(f"\ncount models saved for nodes {trained} -> {args.model}/node*/  "
-          "(LOGO must clearly beat the majority baseline to be real, not memorized.)")
+          "(LOGO must clearly beat the majority baseline, or it's not real.)")
 
     print('\a', end='', flush=True)
 

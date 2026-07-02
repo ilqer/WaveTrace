@@ -38,9 +38,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
 
 
 
-  // Per-script option schema grounded in each script's real argparse (positionals for the
-  // sys.argv scripts, --flags for the rest). Lets the UI render one field per option and assemble
-  // the command, instead of a freeform args string. `flag` omitted => positional (order = schema).
+  // Schema mirrors each script's real argparse; `flag` omitted means positional (order = schema).
   type Opt = { name: string; flag?: string; kind: 'text' | 'number' | 'bool'; def?: string; help?: string };
   const SCRIPT_SCHEMA: Record<string, Opt[]> = {
     'scripts/health_monitor.py': [{ name: 'port', kind: 'number', def: '9877', help: 'positional UDP port' }],
@@ -135,8 +133,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
   const LOCAL_SCRIPTS = Object.keys(SCRIPT_SCHEMA);
   const schema = SCRIPT_SCHEMA[scriptName] ?? [];
 
-  // Assemble the CLI args from the filled fields: positionals in order (fill earlier gaps with their
-  // default so argparse position is preserved), --flags only when set, bool flags only when checked.
+  // Positionals fill earlier gaps with their default so argparse position is preserved.
   const buildArgs = (): string => {
     const parts: string[] = [];
     const positionals = schema.filter(o => !o.flag);
@@ -180,9 +177,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
 
   return (
     <div className="flex flex-col gap-4 p-4 h-full overflow-hidden">
-      {/* Top: controls */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 shrink-0 max-h-[50%] overflow-y-auto custom-scrollbar pr-1 items-start">
-        {/* Serial port picker */}
         <section className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
@@ -230,7 +225,6 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
           </div>
         </section>
 
-        {/* Flash */}
         <section className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-2">
           <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
             <Cpu size={12} /> Flash Firmware
@@ -276,7 +270,6 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
           </p>
         </section>
 
-        {/* Pi capture */}
         <section className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-2">
           <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
             <Server size={12} /> Pi Capture (SSH)
@@ -312,7 +305,6 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
           </button>
         </section>
 
-        {/* Local Scripts */}
         <section className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-2">
           <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
             <Terminal size={12} /> Local Scripts
@@ -325,7 +317,6 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
             {LOCAL_SCRIPTS.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
 
-          {/* One field per real argparse option (no more freeform args string). */}
           <div className="space-y-1.5 max-h-44 overflow-y-auto custom-scrollbar pr-1">
             {schema.map((o) => (
               <div key={o.name} className="flex items-center gap-2">
@@ -367,7 +358,6 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
           </button>
         </section>
 
-        {/* Active Scripts */}
         {runningScripts.length > 0 && (
           <section className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-2">
             <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 flex items-center gap-1.5">
@@ -395,7 +385,6 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
         </button>
       </div>
 
-      {/* Bottom: device log stream */}
       <div className="flex-1 flex flex-col bg-slate-950/60 rounded-lg border border-slate-800 overflow-hidden min-h-0">
         <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between shrink-0">
           <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">

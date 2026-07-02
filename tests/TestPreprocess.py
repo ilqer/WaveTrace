@@ -110,9 +110,9 @@ def test_preprocessor_output_geometry():
 def _referenceChain(frames, alpha):
     """numpy reference for the A=1 cross-subcarrier chain (Hampel disabled): conj-mult adjacent
     subcarriers -> temporal unwrap -> EMA-detrend normalize."""
-    H = np.stack([f.grid[0] for f in frames])          # (T, S)
-    D = H[:, 1:] * np.conj(H[:, :-1])                  # (T, S-1)
-    u = np.unwrap(np.angle(D), axis=0)                 # temporal unwrap
+    H = np.stack([f.grid[0] for f in frames])
+    D = H[:, 1:] * np.conj(H[:, :-1])
+    u = np.unwrap(np.angle(D), axis=0)
     ema = np.empty_like(u)
     ema[0] = u[0]
     for t in range(1, len(u)):
@@ -121,8 +121,7 @@ def _referenceChain(frames, alpha):
 
 
 def test_preprocessor_chain_matches_numpy_reference():
-    # Unit-magnitude H + wrapping motion so unwrap is exercised; Hampel disabled (k huge) to isolate
-    # conj-mult + unwrap + normalize as an exact, deterministic comparison.
+    # Wrapping motion exercises unwrap; Hampel disabled (k huge) to isolate the rest of the chain.
     rng = np.random.default_rng(5)
     T, S = 200, 6
     psi = rng.uniform(-np.pi, np.pi, S)
@@ -137,7 +136,7 @@ def test_preprocessor_chain_matches_numpy_reference():
 
     alpha = 0.1
     pre = Preprocessor(1, S, hampel_k=1e9, normalize_alpha=alpha)
-    got = np.stack([pre.process(f).copy()[0] for f in frames])  # (T, S-1)
+    got = np.stack([pre.process(f).copy()[0] for f in frames])
     ref = _referenceChain(frames, alpha)
     assert np.allclose(got, ref, atol=1e-3)
 
@@ -145,10 +144,8 @@ def test_preprocessor_chain_matches_numpy_reference():
 # --- Preprocessor: spike rejection holds phase ----------------------------------------------
 
 def test_preprocessor_rejects_magnitude_spike():
-    # Phase-static channel with small real amplitude jitter (so the Hampel window has non-zero MAD
-    # — a constant-magnitude window can't measure deviation). Differential phase stays constant ->
-    # preprocessed output settles to ~0. Inject one frame with a magnitude spike AND a phase jump on
-    # one cell; Hampel(magnitude) must hold the phase so the output stays ~0.
+    # Small amplitude jitter gives the Hampel window non-zero MAD; one frame gets a magnitude spike
+    # + phase jump on one cell — Hampel(magnitude) must hold the phase so output stays ~0.
     rng = np.random.default_rng(7)
     A, S, T, f = 2, 4, 30, 15
     h0 = np.exp(1j * rng.uniform(-np.pi, np.pi, (A, S))).astype(np.complex64)
@@ -181,7 +178,7 @@ def test_preprocessor_recovers_motion_frequency():
         perturbationHz=fTrue, perturbationDepth=1.0, cfoHz=4.0, noiseStd=0.002, seed=9,
     )
     pre = Preprocessor(1, 64, normalize_alpha=0.01)  # gentle high-pass so 0.3 Hz passes
-    out = np.stack([pre.process(f).copy()[0] for f in frames])  # (T, S-1)
+    out = np.stack([pre.process(f).copy()[0] for f in frames])
 
     # Average power spectrum across cells (all oscillate at fTrue) to lift SNR, then band-argmax.
     n = out.shape[0]

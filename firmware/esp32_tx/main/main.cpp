@@ -1,6 +1,6 @@
 // ESP32-S3 dedicated TX = STA that joins the RX's SoftAP and floods UDP packets (ESP32-CSI-Tool
 // "active_sta"). Each packet is an 802.11 data frame the RX captures CSI from. Placeable illuminator.
-// Build with ESP-IDF v5.x (esp32s3). Bring up the RX (SoftAP) first, then this board joins it.
+// Build with ESP-IDF v5.x (esp32s3). Bring the RX (SoftAP) up first, then this board joins it.
 
 #include <stdio.h>
 #include <string.h>
@@ -16,10 +16,10 @@
 
 static const char *TAG = "wt_tx";
 
-// Auto-reconnect when the RX SoftAP reboots (e.g. after reflash).
+// Reconnects automatically when the RX SoftAP reboots (e.g. after a reflash).
 static void wifi_event_handler(void *, esp_event_base_t base, int32_t id, void *) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG, "disconnected — reconnecting");
+        ESP_LOGI(TAG, "disconnected, reconnecting");
         esp_wifi_connect();
     }
 }
@@ -39,7 +39,7 @@ extern "C" void app_main(void) {
     strncpy((char *)wcfg.sta.password, AP_PASS, sizeof(wcfg.sta.password));
     esp_wifi_set_config(WIFI_IF_STA, &wcfg);
     esp_wifi_start();
-    esp_wifi_set_ps(WIFI_PS_NONE);  // no modem-sleep -> steady 100 Hz flood
+    esp_wifi_set_ps(WIFI_PS_NONE);  // disable modem-sleep for a steady 100 Hz flood
     esp_wifi_connect();
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -55,7 +55,7 @@ extern "C" void app_main(void) {
     for (;;) {
         int r = sendto(sock, payload, sizeof(payload), 0, (struct sockaddr *)&dest, sizeof(dest));
         if (r < 0) errs++; else sent++;
-        if ((sent + errs) % FLOOD_HZ == 0) {  // ~1/sec; errs climb until associated, then sent climbs
+        if ((sent + errs) % FLOOD_HZ == 0) {  // ~once/sec; errs rise until associated, then sent takes over
             uint8_t prim = 0; wifi_second_chan_t sec;
             esp_wifi_get_channel(&prim, &sec);
             ESP_LOGI(TAG, "ch=%u sent=%lu errs=%lu", prim, (unsigned long)sent, (unsigned long)errs);

@@ -59,19 +59,19 @@ def delay_dictionary(freq_idx: np.ndarray, n_bins: int) -> np.ndarray:
     Δf cancels in the matrix (it only scales bin→seconds), so atoms are exp(-j2π·freq_idx·g/G).
     Normalised by 1/√K so ΦΦᴴ ≈ (G/K)·I (well-conditioned). O(K·G)."""
     freq_idx = np.asarray(freq_idx, dtype=np.float64).ravel()
-    k = freq_idx.size
-    if k == 0 or n_bins <= 0:
+    numSubcarriers = freq_idx.size
+    if numSubcarriers == 0 or n_bins <= 0:
         raise CirError("delay_dictionary: need >=1 subcarrier and n_bins>0")
-    g = np.arange(n_bins, dtype=np.float64)
-    phase = -2.0 * np.pi * np.outer(freq_idx, g) / float(n_bins)  # (K, G)
-    return (np.exp(1j * phase) / np.sqrt(k)).astype(np.complex64)
+    binIdx = np.arange(n_bins, dtype=np.float64)
+    phase = -2.0 * np.pi * np.outer(freq_idx, binIdx) / float(n_bins)  # (K, G)
+    return (np.exp(1j * phase) / np.sqrt(numSubcarriers)).astype(np.complex64)
 
 
 def _soft_threshold(z: np.ndarray, thr: float) -> np.ndarray:
     """Complex soft-threshold: shrink each magnitude by `thr`, keep phase. The ISTA prox of λ‖·‖₁."""
     mag = np.abs(z)
-    scale = np.maximum(0.0, 1.0 - thr / np.maximum(mag, 1e-12))
-    return (z * scale).astype(z.dtype)
+    scaleVal = np.maximum(0.0, 1.0 - thr / np.maximum(mag, 1e-12))
+    return (z * scaleVal).astype(z.dtype)
 
 
 def estimate_cir_taps(H: np.ndarray, phi: np.ndarray, *, lam: float = 0.05,
@@ -84,20 +84,20 @@ def estimate_cir_taps(H: np.ndarray, phi: np.ndarray, *, lam: float = 0.05,
         raise CirError(f"estimate_cir_taps: H has {H.shape[0]} subcarriers, Φ expects {phi.shape[0]}")
     if not np.all(np.isfinite(H.view(np.float32))):
         raise CirError("estimate_cir_taps: H contains non-finite values (sanitize first)")
-    phi_h = phi.conj().T
-    matched = phi_h @ H                          # ΦᴴH — the IFFT/matched-filter seed
-    thr = float(lam) * float(np.max(np.abs(matched)))  # absolute shrink, scale-invariant in lam
-    L = float(np.linalg.norm(phi, 2)) ** 2 or 1.0
-    step = 1.0 / L
-    x = np.zeros(phi.shape[1], dtype=np.complex64)
+    phiH = phi.conj().T
+    matched = phiH @ H                          # ΦᴴH — the IFFT/matched-filter seed
+    threshVal = float(lam) * float(np.max(np.abs(matched)))  # absolute shrink, scale-invariant in lam
+    lipschitz = float(np.linalg.norm(phi, 2)) ** 2 or 1.0
+    step = 1.0 / lipschitz
+    tapsVec = np.zeros(phi.shape[1], dtype=np.complex64)
     for _ in range(int(n_iter)):
-        grad = phi_h @ (phi @ x - H)             # ∇ of the 0.5‖·‖² data term
-        x_new = _soft_threshold(x - step * grad, step * thr)
-        if float(np.linalg.norm(x_new - x)) < tol:
-            x = x_new
+        grad = phiH @ (phi @ tapsVec - H)             # ∇ of the 0.5‖·‖² data term
+        tapsNew = _soft_threshold(tapsVec - step * grad, step * threshVal)
+        if float(np.linalg.norm(tapsNew - tapsVec)) < tol:
+            tapsVec = tapsNew
             break
-        x = x_new
-    return x
+        tapsVec = tapsNew
+    return tapsVec
 
 
 def cir_from_csi(H: np.ndarray, *, freq_idx: np.ndarray | None = None, oversample: int = 3,
@@ -107,45 +107,44 @@ def cir_from_csi(H: np.ndarray, *, freq_idx: np.ndarray | None = None, oversampl
     offsets of the measured subcarriers (default: contiguous 0..K-1; pass real offsets for gapped
     HT40/pilot-masked bands). Fine grid G = oversample·K. Delays τ_g = g/(G·Δf)."""
     H = np.asarray(H, dtype=np.complex64).ravel()
-    k = H.shape[0]
-    if k == 0:
+    numSubcarriers = H.shape[0]
+    if numSubcarriers == 0:
         raise CirError("cir_from_csi: empty CSI")
     if freq_idx is None:
-        freq_idx = np.arange(k)
+        freq_idx = np.arange(numSubcarriers)
     freq_idx = np.asarray(freq_idx).ravel()
-    if freq_idx.size != k:
-        raise CirError(f"cir_from_csi: freq_idx has {freq_idx.size} entries, H has {k} subcarriers")
-    g = int(oversample) * k
-    phi = delay_dictionary(freq_idx, g)
+    if freq_idx.size != numSubcarriers:
+        raise CirError(f"cir_from_csi: freq_idx has {freq_idx.size} entries, H has {numSubcarriers} subcarriers")
+    numBins = int(oversample) * numSubcarriers
+    phi = delay_dictionary(freq_idx, numBins)
     taps = estimate_cir_taps(H, phi, lam=lam, n_iter=n_iter, tol=tol)
-    delays = np.arange(g, dtype=np.float64) / (g * df_hz)
+    delays = np.arange(numBins, dtype=np.float64) / (numBins * df_hz)
 
     power = (taps.real.astype(np.float64) ** 2 + taps.imag.astype(np.float64) ** 2)
     total = float(power.sum())
-    mean_tau = float((delays * power).sum() / total) if total > 0 else 0.0
-    rms = float(np.sqrt(((delays - mean_tau) ** 2 * power).sum() / total)) if total > 0 else 0.0
+    meanTau = float((delays * power).sum() / total) if total > 0 else 0.0
+    rms = float(np.sqrt(((delays - meanTau) ** 2 * power).sum() / total)) if total > 0 else 0.0
 
-    # An off-grid tap leaks across adjacent fine bins, so a TAP = a LOCAL MAXIMUM above the floor
-    # (the "tolerance-aware tap-peak detector" ADR-134 §2.9 requires). dominant_ratio sums each bin
-    # into its nearest peak's basin, so split leakage is credited to one tap. O(G).
+    # A TAP = a local maximum above the floor (tolerance-aware peak detector, ADR-134 §2.9);
+    # dominant_ratio sums each bin into its nearest peak's basin so split leakage counts once. O(G).
     floor = power.max() * (10.0 ** (_NOISE_FLOOR_DB / 10.0))
     left = np.empty_like(power); left[0] = -np.inf; left[1:] = power[:-1]
     right = np.empty_like(power); right[-1] = -np.inf; right[:-1] = power[1:]
     peaks = np.flatnonzero((power > floor) & (power >= left) & (power >= right))
     active = int(peaks.size)
     if active == 0:
-        dom, dom_ratio = int(np.argmax(power)), 0.0
+        dom, domRatio = int(np.argmax(power)), 0.0
     else:
         above = np.flatnonzero(power > floor)
         nearest = peaks[np.argmin(np.abs(above[:, None] - peaks[None, :]), axis=1)]
         basin = np.zeros(active)
-        for p_i, b in zip(np.searchsorted(peaks, nearest), above):
-            basin[p_i] += power[b]
+        for pIdx, binIdx in zip(np.searchsorted(peaks, nearest), above):
+            basin[pIdx] += power[binIdx]
         best = int(np.argmax(basin))
         dom = int(peaks[best])
-        dom_ratio = float(basin[best] / total) if total > 0 else 0.0
+        domRatio = float(basin[best] / total) if total > 0 else 0.0
     return Cir(taps=taps, tap_delays_s=delays, df_hz=float(df_hz), dominant_idx=dom,
-               dominant_ratio=dom_ratio, rms_delay_spread_s=rms, active_tap_count=active)
+               dominant_ratio=domRatio, rms_delay_spread_s=rms, active_tap_count=active)
 
 
 def cir_features(cir: Cir) -> np.ndarray:

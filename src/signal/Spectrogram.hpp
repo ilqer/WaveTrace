@@ -7,16 +7,8 @@
 
 namespace wavetrace {
 
-// Sliding "CSI image" builder (HANDOFF Q2 / plan "subcarrier x time"): the standard CNN input in
-// CSI-activity literature. Buffers the last `timeSteps` frames of K per-frame values (e.g. the
-// gain-locked amplitudes at the NBVI-selected subcarriers, or differential phase) and, once full,
-// emits a (K x timeSteps) row-major image (subcarrier x time) every `hop` frames.
-//
-// Deliberately NO per-subcarrier FFT (HANDOFF Q2 = the CSI-image form): each column is just the raw
-// per-frame K-vector, so push is O(K) and the image is a literal time window of the signal. Frames
-// are stored as a ring of columns; an emit transposes that ring into the reused row-major output
-// (consume/copy before the next emit — same zero-copy contract as Preprocessor). Per-frame push
-// O(K); emit O(K * timeSteps) only every hop. Buffers sized in the ctor -> zero hot-path allocation.
+// Sliding "CSI image" builder: buffers the last `timeSteps` frames of K values as a column ring, emitting a
+// (K x timeSteps) row-major image every `hop` frames. No per-subcarrier FFT. Push O(K), emit O(K*timeSteps), alloc-free.
 class SpectrogramBuilder {
 public:
   SpectrogramBuilder(size_t numSubcarriers, size_t timeSteps, size_t hop)
@@ -33,9 +25,7 @@ public:
   size_t hop() const { return hop_; }
   const float* data() const { return output_.data(); }
 
-  // Push one frame's K values; returns true when an image was emitted (window full and `hop` frames
-  // since the last emit), then available via data() as a (K x timeSteps) row-major grid. O(K) on a
-  // non-emit frame.
+  // Returns true when an image was emitted (window full and `hop` frames since the last emit), then available via data(). O(K) otherwise.
   bool push(const float* values) {
     float* col = &cols_[head_ * k_];
     for (size_t s = 0; s < k_; ++s) col[s] = values[s];

@@ -7,14 +7,9 @@
 
 namespace wavetrace {
 
-// One CSI snapshot: an (antenna x subcarrier) grid of decoded complex channel gains, plus
-// metadata. Raw int8 I/Q decode lives in the Phase 2 parser; this type only ever holds the
-// decoded complex grid.
-//
-// Storage is a single contiguous row-major buffer (grid[a*numSubcarriers + s]) sized once and
-// reused: reshape() keeps capacity, so steady-state per-frame work does zero heap allocation
-// (CLAUDE.md "no hot-path allocations"). complex<float> maps 1:1 to NumPy complex64 for the
-// zero-copy view exposed in Bindings.cpp.
+// One CSI snapshot: an (antenna x subcarrier) grid of decoded complex channel gains, plus metadata.
+// Contiguous row-major buffer (grid[a*numSubcarriers + s]); reshape() keeps capacity so steady-state work is alloc-free,
+// and complex<float> maps 1:1 to NumPy complex64 for the zero-copy view in Bindings.cpp.
 class CsiFrame {
 public:
   using Sample = std::complex<float>;

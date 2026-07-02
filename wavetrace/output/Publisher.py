@@ -21,13 +21,13 @@ import sys
 def result_to_dict(result, *, mode: str = "") -> dict:
     """RecognitionResult -> the wire schema. bbox/keypoints ride along only when the head is spatial
     (the ladder's location/posture heads); presence/weapon leave them null/empty."""
-    bbox = getattr(result, "bbox", None)
+    boxVal = getattr(result, "bbox", None)
     return {
         "t": float(result.timestamp),
         "class": int(result.class_id),
         "conf": float(result.confidence),
         "mode": mode,
-        "bbox": list(bbox) if bbox is not None else None,
+        "bbox": list(boxVal) if boxVal is not None else None,
         "keypoints": list(getattr(result, "keypoints", []) or []),
     }
 
@@ -63,13 +63,12 @@ class JsonlPublisher(Publisher):
 
     def __init__(self, sink=None, *, mode: str = ""):
         super().__init__(mode=mode)
-        # sink: a path (opened for append), an open text stream, or None -> stdout
         if sink is None:
             self._fh, self._owned = sys.stdout, False
         elif isinstance(sink, (str, Path)):
-            p = Path(sink)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            self._fh, self._owned = open(p, "w"), True
+            sinkPath = Path(sink)
+            sinkPath.parent.mkdir(parents=True, exist_ok=True)
+            self._fh, self._owned = open(sinkPath, "w"), True
         else:
             self._fh, self._owned = sink, False
 

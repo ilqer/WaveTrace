@@ -48,15 +48,15 @@ def align(window_timestamps, labels, tolerance: float) -> AlignmentResult:
         else:
             dropped.append(wi)
 
-    dt_arr = np.asarray(dts, dtype=np.float64)
+    dtArr = np.asarray(dts, dtype=np.float64)
     stats = {
-        "mean_dt": float(dt_arr.mean()) if dt_arr.size else 0.0,
-        "max_abs_dt": float(np.abs(dt_arr).max()) if dt_arr.size else 0.0,
-        "p95_abs_dt": float(np.percentile(np.abs(dt_arr), 95)) if dt_arr.size else 0.0,
+        "mean_dt": float(dtArr.mean()) if dtArr.size else 0.0,
+        "max_abs_dt": float(np.abs(dtArr).max()) if dtArr.size else 0.0,
+        "p95_abs_dt": float(np.percentile(np.abs(dtArr), 95)) if dtArr.size else 0.0,
         "matched": len(matched),
         "dropped": len(dropped),
     }
-    return AlignmentResult(matched=matched, dts=dt_arr, dropped=dropped, stats=stats)
+    return AlignmentResult(matched=matched, dts=dtArr, dropped=dropped, stats=stats)
 
 
 def estimate_clock_offset(truth_times, truth_classes, labels, *, max_lag=0.2, step=0.005):

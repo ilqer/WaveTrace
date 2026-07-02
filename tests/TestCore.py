@@ -42,7 +42,7 @@ def test_csiframe_reshape_and_metadata():
 def test_csiframe_invalid_index_raises_frameerror():
     frame = CsiFrame(num_antennas=1, num_subcarriers=4)
     with pytest.raises(FrameError):
-        CsiFrame(num_antennas=0, num_subcarriers=4)  # zero dim rejected
+        CsiFrame(num_antennas=0, num_subcarriers=4)
     assert frame.grid.shape == (1, 4)
 
 

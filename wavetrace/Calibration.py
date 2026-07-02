@@ -43,11 +43,11 @@ def reflection_signature(grid, result: CalibrationResult):
     lock rescales every frame to a common mean, which cancels exactly the bulk attenuation mag_ratio
     measures. Antennas are averaged (magnitude) / complex-fused (differential). Offline. O(A·S)."""
     g = np.asarray(grid)
-    amp = np.abs(g).mean(axis=0)                                   # (S,) antenna-averaged |H|
-    diff = (g[:, 1:] * np.conj(g[:, :-1])).mean(axis=0)            # (S-1,) CFO-free differential
-    mag_ratio = amp / np.where(result.baseline_mag > 1e-12, result.baseline_mag, 1e-12)
-    phase_delta = np.angle(diff * np.conj(result.baseline_diff))   # wrap-safe in (-pi, pi]
-    return mag_ratio.astype(np.float32), phase_delta.astype(np.float32)
+    amp = np.abs(g).mean(axis=0)
+    diff = (g[:, 1:] * np.conj(g[:, :-1])).mean(axis=0)
+    magRatio = amp / np.where(result.baseline_mag > 1e-12, result.baseline_mag, 1e-12)
+    phaseDelta = np.angle(diff * np.conj(result.baseline_diff))   # wrap-safe in (-pi, pi]
+    return magRatio.astype(np.float32), phaseDelta.astype(np.float32)
 
 
 def image_baseline(result: "CalibrationResult", *, locked: bool) -> np.ndarray:
@@ -91,8 +91,8 @@ class Calibration:
         if self._gain is not None:
             self._gain.observe(frame)
         g = np.asarray(frame.grid)
-        self._amps.append(np.abs(g).mean(axis=0))               # antenna-averaged |.| per subcarrier
-        self._diffs.append((g[:, 1:] * np.conj(g[:, :-1])).mean(axis=0))  # CFO-free differential (S-1,)
+        self._amps.append(np.abs(g).mean(axis=0))
+        self._diffs.append((g[:, 1:] * np.conj(g[:, :-1])).mean(axis=0))
 
     @property
     def ready(self) -> bool:
@@ -126,24 +126,24 @@ class Calibration:
             )
         if self._gain is not None:
             self._gain.finalize()
-            reference_scale = self._gain.reference_scale
+            referenceScale = self._gain.reference_scale
         else:
-            reference_scale = float("nan")
-        amp = np.stack(self._amps).astype(np.float32)  # (F, S)
+            referenceScale = float("nan")
+        amp = np.stack(self._amps).astype(np.float32)
         subc = select_subcarriers_nbvi(
             amp,
             alpha=self._nbvi_alpha,
             max_subcarriers=self._nbvi_max,
             noise_gate_percentile=self._gate,
         )
-        img_subc = valid_subcarriers(amp, noise_gate_percentile=self._gate)
+        imgSubc = valid_subcarriers(amp, noise_gate_percentile=self._gate)
         return CalibrationResult(
-            reference_scale=reference_scale,
+            reference_scale=referenceScale,
             subcarriers=list(subc),
-            image_subcarriers=list(img_subc),
+            image_subcarriers=list(imgSubc),
             num_baseline=len(self._amps),
-            baseline_mag=amp.mean(axis=0),                      # (S,) mean |H| over the baseline
-            baseline_diff=np.stack(self._diffs).mean(axis=0),   # (S-1,) mean CFO-free differential
+            baseline_mag=amp.mean(axis=0),
+            baseline_diff=np.stack(self._diffs).mean(axis=0),
         )
 
 
@@ -154,7 +154,7 @@ def save_calibration(result: CalibrationResult, out_dir) -> Path:
     np.save(p / "baseline_mag.npy", np.asarray(result.baseline_mag, dtype=np.float32))
     np.save(p / "baseline_diff.npy", np.asarray(result.baseline_diff, dtype=np.complex64))
     meta = {
-        "reference_scale": float(result.reference_scale),  # JSON null for NaN -> handled on load
+        "reference_scale": float(result.reference_scale),  # NaN -> JSON null, handled on load
         "subcarriers": [int(s) for s in result.subcarriers],
         "image_subcarriers": [int(s) for s in result.image_subcarriers],
         "num_baseline": int(result.num_baseline),
@@ -179,8 +179,8 @@ def load_calibration(out_dir) -> tuple[CalibrationResult, GainLock | None]:
         baseline_mag=np.load(p / "baseline_mag.npy"),
         baseline_diff=np.load(p / "baseline_diff.npy"),
     )
-    gain_lock = None
+    gainLock = None
     if not np.isnan(ref):
-        gain_lock = GainLock(result.num_baseline)
-        gain_lock.lock_to(ref)
-    return result, gain_lock
+        gainLock = GainLock(result.num_baseline)
+        gainLock.lock_to(ref)
+    return result, gainLock

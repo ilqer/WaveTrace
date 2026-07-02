@@ -148,8 +148,7 @@ def parse_batch(payload: bytes, *, tx_mac=None) -> list:
     last_us = parsed[-1][1]
     frames = []
     for csi, local_ts_us in parsed:
-        # & 0xFFFFFFFF: ts_us is the firmware's low-32-bit esp_timer (wraps ~71.6 min). The masked
-        # subtraction stays correct across a within-batch rollover (batch span ≪ 2^32 µs).
+        # & 0xFFFFFFFF: masks the firmware's low-32-bit esp_timer wrap (~71.6 min), safe within a batch.
         t = ntp_ms / 1000.0 - ((last_us - local_ts_us) & 0xFFFFFFFF) / 1e6
         fr = CsiFrame(1, S_ref)
         fr.grid[0, :] = csi

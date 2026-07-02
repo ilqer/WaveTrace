@@ -7,13 +7,11 @@
 
 namespace wavetrace {
 
-// NBVI subcarrier selection (REFERENCE_DIGEST §2.10). OFFLINE / periodic — runs over a quiet
-// baseline, never per frame, so allocation here is fine. Not all subcarriers help (guard bands, DC,
-// low-SNR); NBVI scores each by how much its amplitude varies relative to its level, then we keep a
-// spectrally-diverse (non-consecutive) subset above a low-amplitude noise gate.
+// NBVI subcarrier selection. Offline/periodic over a quiet baseline (never per frame, so allocation is fine):
+// scores each subcarrier by amplitude variability relative to its level, keeping a spectrally-diverse
+// (non-consecutive) subset above a low-amplitude noise gate.
 
-// Per-subcarrier baseline means + the low-amplitude noise gate threshold (percentile of means).
-// Fills meansOut with the per-subcarrier mean amplitudes. O(F*S + S log S).
+// Per-subcarrier baseline means + noise-gate threshold (percentile of means); fills meansOut. O(F*S + S log S).
 inline float noiseGate(const float* amp, size_t numFrames, size_t numSubcarriers,
                        float percentile, std::vector<float>& meansOut) {
   meansOut.assign(numSubcarriers, 0.0f);
@@ -29,8 +27,7 @@ inline float noiseGate(const float* amp, size_t numFrames, size_t numSubcarriers
   return sortedMeans[gi];
 }
 
-// ALL subcarriers passing the noise gate, sorted ascending (frequency order) — the CNN image
-// rows. NBVI stays the MLP subset; a CNN needs contiguous-frequency rows. O(S log S), offline.
+// All subcarriers passing the noise gate, ascending — CNN image rows (contiguous-frequency, unlike the NBVI MLP subset). O(S log S), offline.
 inline std::vector<uint16_t> validSubcarriers(const float* amp, size_t numFrames,
                                               size_t numSubcarriers, float noiseGatePercentile) {
   if (numFrames == 0 || numSubcarriers == 0) return {};
@@ -43,9 +40,8 @@ inline std::vector<uint16_t> validSubcarriers(const float* amp, size_t numFrames
   return result;  // already ascending (iterated s=0..S-1)
 }
 
-// Per-subcarrier NBVI over a baseline amplitude matrix (row-major, numFrames x numSubcarriers):
-//   NBVI = alpha*(sigma/mu^2) + (1-alpha)*(sigma/mu)
-// Higher = more informative. Two-pass sigma (stable, REFERENCE §2.8). O(F*S). mu~0 -> score 0.
+// Per-subcarrier NBVI over row-major (numFrames x numSubcarriers) amp: alpha*(sigma/mu^2) + (1-alpha)*(sigma/mu).
+// Higher = more informative. O(F*S). mu~0 -> score 0.
 inline std::vector<float> nbviScores(const float* amp, size_t numFrames, size_t numSubcarriers,
                                      float alpha) {
   std::vector<float> scores(numSubcarriers, 0.0f);
@@ -73,10 +69,8 @@ struct NbviParams {
   float noiseGatePercentile = 0.15f;  // drop subcarriers below this percentile of mean amplitude
 };
 
-// Select up to maxSubcarriers NON-CONSECUTIVE subcarriers by NBVI, after a low-amplitude noise gate
-// (the gate also removes DC/guard bands without hardcoding HT20 indices — geometry-agnostic).
-// Greedy by score with index tie-break, so the same baseline always yields the same set (stable).
-// O(S log S). Returns indices sorted ascending.
+// Up to maxSubcarriers non-consecutive subcarriers by NBVI after a noise gate (also removes DC/guard bands,
+// geometry-agnostic); greedy by score with index tie-break for a stable result. O(S log S), ascending.
 inline std::vector<uint16_t> selectSubcarriersNbvi(const float* amp, size_t numFrames,
                                                    size_t numSubcarriers, const NbviParams& p) {
   if (numFrames == 0 || numSubcarriers == 0) return {};
@@ -85,8 +79,7 @@ inline std::vector<uint16_t> selectSubcarriersNbvi(const float* amp, size_t numF
   const float gate = noiseGate(amp, numFrames, numSubcarriers, p.noiseGatePercentile, means);
   const std::vector<float> scores = nbviScores(amp, numFrames, numSubcarriers, p.alpha);
 
-  // Candidates passing the gate, ranked by score desc (stable_sort over ascending indices keeps the
-  // lower index on ties -> deterministic).
+  // Candidates passing the gate, ranked by score desc; stable_sort keeps the lower index on ties -> deterministic.
   std::vector<uint16_t> cand;
   for (size_t s = 0; s < numSubcarriers; ++s) {
     if (means[s] >= gate) cand.push_back(static_cast<uint16_t>(s));

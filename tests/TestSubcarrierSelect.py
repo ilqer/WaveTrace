@@ -11,7 +11,7 @@ def _altMatrix(sigma):
     (values alternate 1 +/- sigma each frame), so NBVI score == sigma[s] (mu=1 -> mu^2=1)."""
     sigma = np.asarray(sigma, dtype=np.float32)
     F, S = 200, sigma.size
-    sign = np.where(np.arange(F) % 2 == 0, 1.0, -1.0)[:, None]  # (F,1)
+    sign = np.where(np.arange(F) % 2 == 0, 1.0, -1.0)[:, None]
     return (1.0 + sign * sigma[None, :]).astype(np.float32)
 
 
@@ -39,8 +39,7 @@ def test_select_respects_max():
 
 
 def test_noise_gate_drops_low_amplitude_subcarrier():
-    # Subcarrier 5 has a tiny mean amplitude but a huge sigma/mu^2 (would top NBVI) — the amplitude
-    # noise gate must drop it anyway (this is how DC/guard bands get excluded without hardcoding).
+    # Subcarrier 5 would top NBVI on sigma/mu^2 alone; the amplitude noise gate must drop it anyway.
     S = 10
     sigma = np.full(S, 0.05, dtype=np.float32)
     amp = _altMatrix(sigma)            # mean ~1 everywhere

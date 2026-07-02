@@ -53,7 +53,6 @@ class WebcamCapture:
             "-",
         ]
         self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        # Verify we can read at least one frame
         frame_bytes = self._frame_bytes()
         if frame_bytes is None:
             self._proc.terminate()
@@ -81,7 +80,6 @@ class WebcamCapture:
         import numpy as np
         if self._proc is None:
             return None
-        # Return buffered first frame if present
         raw = getattr(self, "_first_frame", None)
         if raw is not None:
             self._first_frame = None

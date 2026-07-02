@@ -4,8 +4,7 @@ interface Props {
 
 export function DecisionContribution({ contribution: c }: Props) {
   if (!c) return null;
-  // Per-class decision confidence (the full softmax for the latest window). 'fused'/'weights' are
-  // reserved keys from the band-fusion path — filter them out here.
+  // 'fused'/'weights' are reserved keys from the band-fusion path, not classes — filter them out.
   const classes = Object.keys(c).filter(k => k !== 'fused' && k !== 'weights');
   if (classes.length === 0) return null;
   const winner = classes.reduce((a, b) => ((c[b] ?? 0) > (c[a] ?? 0) ? b : a), classes[0]);

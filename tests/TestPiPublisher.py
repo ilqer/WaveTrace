@@ -86,8 +86,7 @@ def test_batch_parses_through_host():
 
 
 def test_v3_int16_preserves_exact_amplitude():
-    # The weapon feature needs absolute amplitude: ver-3 int16 with a fixed scale must round-trip
-    # the CSI integers EXACTLY (unlike ver-2 int8, which rescales). S=256 = HT80 width.
+    # ver-3 int16 with a fixed scale round-trips CSI integers EXACTLY, unlike ver-2 int8 (rescales).
     S = 256
     pub = BatchPublisher("127.0.0.1", 9876, NODE, AP, ver=3)
     pub._sock = _FakeSock()

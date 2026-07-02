@@ -20,9 +20,7 @@ export function DiagnosticsPanel() {
 
   return (
     <div className="grid grid-cols-2 gap-4 p-4 overflow-y-auto h-full">
-      {/* Left column */}
       <div className="space-y-5">
-        {/* Alert + drift status badges */}
         <div className="flex gap-2 flex-wrap">
           <span className={clsx(
             "text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded-full border",
@@ -44,7 +42,6 @@ export function DiagnosticsPanel() {
         <DecisionContribution contribution={t.contribution} />
       </div>
 
-      {/* Right column */}
       <div className="space-y-5">
         <OccupancyHeatmap grid={t.heatmap} g={t.grid ?? 16} />
         {(t.voter_trace?.length ?? 0) > 0 && (

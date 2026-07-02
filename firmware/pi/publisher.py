@@ -43,8 +43,8 @@ def quantize_csi(csi: np.ndarray, scale=None) -> bytes:
         peak = float(max(np.abs(re).max(initial=0.0), np.abs(im).max(initial=0.0), 1e-9))
         scale = 127.0 / peak
     out = np.empty(2 * csi.size, dtype=np.float32)
-    out[0::2] = im * scale  # imag in even byte slots
-    out[1::2] = re * scale  # real in odd byte slots
+    out[0::2] = im * scale
+    out[1::2] = re * scale
     np.clip(np.rint(out), -128, 127, out=out)
     return out.astype(np.int8).tobytes()
 
@@ -56,8 +56,8 @@ def quantize_csi_i16(csi: np.ndarray, scale: float = 1.0) -> bytes:
     Nexmon CSI is already int16-range, so scale=1.0 is pass-through. This preserves the inter-frame
     amplitude/variance the weapon σ² feature needs. O(S)."""
     out = np.empty(2 * csi.size, dtype=np.float32)
-    out[0::2] = np.imag(csi) * scale  # imag in even slots
-    out[1::2] = np.real(csi) * scale  # real in odd slots
+    out[0::2] = np.imag(csi) * scale
+    out[1::2] = np.real(csi) * scale
     np.clip(np.rint(out), -32768, 32767, out=out)
     return out.astype("<i2").tobytes()
 

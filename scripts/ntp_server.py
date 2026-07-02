@@ -32,33 +32,33 @@ def main():
     try:
         sock.bind(("0.0.0.0", port))
     except PermissionError:
-        sys.exit(f"ERROR: Permission denied for udp/{port}. \n"
-                 f"Standard NTP uses port 123, which requires root on this OS.\n"
-                 f"Run with: sudo .venv/bin/python scripts/ntp_server.py\n"
-                 f"(Or use a high port for testing: ntp_server.py 1230, but ESP nodes won't find it by default)")
+        sys.exit(f"ERROR: permission denied for udp/{port}. \n"
+                 f"port 123 requires root on this OS.\n"
+                 f"run with: sudo .venv/bin/python scripts/ntp_server.py\n"
+                 f"(or use a high port for testing: ntp_server.py 1230, but ESP nodes won't find it by default)")
     except Exception as e:
-        sys.exit(f"ERROR: Could not bind to udp/{port}: {e}")
+        sys.exit(f"ERROR: could not bind to udp/{port}: {e}")
 
     print(f"SNTP server on udp/{port}  (stratum 1, system clock)  — Ctrl+C to stop")
-    print(f"Make sure your ESP32 config.h has PC_IP set to this machine's IP.")
+    print(f"make sure your ESP32 config.h has PC_IP set to this machine's IP.")
     served = 0
     while True:
         data, addr = sock.recvfrom(512)
-        recv_t = time.time()
+        recvT = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] request from {addr[0]}")
         if len(data) < 48:
-            print(f"  ignoring short packet ({len(data)} bytes)")
+            print(f"  short packet ({len(data)} bytes), ignoring")
             continue
         origin = data[40:48]  # client's transmit timestamp -> echoed as our originate timestamp
-        ref_s, ref_f = _ntp_ts(recv_t - 1.0)
-        rec_s, rec_f = _ntp_ts(recv_t)
-        tx_s, tx_f = _ntp_ts(time.time())
+        refS, refF = _ntp_ts(recvT - 1.0)
+        recS, recF = _ntp_ts(recvT)
+        txS, txF = _ntp_ts(time.time())
         pkt = struct.pack("!B B b b", (0 << 6) | (4 << 3) | 4, 1, 4, -20)  # LI=0,VN=4,Mode=4 server
         pkt += struct.pack("!I", 0) + struct.pack("!I", 0) + b"LOCL"        # root delay/disp, refid
-        pkt += struct.pack("!II", ref_s, ref_f)                            # reference timestamp
+        pkt += struct.pack("!II", refS, refF)                            # reference timestamp
         pkt += origin                                                      # originate (client's TX)
-        pkt += struct.pack("!II", rec_s, rec_f)                            # receive timestamp
-        pkt += struct.pack("!II", tx_s, tx_f)                              # transmit timestamp
+        pkt += struct.pack("!II", recS, recF)                            # receive timestamp
+        pkt += struct.pack("!II", txS, txF)                              # transmit timestamp
         sock.sendto(pkt, addr)
         served += 1
         if served % 20 == 1:

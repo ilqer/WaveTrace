@@ -22,8 +22,7 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
 
   const handleError = useCallback(() => {
     setError(true);
-    // Auto-retry after 5 s — covers the case where the camera is briefly busy
-    // (e.g. another ffmpeg process is releasing it) without requiring user action.
+    // Auto-retry after 5s, covering a briefly-busy camera (e.g. another ffmpeg process releasing it)
     retryTimer.current = setTimeout(() => {
       setError(false);
       setKey(k => k + 1);
@@ -40,7 +39,6 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
 
   return (
     <div className="relative w-full h-full bg-slate-950 rounded-lg overflow-hidden">
-      {/* Offline overlay */}
       {!camUrl && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 text-slate-600 bg-slate-950">
           <VideoOff size={24} />
@@ -48,9 +46,7 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
         </div>
       )}
 
-      {/* The <img> must always exist in the DOM. If we unmount it while it's downloading
-          an MJPEG stream, Chrome sometimes leaks the connection. By keeping it mounted
-          and setting src to "about:blank", we force the browser to explicitly abort the stream. */}
+      {/* <img> stays mounted (src set to about:blank) to force-abort the MJPEG stream — unmounting mid-download leaks the connection in Chrome. */}
       <img
         key={key}
         src={camUrl || 'about:blank'}
@@ -60,7 +56,6 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
         onLoad={camUrl ? handleLoad : undefined}
       />
 
-      {/* Error / retrying overlay */}
       {camUrl && error && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 text-slate-500 bg-slate-950">
           <AlertCircle size={20} className="text-amber-500/70" />
@@ -76,7 +71,6 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
         </div>
       )}
 
-      {/* Class label badge — top-left, only when inference is active */}
       {camUrl && !error && isActive && label && (
         <div className={clsx(
           'absolute top-1.5 left-1.5 z-20 text-[10px] font-bold px-2 py-0.5 rounded backdrop-blur-sm',
@@ -86,7 +80,6 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
         </div>
       )}
 
-      {/* LIVE badge — bottom-left */}
       {camUrl && !error && (
         <div className="absolute bottom-1.5 left-1.5 z-20 text-[10px] font-mono text-slate-500 bg-slate-900/60 px-1.5 py-0.5 rounded">
           LIVE

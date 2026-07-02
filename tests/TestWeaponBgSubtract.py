@@ -15,8 +15,8 @@ def _frames(mags):
     out = []
     for i, m in enumerate(mags):
         fr = CsiFrame(1, S)
-        fr.timestamp = float(i) * 0.01  # 100 Hz
-        fr.grid[0, :] = m.astype(np.complex64)  # real, non-negative -> |grid| == m
+        fr.timestamp = float(i) * 0.01
+        fr.grid[0, :] = m.astype(np.complex64)
         out.append(fr)
     return out
 

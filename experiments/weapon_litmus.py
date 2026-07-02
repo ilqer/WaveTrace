@@ -185,7 +185,7 @@ def main():
         return
 
     unit = "tx->rx link" if args.per_link else "node"
-    # sort by separability when per-link (best directions first), else by node id
+    # per-link: sort by separability, best first; else by node id
     print(f"Static σ²[p] litmus over {args.root}/weapon_rec  (metal physics: weapon -> LOWER σ²)\n")
     print(f"{unit:>8}  {'AUC':>6}  {'dir':>4}  {'cohen_d':>8}  {'clear~':>10}  {'weapon~':>10}  "
           f"{'n(c/w)':>13}  verdict")
@@ -205,7 +205,7 @@ def main():
             print(f"{label:>8}  {'-':>6}  {'-':>4}  {'-':>8}  {'-':>10}  {'-':>10}  "
                   f"{c.size}/{w.size:>6}  (need BOTH clear and weapon captures)")
             continue
-        direction = "ok" if s["lower_when_armed"] else "INV"  # INV = armed σ² higher (anti-physics)
+        direction = "ok" if s["lower_when_armed"] else "INV"  # INV = armed σ² higher, wrong direction
         print(f"{label:>8}  {s['auc']:>6.3f}  {direction:>4}  {s['cohens_d']:>8.2f}  "
               f"{s['clear_med']:>10.3g}  {s['weapon_med']:>10.3g}  "
               f"{s['n_clear']}/{s['n_weapon']:<7}  {_verdict(s['auc'])}")

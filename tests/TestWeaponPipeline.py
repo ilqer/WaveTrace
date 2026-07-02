@@ -10,7 +10,7 @@ from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler, weapon_label_fn
 
 def test_spans_label_clear_vs_weapon():
     """collect_weapon labels a whole segment via spans: [] -> class 0 (clear), [span] -> class 1."""
-    clear = ScriptedLabeler([], label_fn=weapon_label_fn)          # no present span
+    clear = ScriptedLabeler([], label_fn=weapon_label_fn)
     armed = ScriptedLabeler([(0.0, 10.0, True)], label_fn=weapon_label_fn)
     assert clear(5.0).class_id == 0
     assert armed(5.0).class_id == 1

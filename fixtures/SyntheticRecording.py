@@ -92,7 +92,7 @@ def generatePairedRecording(
     presence = [(float(s), float(e)) for s, e in presenceSpans]
     weapon = [(float(s), float(e)) for s, e in weaponSpans]
 
-    # Phase 6a: presence -> SIGNAL modulation. Own rng (seed+2) keeps the CSI/camera streams intact.
+    # Phase 6a: presence -> signal modulation. Own rng (seed+2) so CSI/camera streams stay intact.
     if presenceTurbulenceStd > 0 and presence:
         turbRng = np.random.default_rng(None if seed is None else seed + 2)
         for fr in frames:
@@ -110,9 +110,9 @@ def generatePairedRecording(
                 g = np.asarray(fr.grid)
                 mag = np.abs(g)
                 target = ((1.0 - d) * mag + d * mag.mean(axis=1, keepdims=True)) * (1.0 - 0.15 * d)
-                # rescale magnitude, keep phase (guard the near-zero noise cells)
+                # rescale magnitude, keep phase; guard near-zero noise cells
                 g *= (target / np.maximum(mag, 1e-9)).astype(np.complex64)
-    # +1 so the camera clock's jitter stream is independent of the CSI noise stream.
+    # +1 keeps the camera clock's jitter stream independent of the CSI noise stream
     rng = np.random.default_rng(None if seed is None else seed + 1)
     numCam = int(round(durationS * cameraFps))
     observations: list[dict] = []
@@ -125,10 +125,10 @@ def generatePairedRecording(
         raw = {
             "present": isPresent,
             "weapon": hasWeapon,
-            # a coarse person box (normalized) when present; None otherwise
+            # coarse person box (normalized) when present, else None
             "bbox": [0.40, 0.30, 0.20, 0.55] if isPresent else None,
             "keypoints": [0.5, 0.2, 0.5, 0.5, 0.5, 0.8] if isPresent else [],
-            # weapon location ground truth (location-chip / segment-train path); None if no weapon
+            # weapon location ground truth for the location-chip path, else None
             "position": list(weaponPosition) if hasWeapon else None,
         }
         observations.append({"t": float(camTs), "true_t": float(trueT), "raw": raw})

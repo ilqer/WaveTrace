@@ -34,7 +34,7 @@ sock.settimeout(1.0)
 total = collections.Counter()   # (tx, rx) -> all-time frames
 window = collections.Counter()  # (tx, rx) -> frames this second
 dgrams = 0
-start = last_print = time.time()
+start = lastPrint = time.time()
 print(f"listening on udp/{PORT}  (Ctrl+C to stop)")
 
 
@@ -70,12 +70,12 @@ try:
             dgrams += 1
             count_links(payload)
         now = time.time()
-        if now - last_print >= 1.0:
+        if now - lastPrint >= 1.0:
             links = " ".join(f"{tx}->{rx}:{window[(tx, rx)]}"
                              for (tx, rx) in sorted(total)) or "(no frames)"
             print(f"[{now - start:5.1f}s] hz  {links}")
             window.clear()
-            last_print = now
+            lastPrint = now
 except KeyboardInterrupt:
     pass
 finally:

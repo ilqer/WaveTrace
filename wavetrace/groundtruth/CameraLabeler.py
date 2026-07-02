@@ -55,9 +55,9 @@ class Labeler(ABC):
 
     def label(self, observation, timestamp: float) -> Label:
         raw = self._detect(observation, timestamp)
-        class_id, name = self._label_fn(raw, timestamp)
+        classId, name = self._label_fn(raw, timestamp)
         lab = Label()
-        lab.class_id = class_id
+        lab.class_id = classId
         lab.name = name
         lab.timestamp = float(timestamp)
         box = raw.get("bbox") or raw.get("position")  # person box if present, else weapon location
@@ -270,27 +270,27 @@ class SegmentationLabeler(Labeler):
         persons = [s for s in segs if s.cls == self._person]
         best = max(persons, key=lambda s: s.conf) if persons else None
         # A->E gate: highest-conf weapon whose mask sits inside the person's; none without a person.
-        weapon_seg = None
+        weaponSeg = None
         if best is not None and self._weapon:
             cands = sorted((s for s in segs if s.cls in self._weapon),
                            key=lambda s: s.conf, reverse=True)
             for s in cands:
                 if _mask_overlap(s.mask, best.mask) >= self._overlap_min:
-                    weapon_seg = s
+                    weaponSeg = s
                     break
-        src = weapon_seg if weapon_seg is not None else best  # supervise on the weapon if we have one
-        mask_grid = _mask_to_grid(src.mask, self._grid) if src is not None else []
+        src = weaponSeg if weaponSeg is not None else best  # supervise on the weapon if we have one
+        maskGrid = _mask_to_grid(src.mask, self._grid) if src is not None else []
         bbox = None
         if src is not None:
             bbox = src.bbox_xywhn or _mask_bbox_xywhn(src.mask)
         return {
             "present": best is not None,
-            "weapon": weapon_seg is not None,
+            "weapon": weaponSeg is not None,
             "bbox": list(bbox) if bbox is not None else None,
             "keypoints": [],
             "position": None,
-            "mask": mask_grid,
-            "mask_grid": self._grid if mask_grid else 0,
+            "mask": maskGrid,
+            "mask_grid": self._grid if maskGrid else 0,
         }
 
 

@@ -6,8 +6,7 @@ interface SpectrogramProps {
 
 const Spectrogram: React.FC<SpectrogramProps> = ({ data }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Reused render buffers: streaming frames arrive often, so we keep one offscreen canvas +
-  // ImageData and only reallocate when the spectrogram dimensions (W/K) actually change.
+  // Reused across frames; only reallocated when the spectrogram dimensions (W/K) change.
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const imgDataRef = useRef<ImageData | null>(null);
 
@@ -61,7 +60,6 @@ const Spectrogram: React.FC<SpectrogramProps> = ({ data }) => {
     }
     offCtx.putImageData(imgData, 0, 0);
 
-    // Scaling to canvas size
     canvas.width = canvas.clientWidth;
     canvas.height = canvas.clientHeight;
     ctx.imageSmoothingEnabled = false;

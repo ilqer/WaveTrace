@@ -43,12 +43,10 @@ def generateStream(
     psi = rng.uniform(-np.pi, np.pi, size=(numAntennas, numSubcarriers))
     h0 = (amp * np.exp(1j * psi)).astype(np.complex64)
 
-    # Per-subcarrier motion sensitivity in [-1, 1]; the *difference* between two subcarriers is
-    # what carries the periodic motion into angle(s_i · conj(s_j)).
+    # Per-subcarrier motion sensitivity in [-1, 1]; the difference between two subcarriers
+    # carries the periodic motion into angle(s_i · conj(s_j)).
     scale = np.linspace(-1.0, 1.0, numSubcarriers) if numSubcarriers > 1 else np.zeros(1)
-    # Per-subcarrier amplitude-modulation depth in [0.5, 1.5] (deterministic, no rng draw so existing
-    # seeded streams are unchanged). Distinct per subcarrier -> the cross-subcarrier shape varies in
-    # time, so turbulence/amplitude features see real signal even after per-frame mean normalization.
+    # Per-subcarrier amplitude-modulation depth in [0.5, 1.5]; varies per subcarrier so it survives per-frame mean normalization.
     ampScale = np.linspace(0.5, 1.5, numSubcarriers) if numSubcarriers > 1 else np.ones(1)
 
     times = np.arange(numFrames) / sampleRateHz
@@ -56,9 +54,9 @@ def generateStream(
     for idx in range(numFrames):
         t = times[idx]
         motionPhase = perturbationDepth * scale * np.sin(2 * np.pi * perturbationHz * t)
-        cfoPhase = 2 * np.pi * cfoHz * t  # common-mode → cancels in the subcarrier ratio
+        cfoPhase = 2 * np.pi * cfoHz * t  # common-mode, cancels in the subcarrier ratio
         rot = np.exp(1j * (motionPhase + cfoPhase)).astype(np.complex64)  # (numSubcarriers,)
-        # |H| envelope: 1 + depth·sens·sin(2π f t), kept > 0 for sane depths (amplitudeDepth·1.5 < 1).
+        # |H| envelope: 1 + depth·sens·sin(2π f t); stays positive for sane depths (amplitudeDepth·1.5 < 1)
         ampEnv = (1.0 + amplitudeDepth * ampScale * np.sin(2 * np.pi * amplitudeHz * t)).astype(np.float32)
         noise = (
             rng.normal(0.0, noiseStd, (numAntennas, numSubcarriers))

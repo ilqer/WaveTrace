@@ -16,8 +16,7 @@ import time
 import serial
 import serial.tools.list_ports as list_ports
 
-# IDF must be sourced for idf.py to exist (it isn't on PATH in a plain shell). flash.sh's header
-# documents ~/esp/esp-idf/export.sh; allow override via env for non-default installs.
+# IDF must be sourced for idf.py to exist; override via env for non-default installs.
 IDF_EXPORT = os.path.expanduser(os.environ.get("IDF_EXPORT", "~/esp/esp-idf/export.sh"))
 FIRMWARE_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "firmware"))
 
@@ -154,8 +153,7 @@ class DeviceHub:
                 self._publish("flash", "node/rx flash needs a NODE_ID", level="error")
                 return
             fcmd = f"./flash.sh {role} {int(node_id)} {shlex.quote(port)}"
-        # login shell sources IDF, NO_MONITOR drops the blocking monitor step in flash.sh.
-        # CLEAN=1 makes flash.sh wipe sdkconfig+build so sdkconfig.defaults re-applies (full rebuild).
+        # NO_MONITOR skips the blocking monitor step; CLEAN=1 wipes sdkconfig+build for a full rebuild.
         clean_env = "CLEAN=1 " if clean else ""
         inner = f"source {shlex.quote(IDF_EXPORT)} && {clean_env}NO_MONITOR=1 {fcmd}"
         if clean:

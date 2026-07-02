@@ -9,8 +9,7 @@ const W = 10;            // world units across subcarrier axis
 const D = 8;             // world units across time axis
 const H_SCALE = 3.0;     // max height in world units
 
-// CSI spectrogram as a 3D height field. Subcarriers on X, time on Z, amplitude on Y.
-// Color: blue (quiet) → cyan → yellow (high amplitude). Standard material, no custom shaders.
+// CSI spectrogram as a 3D height field: subcarriers on X, time on Z, amplitude on Y (blue→cyan→yellow).
 export function SubcarrierManifold({ data }: SubcarrierManifoldProps) {
   const meshRef = useRef<THREE.Mesh>(null!);
 
@@ -28,7 +27,6 @@ export function SubcarrierManifold({ data }: SubcarrierManifoldProps) {
   // Dispose GPU geometry when it's replaced by a new one.
   useEffect(() => () => { geo.dispose(); }, [geo]);
 
-  // Update vertex heights and colours whenever new data arrives.
   useEffect(() => {
     if (!data) return;
     const pos = geo.attributes.position as THREE.BufferAttribute;

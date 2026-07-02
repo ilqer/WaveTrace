@@ -20,7 +20,7 @@ from wavetrace.Cli import calibrate_source
 
 def detect_nodes(port, timeout_s=3.0):
     """Briefly listen to detect the active Node IDs in the live UDP stream. Returns sorted list."""
-    print("Listening to detect active nodes...")
+    print("listening for active nodes...")
     detected = collections.Counter()
     source = UdpSource(port, timeout_s=timeout_s, max_frames=150)
     for fr in source.frames():
@@ -38,7 +38,7 @@ def capture_all(n, port, node_ids, timeout_s=20.0, max_capture_s=60.0):
     frames = {nid: [] for nid in node_ids}
     source = UdpSource(port, timeout_s=timeout_s, max_frames=None)
     start = time.time()
-    last_print = start
+    lastPrint = start
     for fr in source.frames():
         buf = frames.get(fr.node_id)
         if buf is not None and len(buf) < n:
@@ -48,12 +48,12 @@ def capture_all(n, port, node_ids, timeout_s=20.0, max_capture_s=60.0):
         now = time.time()
         if now - start > max_capture_s:
             short = [k for k, v in sorted(frames.items()) if len(v) < n]
-            print(f"\n[WARN] capture deadline {max_capture_s:g}s hit; nodes short of {n}: {short}")
+            print(f"\n[WARN] deadline {max_capture_s:g}s hit; nodes short of {n}: {short}")
             break
-        if now - last_print >= 1.0:
+        if now - lastPrint >= 1.0:
             counts = "  ".join(f"N{k}:{len(v)}" for k, v in sorted(frames.items()))
             print(f"   {counts}  (target {n}/node)...", end="\r")
-            last_print = now
+            lastPrint = now
     print()
     for nid in frames:
         if frames[nid]:
@@ -77,19 +77,19 @@ def main():
 
     nodes = detect_nodes(args.port)
     if not nodes:
-        print(f"\n[ERROR] No active nodes detected on UDP port {args.port}. "
-              "Are mesh boards powered and flooding? Run `scripts/mesh_verify.py` to confirm.", file=sys.stderr)
+        print(f"\n[ERROR] no active nodes on UDP port {args.port}. "
+              "Check the mesh boards are powered and flooding, or run `scripts/mesh_verify.py`.", file=sys.stderr)
         return
     if args.node is not None:
         if args.node not in nodes:
-            print(f"Warning: --node {args.node} not seen in scan (seen: {nodes}); will still wait for it.")
+            print(f"warning: node {args.node} not seen in scan (seen: {nodes}); waiting for it anyway.")
         nodes = [args.node]
-    print(f"Calibrating nodes: {nodes}")
+    print(f"calibrating nodes: {nodes}")
 
-    print("\nEnsure room is QUIET and still. Press Enter to start capturing the baseline...", flush=True)
+    print("\nkeep the room quiet and still, then press Enter to start capturing...", flush=True)
     input()
     for d in range(5, 0, -1):
-        print(f"   capturing baseline in {d}s...", end="\r")
+        print(f"   starting in {d}s...", end="\r")
         time.sleep(1)
     print("\n   [CAPTURING] keep the room still and empty...")
 
@@ -99,17 +99,17 @@ def main():
     for nid in nodes:
         fr = frames.get(nid, [])
         if len(fr) < args.min_frames:
-            print(f"   [SKIP] Node {nid}: only {len(fr)} frames (< {args.min_frames}). Not calibrated.")
+            print(f"   [SKIP] node {nid}: only {len(fr)} frames (< {args.min_frames}), not calibrated.")
             continue
         save_recording(fr, f"{args.root}/baseline_raw/node{nid}")
         calibrate_source(RecordingSource(f"{args.root}/baseline_raw/node{nid}"), f"{args.root}/cal/node{nid}",
                          baseline_packets=min(2000, len(fr)))
-        print(f"   [OK]   Node {nid}: {len(fr)} frames, {fr[0].num_subcarriers} subcarriers "
+        print(f"   [OK]   node {nid}: {len(fr)} frames, {fr[0].num_subcarriers} subcarriers "
               f"-> {args.root}/cal/node{nid}")
         calibrated.append(nid)
 
     if not calibrated:
-        print(f"\n[ERROR] No node reached {args.min_frames} frames. Check the boards / mesh_verify.py.",
+        print(f"\n[ERROR] no node reached {args.min_frames} frames. Check the boards or mesh_verify.py.",
               file=sys.stderr)
         return
     print(f"\ncalibration written for nodes {calibrated} -> {args.root}/cal/node*/")

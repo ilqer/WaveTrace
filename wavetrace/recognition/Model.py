@@ -43,8 +43,7 @@ def sklearn_pipeline(config: ModelConfig) -> Pipeline:
             random_state=config.seed,
         )
     elif config.backend == "svm":
-        # sklearn 1.9 deprecated SVC(probability=True); this is its documented replacement
-        # (sigmoid calibration on the decision function, single model with ensemble=False)
+        # sklearn 1.9 deprecated SVC(probability=True); documented replacement (sigmoid calibration)
         clf = CalibratedClassifierCV(SVC(random_state=config.seed), ensemble=False)
     else:
         raise ValueError(f"sklearn_pipeline supports 'mlp'/'svm', not {config.backend!r}")
@@ -72,8 +71,7 @@ class PresenceHead:
             raise ValueError(f"fit expects X (n, d) and y (n,), got {X.shape} / {y.shape}")
         classes = np.unique(y)
         if classes.size < 2:
-            # a 1-class dataset fits a model that can only ever predict that class (the silent failure
-            # behind the all-one-verdict bug) — refuse instead of reporting a meaningless acc 1.0
+            # a 1-class dataset silently fits a model that can only predict that class (the all-one-verdict bug)
             raise ValueError(
                 f"PresenceHead.fit: training data has a single class {classes.tolist()}; need both "
                 "present and absent windows (check collect-data label spans / presence turbulence)"

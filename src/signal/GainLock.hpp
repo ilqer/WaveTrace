@@ -10,10 +10,8 @@
 
 namespace wavetrace {
 
-// Coefficient of Variation = sigma/mu over a set of amplitudes. Invariant to any positive gain
-// scale k, since CV(k*A) = (k*sigma)/(k*mu) = CV(A) — so amplitude variability survives ESP32 AGC
-// oscillation with NO lock at all (REFERENCE_DIGEST §2.11). Two-pass (not running) variance to
-// avoid float32 cancellation (REFERENCE §2.8). O(n). Returns 0 when the mean is ~0.
+// CV = sigma/mu; invariant to any positive gain scale k since CV(k*A) = CV(A), so it survives ESP32 AGC
+// oscillation unlocked. Two-pass variance avoids float32 cancellation. O(n). Returns 0 when the mean is ~0.
 inline float coefficientOfVariation(const float* amp, size_t n) {
   if (n == 0) return 0.0f;
   double mean = 0.0;
@@ -29,19 +27,8 @@ inline float coefficientOfVariation(const float* amp, size_t n) {
   return static_cast<float>(std::sqrt(var) / mean);
 }
 
-// Software gain stabilization for ESP32 AGC (host-side surrogate for the firmware PHY lock, which
-// is out of our scope). The AGC rescales every packet's amplitudes by a per-frame gain k_t, which
-// wrecks amplitude features. We learn a reference amplitude scale from a QUIET baseline (median of
-// per-frame mean magnitude over ~300 packets — median is robust to a stray moving frame), then
-// rescale each later frame's amplitudes to that reference. Multiplying by a positive real leaves
-// phase untouched, so the phase pipeline (Preprocessor) is unaffected; this is purely for the
-// amplitude features (Phase 4).
-//
-// LIMITATION (read before relying on it): the per-frame scale we divide out is the frame's own mean
-// magnitude, not the chip's reported AGC gain. On a static/quiet scene that IS the AGC term, but in
-// a DYNAMIC scene real amplitude changes also move the mean and would be partly removed. When that
-// matters, prefer coefficientOfVariation() (gain-invariant, no normalization artifact). A true lock
-// needs the AGC value decoded from firmware — a future hardware task.
+// Host-side surrogate for the firmware AGC lock: rescales frames to a quiet baseline's median mean magnitude (real-multiply, phase untouched).
+// LIMITATION: divides out the frame's own mean, not the true AGC gain, so dynamic-scene amplitude changes get partly removed too — prefer coefficientOfVariation() then.
 class GainLock {
 public:
   explicit GainLock(size_t baselinePackets = 300) : baseline_(baselinePackets) {
@@ -55,7 +42,7 @@ public:
   }
 
   size_t observed() const { return scales_.size(); }
-  bool ready() const { return scales_.size() >= baseline_; }  // enough baseline collected?
+  bool ready() const { return scales_.size() >= baseline_; }
   bool locked() const { return locked_; }
   float referenceScale() const { return referenceScale_; }
 
@@ -68,8 +55,7 @@ public:
     locked_ = true;
   }
 
-  // Rebuild a locked lock from a persisted reference scale (skips re-observing a baseline). apply()
-  // needs only referenceScale_ + locked_, so a calibration can serialize the scalar and restore.
+  // Rebuild a locked lock from a persisted reference scale; apply() only needs referenceScale_ + locked_.
   void lockTo(float scale) {
     referenceScale_ = scale;
     locked_ = true;

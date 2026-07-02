@@ -54,7 +54,6 @@ class FoxgloveIntegration:
 
     async def publish_stream(self, data: dict):
         if not self.server: return
-        # Extract variance/mean from IC vector and send to Foxglove
         ic = data.get("ic")
         if ic and len(ic) > 0:
             val = sum(abs(x) for x in ic) / len(ic)

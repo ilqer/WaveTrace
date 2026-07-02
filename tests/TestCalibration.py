@@ -73,7 +73,7 @@ def test_calibration_empty_raises():
 
 
 def test_calibration_ready_guard_rejects_short_baseline():
-    # Fewer frames than baseline_packets -> finalize refuses (weak reference / NBVI ranking).
+    # too few frames for baseline_packets -> finalize refuses
     frames, _ = _quietBaseline(2, 8, 5, informative=3, seed=8)
     cal = Calibration(baseline_packets=50)
     for fr in frames:
@@ -84,7 +84,7 @@ def test_calibration_ready_guard_rejects_short_baseline():
 
 
 def test_calibration_without_gain_lock():
-    # use_gain_lock=False: NBVI still runs, reference_scale is NaN, gain_lock access raises.
+    # with gain lock off, NBVI still runs but reference_scale is NaN and gain_lock raises
     A, S, F = 2, 16, 60
     frames, _ = _quietBaseline(A, S, F, informative=7, seed=9)
     cal = Calibration(baseline_packets=F, use_gain_lock=False)
@@ -101,7 +101,7 @@ def test_calibration_without_gain_lock():
 # --- Baseline reflection reference (REFERENCE §0B material/dielectric signature) --------------
 
 def test_reflection_signature_baseline_is_neutral():
-    # A frame at the baseline mean -> mag_ratio ~ 1 and phase_delta ~ 0 (empty room vs empty room).
+    # baseline vs itself -> mag_ratio ~1, phase_delta ~0
     A, S, F = 2, 16, 100
     frames, _ = _quietBaseline(A, S, F, informative=7, seed=6)
     cal = Calibration(baseline_packets=F)
@@ -111,15 +111,15 @@ def test_reflection_signature_baseline_is_neutral():
     assert res.baseline_mag.shape == (S,)
     assert res.baseline_diff.shape == (S - 1,)
 
-    # A frame whose per-subcarrier magnitudes equal the stored baseline mean -> ratio 1 everywhere.
+    # magnitudes match the stored baseline mean -> ratio 1 everywhere
     ref = CsiFrame(A, S)
     ref.grid[:, :] = res.baseline_mag.astype(np.complex64)
     mag_ratio, _ = reflection_signature(np.asarray(ref.grid), res)
-    assert np.allclose(mag_ratio, 1.0, atol=1e-4)             # same magnitude -> ratio 1
+    assert np.allclose(mag_ratio, 1.0, atol=1e-4)
 
 
 def test_reflection_signature_detects_attenuation():
-    # A metal object attenuating part of the band -> mag_ratio < 1 on the affected subcarriers.
+    # object attenuates part of the band -> mag_ratio < 1 there
     A, S, F = 1, 16, 100
     frames, baseMag = _quietBaseline(A, S, F, informative=7, seed=7)
     cal = Calibration(baseline_packets=F)

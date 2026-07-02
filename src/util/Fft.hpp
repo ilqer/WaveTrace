@@ -15,12 +15,8 @@ inline size_t nextPow2(size_t n) {
   return p;
 }
 
-// Self-contained radix-2 Cooley-Tukey FFT (decimation-in-time), REFERENCE_DIGEST §2.6. Sized once
-// for a fixed power-of-two length; the bit-reversal permutation and twiddle factors are precomputed
-// in the ctor so forward() does ZERO allocation — it can run per emit in the hot path. O(n log n).
-//
-// Kept in-house (vs vendoring kissfft/pocketfft) so the native extension stays zero-dependency and
-// C++ keeps ownership of the hot-path DSP (plan §2.1).
+// Self-contained radix-2 Cooley-Tukey FFT (decimation-in-time), kept in-house for a zero-dependency extension.
+// Sized once for a fixed power-of-two length; bit-reversal + twiddles precomputed in ctor so forward() is alloc-free. O(n log n).
 class Fft {
 public:
   explicit Fft(size_t n) : n_(n) {

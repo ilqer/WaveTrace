@@ -14,7 +14,7 @@ def test_spectrogram_shape_and_cadence():
     K, T, H = 12, 128, 32
     sb = SpectrogramBuilder(K, T, H)
     emits = [i for i in range(300) if sb.push(np.full(K, float(i), dtype=np.float32))]
-    assert sb.image.shape == (K, T)        # selected-subcarrier × time
+    assert sb.image.shape == (K, T)
     assert emits[0] == T - 1               # first image once the window first fills
     assert all((e - emits[0]) % H == 0 for e in emits)  # then every hop
 

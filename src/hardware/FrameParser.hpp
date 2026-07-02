@@ -7,14 +7,9 @@
 
 namespace wavetrace {
 
-// Decodes one raw ESP32 CSI frame into a reused CsiFrame. Wire layout (REFERENCE_DIGEST §2.1):
-// interleaved int8 I/Q, **imaginary first** ([imag, real] per subcarrier), delivered as unsigned
-// bytes (0..255) that are two's-complement int8 — so a sign fixup (v -= 256 if v > 127, §4) is
-// applied before building each complex sample.
-//
-// Bound once to a sensor's (antenna x subcarrier) geometry but geometry-agnostic: 1x1, 1xN, Nx1,
-// MxN all work (the link-count decision stays open, plan §2.9). The owned CsiFrame is reused
-// across frames, so steady-state parsing does zero heap allocation (CLAUDE "no hot-path allocs").
+// Decodes one raw ESP32 CSI frame into a reused CsiFrame. Wire layout: interleaved int8 I/Q,
+// imaginary first, as unsigned bytes needing a two's-complement sign fixup (v -= 256 if v > 127).
+// Geometry-agnostic (1x1, 1xN, Nx1, MxN); reuses the owned CsiFrame so parsing is alloc-free.
 class FrameParser {
 public:
   FrameParser(uint16_t numAntennas, uint16_t numSubcarriers)
@@ -23,10 +18,7 @@ public:
   uint16_t numAntennas() const { return frame_.numAntennas(); }
   uint16_t numSubcarriers() const { return frame_.numSubcarriers(); }
 
-  // Decode `raw` (length must equal 2 * numAntennas * numSubcarriers) into the owned frame and
-  // return it, stamped with timestamp + nodeId. O(n) over n = antennas*subcarriers; one in-place
-  // pass, no allocation. Throws FrameError on a length mismatch (a dropped/truncated packet) so a
-  // malformed frame never becomes a panic or a misaligned read.
+  // O(n) over n = antennas*subcarriers, one in-place pass, no allocation; throws FrameError on length mismatch.
   const CsiFrame& parse(const uint8_t* raw, size_t len, double timestamp, int32_t nodeId) {
     const size_t n = frame_.size();
     if (len != 2 * n) {

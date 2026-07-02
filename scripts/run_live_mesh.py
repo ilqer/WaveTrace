@@ -90,14 +90,11 @@ def load_node_models(cal_root, model_root, mode="presence"):
             min_width=_min_width(result), present_i=classes.index(1) if 1 in classes else -1,
         )
         accs[nid] = _logo_accuracy(os.path.join(model_dir, "metrics.json"))
-    # Per-node reliability prior from the honest balanced accuracy; a node trained without a foldable
-    # group (no LOGO) defaults to weight 1.0 — "no reliability discount until it's been validated".
+    # Reliability prior from LOGO balanced accuracy; a node with no foldable group defaults to weight 1.0.
     weights = accuracy_weights({nid: a for nid, a in accs.items() if a is not None})
     for nid in nodes:
         nodes[nid]["weight"] = weights.get(nid, 1.0)
-    # The voter blends raw proba vectors across heads, so they MUST share class ordering; otherwise
-    # class-1 of one head would be averaged with class-0 of another. Hard-fail on a mismatch rather
-    # than silently fuse garbage (per-link p_present still uses each head's own present_i below).
+    # Heads must share class ordering to blend raw proba vectors; hard-fail rather than silently fuse garbage.
     orders = {tuple(int(c) for c in m["session"].head.classes_) for m in nodes.values()}
     if len(orders) > 1:
         raise ValueError(f"per-node heads disagree on class ordering {orders}; retrain consistently")
@@ -124,7 +121,7 @@ def main():
 
     nodes = load_node_models(args.cal, args.model)
     if not nodes:
-        print(f"[ERROR] No per-node models found under {args.model}/node*/model.joblib with a matching "
+        print(f"[ERROR] no per-node models found under {args.model}/node*/model.joblib with a matching "
               f"{args.cal}/node*/. Run collect_baseline.py then collect_presence.py first.")
         return
     present_i = next(iter(nodes.values()))["present_i"]  # ordering validated equal in load_node_models
@@ -158,16 +155,13 @@ def main():
                 continue
             next_fuse = now + CHUNK_S
 
-            # trim each buffer to the last BUFFER_S seconds (by frame timestamp)
             for buf in buffers.values():
                 if buf:
                     cutoff = buf[-1].timestamp - BUFFER_S
                     while buf and buf[0].timestamp < cutoff:
                         buf.popleft()
 
-            # static per-node reliability prior x live margin (LinkVoter multiplies them): a node that
-            # validated well AND is confident right now dominates; a weak or blocked link fades out.
-            # Uniform fallback if no node carries a usable weight, so the vote stays defined.
+            # static reliability x live margin (LinkVoter multiplies them); uniform fallback keeps the vote defined.
             link_static = {lid: nodes[k[1]]["weight"] for k, lid in link_ids.items()}
             static = link_static if any(w > 0 for w in link_static.values()) else None
             voter = LinkVoter(static)
@@ -201,7 +195,7 @@ def main():
             print(f"{label}  P {p_present:0.2f}  {bar:<20}  [{len(breakdown)} links] "
                   + " ".join(breakdown))
     except KeyboardInterrupt:
-        print("\nstopped.")
+        print("\nstopped")
     finally:
         sock.close()
 

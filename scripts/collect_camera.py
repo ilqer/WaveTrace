@@ -43,21 +43,21 @@ WINDOW = 128
 def capture_csi(duration_s, port, node_ids):
     """Drain CSI for `duration_s`, bucketing frames by RX node (every tx link merged into its node).
     Frames keep node_id + wall-clock timestamps so they stack/align. Returns {rx_node: [frames]}."""
-    per_node = collections.defaultdict(list)
+    perNode = collections.defaultdict(list)
     sock = bind_udp(port, timeout=1.0)
-    t_end = time.monotonic() + duration_s
+    tEnd = time.monotonic() + duration_s
     try:
-        while time.monotonic() < t_end:
+        while time.monotonic() < tEnd:
             try:
                 payload, _ = sock.recvfrom(65535)
             except socket.timeout:
                 continue
             for (_tx, rx), frames in parse_batch_links(payload).items():
                 if not node_ids or rx in node_ids:
-                    per_node[rx].extend(frames)
+                    perNode[rx].extend(frames)
     finally:
         sock.close()
-    return dict(per_node)
+    return dict(perNode)
 
 
 def main():
@@ -81,7 +81,7 @@ def main():
     args = p.parse_args()
     args.cal = args.cal or f"{args.root}/cal"
     args.model = args.model or f"{args.root}/model"
-    weapon_classes = tuple(args.weapon_classes) if args.weapon_classes else COCO_WEAPON_CLASSES
+    weaponClasses = tuple(args.weapon_classes) if args.weapon_classes else COCO_WEAPON_CLASSES
 
     calibs = {}
     for d in sorted(glob.glob(f"{args.cal}/node*")):
@@ -91,14 +91,14 @@ def main():
     if not calibs:
         print(f"[ERROR] no calibrations in {args.cal}/node* — run collect_baseline.py first.")
         return
-    cal_nodes = sorted(calibs)
-    print(f"Nodes: {cal_nodes}.  Loading YOLO-seg (first run downloads weights)...")
+    calNodes = sorted(calibs)
+    print(f"nodes: {calNodes}. loading YOLO-seg (first run downloads weights)...")
 
-    label_fn = weapon_label_fn if args.stage == "weapon" else presence_label_fn
-    labeler = YoloSegLabeler(args.weights or "yolov8n-seg.pt", weapon_classes=weapon_classes,
-                             conf=args.conf, grid=args.grid, label_fn=label_fn)
+    labelFn = weapon_label_fn if args.stage == "weapon" else presence_label_fn
+    labeler = YoloSegLabeler(args.weights or "yolov8n-seg.pt", weapon_classes=weaponClasses,
+                             conf=args.conf, grid=args.grid, label_fn=labelFn)
 
-    # ----- capture: webcam (online YOLO) in a thread WHILE the main thread drains all nodes' CSI ----
+    # capture: webcam (online YOLO) runs in a thread while the main thread drains all nodes' CSI
     pos = {"n": 0, "tot": 0, "last": time.monotonic()}
     def on_label(lab):
         pos["tot"] += 1
@@ -118,11 +118,11 @@ def main():
         except Exception as e:  # camera permission / busy — report after join
             box["error"] = e
 
-    print(f"\n>> Capturing {args.duration:g}s — subject in the camera's view AND the mesh zone. Press Enter...")
+    print(f"\n>> capturing {args.duration:g}s — keep the subject in camera view and the mesh zone. Press Enter...")
     input()
     th = threading.Thread(target=cam_worker, daemon=True)
     th.start()
-    csi = capture_csi(args.duration, args.port, cal_nodes)
+    csi = capture_csi(args.duration, args.port, calNodes)
     th.join()
     print()
     if "error" in box:
@@ -130,13 +130,13 @@ def main():
         return
     labels = box.get("labels", [])
     if not labels:
-        print("[ERROR] no webcam frames labeled (camera permission? --cam-index?).")
+        print("[ERROR] no webcam frames labeled — check camera permission and --cam-index.")
         return
-    n_pos = sum(l.class_id == 1 for l in labels)
-    print(f"Labeled {n_pos}/{len(labels)} frames positive "
+    nPos = sum(l.class_id == 1 for l in labels)
+    print(f"labeled {nPos}/{len(labels)} frames positive "
           f"({'weapon' if args.stage=='weapon' else 'present'}).")
 
-    # resample each node once (uniform grid) + keep node_id; reused by both dataset builds.
+    # resample each node once onto a uniform grid, keep node_id, reuse for both dataset builds
     res = {}
     for nid, frs in csi.items():
         rf = resample_uniform(frs, TARGET_FS)
@@ -145,12 +145,12 @@ def main():
         res[nid] = rf
 
     sess = f"{args.subject}_cam_s0"
-    # ----- 1) per-node PRESENCE/weapon datasets (class label only) ---------------------------------
-    pres_built = []
-    for nid in cal_nodes:
+    # 1) per-node presence/weapon datasets (class label only)
+    presBuilt = []
+    for nid in calNodes:
         fr = res.get(nid, [])
         if len(fr) < WINDOW:
-            print(f"   [SKIP presence] node {nid}: {len(fr)} frames (< {WINDOW}).")
+            print(f"   [SKIP presence] node {nid}: {len(fr)} frames (< {WINDOW})")
             continue
         rec = f"{args.root}/cam_rec/{sess}/node{nid}"
         ds = f"{args.root}/cam_ds/{args.stage}/node{nid}/{sess}"
@@ -158,37 +158,36 @@ def main():
         collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [], stage=args.stage,
                        labeler=labels, session_id=sess, subject_id=args.subject,
                        subtract_ic_baseline=(args.stage == "weapon"))
-        pres_built.append(nid)
+        presBuilt.append(nid)
         print(f"   [OK presence] node {nid} -> {ds}")
 
-    # ----- 2) all-node STACKED heatmap dataset (occupancy "where" mask) ----------------------------
-    merged = [f for nid in cal_nodes for f in res.get(nid, [])]
-    hm_dir = f"{args.root}/cam_ds/heatmap/{sess}"
-    hm_ds = None
+    # 2) all-node stacked heatmap dataset (occupancy "where" mask)
+    merged = [f for nid in calNodes for f in res.get(nid, [])]
+    hmDir = f"{args.root}/cam_ds/heatmap/{sess}"
+    hmDs = None
     if merged:
-        hm_ds = build_dataset_stacked(merged, calibs, labels, window=WINDOW, hop=32,
+        hmDs = build_dataset_stacked(merged, calibs, labels, window=WINDOW, hop=32,
                                       session_id=sess, subject_id=args.subject)
-        save_dataset(hm_ds, hm_dir)
-        n_mask = sum(1 for lb in hm_ds.labels if lb.mask)
-        print(f"   [OK heatmap]  stacked {len(cal_nodes)} nodes -> {hm_dir} "
-              f"({hm_ds.X_image.shape[0]} windows, {n_mask} with masks)")
+        save_dataset(hmDs, hmDir)
+        nMask = sum(1 for lb in hmDs.labels if lb.mask)
+        print(f"   [OK heatmap]  stacked {len(calNodes)} nodes -> {hmDir} "
+              f"({hmDs.X_image.shape[0]} windows, {nMask} with masks)")
 
-    if not pres_built and hm_ds is None:
+    if not presBuilt and hmDs is None:
         print("[ERROR] no usable CSI — is the mesh streaming on this port?")
         return
 
-    # ----- optional training -----------------------------------------------------------------------
     if args.train:
-        print("\nTraining...")
-        for nid in pres_built:
+        print("\ntraining...")
+        for nid in presBuilt:
             dirs = sorted(glob.glob(f"{args.root}/cam_ds/{args.stage}/node{nid}/*"))
             if dirs:
                 train_presence(dirs, out_dir=f"{args.model}/node{nid}")
                 print(f"   [OK] presence node {nid} -> {args.model}/node{nid}")
-        if hm_ds is not None:
-            _train_heatmap(hm_dir, f"{args.model}/heatmap.joblib", args.grid)
+        if hmDs is not None:
+            _train_heatmap(hmDir, f"{args.model}/heatmap.joblib", args.grid)
 
-    print(f"\nDone. presence nodes {pres_built}; heatmap {'built' if hm_ds is not None else 'skipped'}.")
+    print(f"\ndone. presence nodes {presBuilt}; heatmap {'built' if hmDs is not None else 'skipped'}.")
 
 
 def _train_heatmap(dataset_dir, out_path, grid):
@@ -198,7 +197,7 @@ def _train_heatmap(dataset_dir, out_path, grid):
     ds = load_dataset(dataset_dir)
     masks = [lb.mask for lb in ds.labels if lb.mask]
     if not masks:
-        print("   [SKIP] heatmap: no masks (need a person/weapon visible to the camera).")
+        print("   [SKIP] heatmap: no masks — need a person/weapon visible to the camera.")
         return
     Y = np.asarray(masks, dtype=np.float32)
     cfg = ModelConfig(stage="presence", k=int(ds.meta["K"]))

@@ -231,8 +231,7 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     head2 = WeaponHead.load(p)
     assert np.allclose(head2.predict_proba(X_2ch), proba, atol=1e-5)
 
-    # Pre-P10 blob: image_shape is a 2-tuple (K_img, W); model was single-channel (in_channels=1).
-    # Simulate by training a 1-channel model and stripping the channel dim from image_shape.
+    # Pre-P10 blob: image_shape a 2-tuple (K_img, W), single-channel model; simulate by stripping it.
     X_1ch = rng.uniform(0, 1, size=(n, K_img, W)).astype(np.float32)
     head_1ch = WeaponHead(config)
     head_1ch.fit(X_1ch, y, epochs=2)

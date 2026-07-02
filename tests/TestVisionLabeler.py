@@ -40,7 +40,7 @@ def test_no_detection_labels_absent():
 def test_low_confidence_is_filtered_out():
     detector = lambda img: [Detection(0, 0.10, (0.1, 0.1, 0.1, 0.1))]
     lab = VisionLabeler(detector, conf=0.35, label_fn=presence_label_fn)
-    assert lab.label(IMG, 0.0).class_id == 0  # below threshold -> not present
+    assert lab.label(IMG, 0.0).class_id == 0
 
 
 def test_weapon_class_flags_weapon():

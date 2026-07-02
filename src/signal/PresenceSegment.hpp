@@ -8,23 +8,11 @@
 
 namespace wavetrace {
 
-// Streaming presence / active-segment detector (Option A — variance gate; the lightweight stand-in
-// for Zhou's LOF active-segment extraction, "Detection of Suspicious Objects Concealed by Walking
-// Pedestrians"). Per frame it reduces the K subcarrier magnitudes to the mean channel energy, tracks
-// that scalar over a sliding window, and flags an ACTIVE segment when its coefficient of variation
-// (sigma/mu — gain-invariant, so AGC drift is not mistaken for motion) crosses an ENTER threshold; it
-// leaves the segment when the CV falls back below a (lower) EXIT threshold. The hysteresis gap
-// prevents chattering at the boundary. This auto-triggers "someone is here" for continuous operation
-// and bounds the window a (future) weapon head votes over. Per-frame O(W) (two-pass CV over the small
-// window, the §2.8 stable choice over a running variance); no hot-path allocation beyond the ctor.
-//
-// Axis note: this windowed (TEMPORAL) CV is orthogonal to interCarrierStats' sigma2[p] (CROSS-
-// subcarrier at one packet, the metal discriminator) — this measures MOTION over time, that measures
-// material at an instant. Push antenna-collapsed per-frame magnitudes (e.g. np.abs(grid).mean(0)).
+// Streaming presence detector: tracks mean channel energy's CV (sigma/mu, gain-invariant vs AGC drift) over a sliding
+// window, flagging ACTIVE above an ENTER threshold and leaving below a lower EXIT threshold (hysteresis). Per-frame O(W).
 class PresenceSegmenter {
 public:
-  // window: frames in the moving-CV window; enterCv/exitCv: hysteresis thresholds (enter >= exit);
-  // minActiveLen: segments shorter than this (frames) are suppressed as noise (default 1 = keep all).
+  // enterCv/exitCv: hysteresis thresholds (enter >= exit); minActiveLen: shorter segments suppressed as noise.
   PresenceSegmenter(size_t window, float enterCv, float exitCv, size_t minActiveLen = 1)
       : window_(window),
         enterCv_(enterCv),
@@ -36,9 +24,7 @@ public:
     win_.assign(window_, 0.0f);
   }
 
-  // Push one frame's subcarrier magnitudes; returns whether the detector is now inside an active
-  // segment. When a segment closes on this push, segmentClosed()==true and lastSegment{Start,End}()
-  // give its half-open [start, end) frame bounds.
+  // Returns whether now active; when a segment closes this push, segmentClosed()==true and lastSegment{Start,End}() give its half-open [start, end) bounds.
   bool push(const float* mags, size_t k) {
     double sum = 0.0;
     for (size_t i = 0; i < k; ++i) sum += static_cast<double>(mags[i]);

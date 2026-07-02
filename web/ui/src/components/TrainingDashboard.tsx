@@ -78,7 +78,6 @@ function ResultCard({ result }: { result: Record<string, any> }) {
 
   return (
     <div className="flex flex-col gap-4 p-5">
-      {/* header */}
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Training Complete</span>
         <div className="flex items-center gap-2">
@@ -94,7 +93,6 @@ function ResultCard({ result }: { result: Record<string, any> }) {
         </div>
       </div>
 
-      {/* key numbers */}
       <div className="grid grid-cols-2 gap-4 bg-slate-950 rounded-xl p-4 border border-slate-800">
         <Stat label="Train accuracy" value={acc} color="text-emerald-400" />
         <Stat label="LOGO accuracy" value={logoAcc} color="text-sky-400" />
@@ -102,7 +100,6 @@ function ResultCard({ result }: { result: Record<string, any> }) {
         <Stat label="Fit time" value={fitS} color="text-slate-200" />
       </div>
 
-      {/* detail row */}
       <div className="grid grid-cols-3 gap-3 text-[10px]">
         {[
           ['Stage', result.stage ?? '—'],
@@ -116,7 +113,6 @@ function ResultCard({ result }: { result: Record<string, any> }) {
         ))}
       </div>
 
-      {/* LOGO cross-validation + confusion matrix */}
       {cmMatrix && (
         <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 space-y-2">
           {availableAxes.length > 1 && (
@@ -185,8 +181,7 @@ const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, re
     }));
   }, [meta, result]);
 
-  // Loss curve + within-epoch ±σ confidence band (notebook-style report). band=[lo,hi] renders a
-  // shaded range area in recharts; only present when the cnn head reported a batch-loss std.
+  // band=[lo,hi] renders a shaded ±σ range in recharts; only present when the cnn head reported a batch-loss std.
   const lossData = useMemo(() => metrics.map(m => ({
     epoch: m.epoch,
     loss: m.loss,
@@ -226,7 +221,6 @@ const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, re
   return (
     <div className="flex flex-col gap-6 p-4 h-full bg-slate-900/30 overflow-y-auto custom-scrollbar">
 
-      {/* Dataset summary + class balance */}
       <div className="grid grid-cols-3 gap-6 shrink-0">
         <div className="col-span-1 bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col justify-center">
           <h3 className="text-[10px] font-bold text-slate-500 uppercase mb-4 tracking-widest">Dataset</h3>

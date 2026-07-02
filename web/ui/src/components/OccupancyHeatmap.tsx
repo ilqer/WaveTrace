@@ -24,7 +24,6 @@ export function OccupancyHeatmap({ grid, g = 16, track }: Props) {
       ctx.fillStyle = `hsla(${h.toFixed(0)},80%,50%,${(0.2 + 0.8 * intensity).toFixed(2)})`;
       ctx.fillRect(c * cell, r * cell, cell, cell);
     });
-    // grid lines
     ctx.strokeStyle = 'rgba(30,41,59,0.5)';
     ctx.lineWidth = 0.5;
     for (let i = 0; i <= g; i++) {

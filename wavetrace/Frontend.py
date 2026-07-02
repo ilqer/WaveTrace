@@ -70,96 +70,94 @@ def iter_windows(frames, subcarriers, gain_lock, *, window=128, hop=32, intercar
     ic = InterCarrierExtractor(window=window, hop=hop) if intercarrier else None
 
     # precompute baseline slice (once, before the loop) to avoid repeated indexing
-    img_base = (np.ascontiguousarray(image_baseline[img_subc], dtype=np.float32)
+    imgBase = (np.ascontiguousarray(image_baseline[img_subc], dtype=np.float32)
                 if image_baseline is not None else None)
-    sub_buf = np.empty(K_img, dtype=np.float32) if img_base is not None else None
+    subBuf = np.empty(K_img, dtype=np.float32) if imgBase is not None else None
     # full-S IC baseline (not sliced to subc — the IC block consumes the whole frame, Frontend §76)
-    ic_base = np.ascontiguousarray(ic_baseline, dtype=np.float32) if ic_baseline is not None else None
+    icBase = np.ascontiguousarray(ic_baseline, dtype=np.float32) if ic_baseline is not None else None
 
     if frame_average == 1:
         # M=1: exact original code path — byte-identical to pre-P10 behavior.
         for fr in frames:
             if ic is not None:
-                ic_mag = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
-                if ic_base is not None:
-                    if ic_mag.shape != ic_base.shape:
-                        raise ValueError(f"ic_baseline width {ic_base.shape} != frame width "
-                                         f"{ic_mag.shape}; calibration and capture must share width")
-                    ic_mag = ic_mag - ic_base  # null the static room before σ²[p]
-                ic_emitted = ic.push(ic_mag)
+                icMag = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
+                if icBase is not None:
+                    if icMag.shape != icBase.shape:
+                        raise ValueError(f"ic_baseline width {icBase.shape} != frame width "
+                                         f"{icMag.shape}; calibration and capture must share width")
+                    icMag = icMag - icBase  # null the static room before σ²[p]
+                ic_emitted = ic.push(icMag)
             if gain_lock is not None:
                 gain_lock.apply(fr)
             mags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
             vals = np.ascontiguousarray(mags[subc])
             if image_subcarriers is not None:
-                vals_img = np.ascontiguousarray(mags[img_subc])
+                valsImg = np.ascontiguousarray(mags[img_subc])
             else:
-                vals_img = vals
+                valsImg = vals
             emitted = fe.push(vals)
-            if img_base is not None:
-                np.subtract(vals_img, img_base, out=sub_buf)
-                sg_emitted = sg.push(sub_buf)
+            if imgBase is not None:
+                np.subtract(valsImg, imgBase, out=subBuf)
+                sgEmitted = sg.push(subBuf)
             else:
-                sg_emitted = sg.push(vals_img)
+                sgEmitted = sg.push(valsImg)
             if ic is None:
                 ic_emitted = emitted
             if emitted:
-                assert sg_emitted and ic_emitted, "front-end emit cadence diverged"
+                assert sgEmitted and ic_emitted, "front-end emit cadence diverged"
                 yield (float(fr.timestamp), fe.features, sg.image,
                        ic.features if ic is not None else None)
     else:
-        # M>1: non-overlapping decimating mean (LUMS temporal averaging).
-        # Two preallocated (S,) float32 accumulators; np.add(..., out=...) avoids per-frame alloc.
-        # Incomplete tail group (F % M frames) is dropped. Effective fs = fs/M.
-        raw_acc = locked_acc = None
+        # M>1: non-overlapping decimating mean (LUMS); preallocated accumulators avoid per-frame alloc.
+        rawAcc = lockedAcc = None
         count = 0
-        last_ts = 0.0
+        lastTs = 0.0
 
         for fr in frames:
-            raw_mags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
-            if raw_acc is None:
-                S = raw_mags.size
-                raw_acc = np.zeros(S, dtype=np.float32)
-                locked_acc = np.zeros(S, dtype=np.float32)
+            rawMags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
+            if rawAcc is None:
+                S = rawMags.size
+                rawAcc = np.zeros(S, dtype=np.float32)
+                lockedAcc = np.zeros(S, dtype=np.float32)
             if ic is not None:
-                np.add(raw_acc, raw_mags, out=raw_acc)
+                np.add(rawAcc, rawMags, out=rawAcc)
             if gain_lock is not None:
                 gain_lock.apply(fr)
-            locked_mags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
-            np.add(locked_acc, locked_mags, out=locked_acc)
+            lockedMags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
+            np.add(lockedAcc, lockedMags, out=lockedAcc)
             count += 1
-            last_ts = float(fr.timestamp)
+            lastTs = float(fr.timestamp)
 
             if count == frame_average:
-                locked_acc /= frame_average
+                lockedAcc /= frame_average
                 if ic is not None:
-                    raw_acc /= frame_average
+                    rawAcc /= frame_average
 
-                vals = np.ascontiguousarray(locked_acc[subc])
+                vals = np.ascontiguousarray(lockedAcc[subc])
                 if image_subcarriers is not None:
-                    vals_img = np.ascontiguousarray(locked_acc[img_subc])
+                    valsImg = np.ascontiguousarray(lockedAcc[img_subc])
                 else:
-                    vals_img = vals
+                    valsImg = vals
                 emitted = fe.push(vals)
-                if img_base is not None:
-                    np.subtract(vals_img, img_base, out=sub_buf)
-                    sg_emitted = sg.push(sub_buf)
+                if imgBase is not None:
+                    np.subtract(valsImg, imgBase, out=subBuf)
+                    sgEmitted = sg.push(subBuf)
                 else:
-                    sg_emitted = sg.push(vals_img)
+                    sgEmitted = sg.push(valsImg)
                 if ic is not None:
-                    if ic_base is not None and raw_acc.shape != ic_base.shape:
-                        raise ValueError(f"ic_baseline width {ic_base.shape} != frame width "
-                                         f"{raw_acc.shape}; calibration and capture must share width")
-                    ic_emitted = ic.push(raw_acc - ic_base if ic_base is not None else raw_acc)
+                    if icBase is not None and rawAcc.shape != icBase.shape:
+                        raise ValueError(f"ic_baseline width {icBase.shape} != frame width "
+                                         f"{rawAcc.shape}; calibration and capture must share width")
+                    ic_emitted = ic.push(rawAcc - icBase if icBase is not None else rawAcc)
                 else:
                     ic_emitted = emitted
                 if emitted:
-                    assert sg_emitted and ic_emitted, "front-end emit cadence diverged"
-                    yield (last_ts, fe.features, sg.image,
+                    assert sgEmitted and ic_emitted, "front-end emit cadence diverged"
+                    yield (lastTs, fe.features, sg.image,
                            ic.features if ic is not None else None)
 
-                raw_acc[:] = 0.0
-                locked_acc[:] = 0.0
+                rawAcc[:] = 0.0
+                lockedAcc[:] = 0.0
                 count = 0
 
 
@@ -198,7 +196,6 @@ def iter_windows_stacked(per_node_frames, per_node_calib, *, window=128, hop=32,
     if N == 0:
         return
 
-    # Validate K and K_img consistency before starting iteration
     k_list, k_img_list = [], []
     for nid in node_ids:
         subc, img_subc, _, _ = per_node_calib[nid]

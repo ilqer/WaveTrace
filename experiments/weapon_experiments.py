@@ -89,7 +89,7 @@ def exp_per_node(nodes, root):
                                  ("cnn/image", "cnn", X_im)):
             s = _session_logo(X, y, sess, subj, lambda b=backend, kk=k: WeaponHead(_cfg(b, kk)))
             print(_fmt(name, len(y), s))
-        deploy[nid] = dirs  # for the canonical ic27 retrain
+        deploy[nid] = dirs  # feeds the canonical ic27 retrain
     return deploy
 
 
@@ -124,7 +124,7 @@ def build_aligned(nodes, links, field):
     the weighted fusion. Index-wise stack per (session,condition) trimmed to the min window count
     (static-subject, shared 100 Hz grid -> window k of every link is the same instant; any slip is
     immaterial for a stationary signal)."""
-    chan = {lk: i for i, lk in enumerate(links)}          # (node,tag) -> channel index 0..11
+    chan = {lk: i for i, lk in enumerate(links)}          # (node,tag) -> channel index
     sessions = sorted({os.path.basename(d).split("_metal_")[1].split("_")[0]
                        for nid in nodes for t in nodes[nid] for d in nodes[nid][t]})
     Xs, ys, ss = [], [], []
@@ -136,7 +136,7 @@ def build_aligned(nodes, links, field):
                        if f"_metal_{s}_{cond}_link{tag}" in os.path.basename(d)]
                 if hit:
                     blocks[ci] = getattr(load_dataset(hit[0]), field).astype(np.float32)
-            if len(blocks) != len(links):                  # need all 12 channels present
+            if len(blocks) != len(links):                  # skip unless all channels present
                 print(f"   [skip] {s}/{cond}: only {len(blocks)}/{len(links)} links")
                 continue
             m = min(b.shape[0] for b in blocks.values())
@@ -157,7 +157,7 @@ def exp_combined(nodes, links, root, save_to):
           f"class_counts={dict(zip(*[a.tolist() for a in np.unique(y, return_counts=True)]))}")
     s = _session_logo(X, y, sess, subj, lambda: WeaponHead(_cfg("cnn", k)))
     print(_fmt("12-link CNN", len(y), s))
-    # persist a full-data fit for the record
+    # save a full-data fit for the record
     head = WeaponHead(_cfg("cnn", k)); head.feature_mode = "cnn"; head.fit(X, y)
     head.save(os.path.join(save_to, "model.joblib"))
     print(f"   saved combined CNN -> {save_to}/model.joblib")

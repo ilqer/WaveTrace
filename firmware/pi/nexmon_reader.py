@@ -27,17 +27,17 @@ import numpy as np
 
 _HDR = struct.Struct("<H b B 6s H H H H")  # 18 bytes; see module docstring
 _HDR_LEN = _HDR.size
-_MAC_OFF = 4  # source_mac starts at byte 4
+_MAC_OFF = 4
 
 
 def parse_nexmon_csi(payload: bytes) -> Optional[Tuple[bytes, np.ndarray]]:
     """One Nexmon UDP payload -> (source_mac_bytes, complex64 csi[NFFT]) or None if malformed."""
     if len(payload) <= _HDR_LEN or (len(payload) - _HDR_LEN) % 4 != 0:
         return None
-    src_mac = payload[_MAC_OFF:_MAC_OFF + 6]
+    srcMac = payload[_MAC_OFF:_MAC_OFF + 6]
     iq = np.frombuffer(payload, dtype="<i2", offset=_HDR_LEN)  # interleaved real, imag
     csi = (iq[0::2].astype(np.float32) + 1j * iq[1::2].astype(np.float32)).astype(np.complex64)
-    return src_mac, csi
+    return srcMac, csi
 
 
 class NexmonReader:

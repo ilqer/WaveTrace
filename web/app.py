@@ -41,8 +41,7 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(0.5)
 
 
-# Model load/write endpoints below confine paths to output/ — joblib.load is pickle (RCE) and an
-# unrestricted dest is an arbitrary file write, so reject absolute paths and any ".." escape.
+# joblib.load is pickle (RCE) and dest is an arbitrary file write, so confine both to output/.
 ALLOWED_ROOT = os.path.realpath("output")
 
 def _safe_output_path(path: str) -> str:
@@ -210,8 +209,7 @@ async def start_inference(req: StartRequest):
         except Exception as e:
             loop.call_soon_threadsafe(logs_queue.put_nowait, f"FATAL ERROR: {str(e)}")
 
-    # run_blocking is a blocking pipeline loop; hand it to a worker thread and keep the real handle
-    # (add_task returns None) so stop_inference can join it after runner.stop() flips the stop flag.
+    # run_blocking is blocking; run it in a worker thread so stop_inference can join runner_task later.
     runner_task = asyncio.create_task(asyncio.to_thread(run_blocking))
     return {"status": "started"}
 
@@ -382,13 +380,11 @@ async def scan_paths():
     import glob as _glob
 
     def _scan():
-        # Calibration dirs: any dir containing meta.json
         cal_dirs = sorted(set(
             os.path.dirname(p)
             for p in _glob.glob("data/**/meta.json", recursive=True)
                        + _glob.glob("output/**/meta.json", recursive=True)
         ))
-        # Model files: model.joblib anywhere, plus mesh root dirs
         model_files = sorted(
             _glob.glob("data/**/model.joblib", recursive=True)
             + _glob.glob("output/**/model.joblib", recursive=True)
@@ -398,7 +394,6 @@ async def scan_paths():
             for p in _glob.glob("data/**/node*/model.joblib", recursive=True)
                        + _glob.glob("output/**/node*/model.joblib", recursive=True)
         ))
-        # Dataset dirs: dirs containing X_features.npy
         dataset_dirs = sorted(set(
             os.path.dirname(p)
             for p in _glob.glob("data/**/X_features.npy", recursive=True)
@@ -601,14 +596,12 @@ def _annotate_frame(model, frame, weapon_classes=(43,)):
             is_weapon = cls_id in weapon_classes
             color = (30, 120, 255) if is_weapon else (50, 220, 80)   # BGR: orange / green
             label = f"{'WEAPON' if is_weapon else model.names.get(cls_id, str(cls_id))} {conf:.0%}"
-            # Draw filled mask if available
             if masks is not None and i < len(masks.xy):
                 pts = masks.xy[i].astype(np.int32)
                 overlay = out.copy()
                 cv2.fillPoly(overlay, [pts], color)
                 out = cv2.addWeighted(out, 0.55, overlay, 0.45, 0)
                 cv2.polylines(out, [pts], True, color, 2)
-            # Bounding box + label
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 1)
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
@@ -618,11 +611,8 @@ def _annotate_frame(model, frame, weapon_classes=(43,)):
     return out
 
 
-# ---------------------------------------------------------------------------
-# Camera helpers — use ffmpeg subprocess for capture (avoids macOS AVFoundation
-# run-loop segfault when cv2.VideoCapture is called from a background thread).
-# cv2 is kept ONLY for YOLO annotation (no capture = safe on background threads).
-# ---------------------------------------------------------------------------
+# Camera capture uses an ffmpeg subprocess, not cv2.VideoCapture, to avoid a macOS AVFoundation
+# run-loop segfault on background threads; cv2 is only used for YOLO annotation.
 
 import subprocess as _subprocess
 import shutil as _shutil
@@ -673,7 +663,6 @@ async def camera_check(cam_index: int = 0):
             ffmpeg = _ffmpeg_bin()
         except RuntimeError as e:
             return {"ok": False, "error": str(e)}
-        # Use ffprobe to query resolution without capturing
         import json as _json
         cmd = [
             ffmpeg, "-hide_banner", "-loglevel", "error",
@@ -689,7 +678,6 @@ async def camera_check(cam_index: int = 0):
                     return {"ok": False,
                             "error": "Camera permission denied — allow Terminal in System Settings → Privacy → Camera"}
                 return {"ok": False, "error": f"ffmpeg exit {r.returncode}: {stderr}"}
-            # rawvideo at 1280x720 RGB = 1280*720*3 bytes per frame
             return {"ok": True, "width": 1280, "height": 720, "cam_index": cam_index}
         except _subprocess.TimeoutExpired:
             return {"ok": False, "error": "Camera probe timed out"}
@@ -755,7 +743,6 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
                 if not chunk:
                     break
                 buf += chunk
-                # Extract all complete JPEG frames from the accumulated buffer
                 while True:
                     s = buf.find(SOI)
                     if s == -1:

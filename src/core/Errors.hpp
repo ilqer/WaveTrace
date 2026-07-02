@@ -4,8 +4,7 @@
 
 namespace wavetrace {
 
-// Base error for the whole pipeline. Each module narrows it (FrameError in Phase 2, etc.).
-// Bound to a Python exception in Bindings.cpp so Python callers catch one stable type.
+// Base error for the whole pipeline; bound to one stable Python exception in Bindings.cpp.
 class WaveTraceError : public std::runtime_error {
 public:
   explicit WaveTraceError(const std::string& msg) : std::runtime_error(msg) {}

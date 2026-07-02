@@ -58,7 +58,7 @@ def test_valid_subcarriers_basic():
     result = valid_subcarriers(amp)
     assert isinstance(result, list)
     assert 0 not in result and 5 not in result
-    assert result == sorted(result), "must be sorted ascending"
+    assert result == sorted(result), "result should be sorted ascending"
 
 
 def test_valid_subcarriers_edge_cases():
@@ -74,7 +74,7 @@ def test_valid_subcarriers_nbvi_subset():
     amp[:, [1, 3, 15, 28]] = 0.0  # forced below gate
     valid = set(valid_subcarriers(amp, noise_gate_percentile=0.15))
     nbvi = set(select_subcarriers_nbvi(amp, noise_gate_percentile=0.15))
-    assert nbvi.issubset(valid), f"NBVI {nbvi} not subset of valid {valid}"
+    assert nbvi.issubset(valid), f"NBVI {nbvi} is not a subset of valid {valid}"
 
 
 # ---- T1h: CalibrationResult.image_subcarriers ---------------------------------------------------
@@ -257,9 +257,8 @@ def test_frame_average_m4_values():
     # Image row j = gain-locked mean of img_subc[j] over the M frames
     assert img.shape[0] == len(img_subc)
     for j, si in enumerate(img_subc):
-        # First window hasn't filled yet for M=4 + W=32 — the emit happens at 4*W real frames
-        # so just check the row index relationship: img[j] from subcarrier img_subc[j]
-        pass  # shape checks above suffice for unit; parity checked in dataset test below
+        # Row index relationship only; parity vs. dataset is checked separately below.
+        pass
 
 
 def test_frame_average_tail_drop():
@@ -270,8 +269,7 @@ def test_frame_average_tail_drop():
     M, W, H = 3, 16, 8  # M=3 so most frame counts leave a tail
 
     served = list(iter_windows(frames, subc, None, window=W, hop=H, frame_average=M))
-    # F real frames -> at most (F // M) virtual frames per window group; exact is <= that
-    # The key invariant: no crash, and virtual frame count <= F // M
+    # No crash, and virtual frame count <= F // M.
     F = len(frames)
     assert len(served) <= F // M
 
@@ -297,8 +295,7 @@ def test_frame_average_parity(tmp_path):
     result, _ = _calibrate()
     img_subc = result.image_subcarriers
     subc = result.subcarriers
-    # Use gain_lock=None: apply() modifies frames in-place and mutates lock state, so the second
-    # pass over the same frame list would re-lock already-locked frames.
+    # gain_lock=None: apply() mutates lock state, so a second pass would re-lock already-locked frames.
 
     ds = build_dataset(frames, result, None,
                        ScriptedLabeler([(0.0, 6.0, True)]), window=32, hop=16,
@@ -345,7 +342,6 @@ def test_subtract_baseline_unlocked_near_zero():
         image_subcarriers=img_subc, image_baseline=base)]
 
     assert len(imgs) > 0
-    # Over a quiet stream the subtracted image should be near 0
     stacked = np.stack(imgs)
     assert np.abs(stacked).mean() < 0.2  # baseline magnitudes ~O(1), so residual < 20%
 
@@ -384,9 +380,9 @@ def test_subtract_baseline_features_ic_unchanged():
 
     assert len(nobase) == len(withbase)
     for (_, f0, img0, ic0), (_, f1, img1, ic1) in zip(nobase, withbase):
-        assert np.array_equal(f0, f1), "features must be unchanged"
-        assert np.array_equal(ic0, ic1), "IC must be unchanged"
-        assert not np.array_equal(img0, img1), "image must differ"
+        assert np.array_equal(f0, f1), "features should be unchanged"
+        assert np.array_equal(ic0, ic1), "IC should be unchanged"
+        assert not np.array_equal(img0, img1), "image should differ"
 
 
 def test_subtract_baseline_meta_roundtrip(tmp_path):

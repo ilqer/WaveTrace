@@ -33,10 +33,10 @@ def test_uniform_grid_spacing_and_span():
     out = resample_uniform(frames, fs)
     ts = np.array([f.timestamp for f in out])
     dt = np.diff(ts)
-    assert np.allclose(dt, 1.0 / fs, rtol=1e-6)          # exactly uniform
-    assert ts[0] == pytest.approx(frames[0].timestamp)    # starts at first sample
-    assert ts[-1] <= frames[-1].timestamp + 1e-9          # stays within the input span
-    assert all(f.node_id == 7 for f in out)               # metadata preserved
+    assert np.allclose(dt, 1.0 / fs, rtol=1e-6)
+    assert ts[0] == pytest.approx(frames[0].timestamp)
+    assert ts[-1] <= frames[-1].timestamp + 1e-9
+    assert all(f.node_id == 7 for f in out)
 
 
 def test_values_track_the_signal():

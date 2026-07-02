@@ -34,8 +34,8 @@ def _planted_grid(angle_deg, *, num_ant=A, num_sub=S, spacing=SPACING, noise=0.0
     """(A, S) CSI of ONE plane wave from `angle_deg` (broadside=0): a(theta) x a per-subcarrier gain."""
     rng = np.random.default_rng(seed)
     m = np.arange(num_ant)
-    steer = np.exp(1j * 2 * np.pi * spacing * m * np.sin(np.deg2rad(angle_deg)))  # (A,)
-    gain = rng.standard_normal(num_sub) + 1j * rng.standard_normal(num_sub)        # (S,)
+    steer = np.exp(1j * 2 * np.pi * spacing * m * np.sin(np.deg2rad(angle_deg)))
+    gain = rng.standard_normal(num_sub) + 1j * rng.standard_normal(num_sub)
     H = np.outer(steer, gain)
     H += noise * (rng.standard_normal(H.shape) + 1j * rng.standard_normal(H.shape))
     return H.astype(np.complex64)
@@ -91,15 +91,14 @@ def test_aggregate_is_joint_2d_room_map():
 
 
 def test_joint_2d_resolves_planted_range():
-    # inflate the bandwidth so the delay phase ramp is observable (real WiFi BW is too small for
-    # room-scale range — that is the documented caveat, not an algorithm limit)
+    # inflated bandwidth so the delay phase ramp is observable (real WiFi BW is too small for room-scale range).
     df, S = 5e6, 32
 
     def grid(angle, range_m, seed):
         rng = np.random.default_rng(seed)
-        steer = np.exp(1j * 2 * np.pi * SPACING * np.arange(A) * np.sin(np.deg2rad(angle)))  # (A,)
-        sub = np.exp(-1j * 2 * np.pi * df * np.arange(S) * (range_m / SPEED_OF_LIGHT))         # (S,)
-        g = rng.standard_normal() + 1j * rng.standard_normal()  # per-frame gain (decorrelates snaps)
+        steer = np.exp(1j * 2 * np.pi * SPACING * np.arange(A) * np.sin(np.deg2rad(angle)))
+        sub = np.exp(-1j * 2 * np.pi * df * np.arange(S) * (range_m / SPEED_OF_LIGHT))
+        g = rng.standard_normal() + 1j * rng.standard_normal()  # per-frame gain, decorrelates snaps
         H = g * np.outer(steer, sub)
         H += 0.01 * (rng.standard_normal((A, S)) + 1j * rng.standard_normal((A, S)))
         return H.astype(np.complex64)
@@ -119,8 +118,7 @@ def test_no_range_mode_is_azimuth_only():
 
 
 def test_aggregate_azimuth_fallback_is_steady():
-    # range disabled -> aggregate averages the per-frame 1-D AoA spectra; robust to per-subcarrier
-    # gain + heavy noise (the 1-D antenna covariance is a clean single-source problem)
+    # range disabled -> aggregate averages the per-frame 1-D AoA spectra; robust to noise/gain.
     loc = Localizer(A, method="music", range_enabled=False)
     frames = [_Frame(_planted_grid(30.0, seed=10 + i, noise=0.3), t=i * 0.01) for i in range(20)]
     agg = loc.aggregate(frames)

@@ -17,11 +17,8 @@ inline constexpr float WT_TWO_PI = 2.0f * WT_PI;
 
 // --- Stateless transforms (also bound individually for unit tests) --------------------------
 
-// Geometry-adaptive conjugate multiply — cancels common-mode clock drift (CFO/SFO), which is the
-// shared phase factor across the paired channels (REFERENCE_DIGEST §2.2, plan §2.8). Fills `out`
-// (reshaped) with the complex differential grid. O(n), n = numAntennas*numSubcarriers.
-//   >= 2 antennas: cross-antenna  out[a-1][k] = H[a][k] * conj(H[0][k])   -> (A-1) x S  (cleanest)
-//    1 antenna   : cross-subcarrier out[0][k-1] = H[0][k] * conj(H[0][k-1]) -> 1 x (S-1) (fallback)
+// Geometry-adaptive conjugate multiply cancels common-mode clock drift (CFO/SFO): >=2 antennas uses
+// cross-antenna out[a-1][k]=H[a][k]*conj(H[0][k]); 1 antenna falls back to cross-subcarrier out[k-1]=H[k]*conj(H[k-1]). O(n).
 inline void conjugateMultiply(const CsiFrame& in, CsiFrame& out) {
   const uint16_t A = in.numAntennas();
   const uint16_t S = in.numSubcarriers();
@@ -43,12 +40,8 @@ inline void conjugateMultiply(const CsiFrame& in, CsiFrame& out) {
   }
 }
 
-// Antenna-difference combined channel (in-baggage CNS'18 Eq.3): out[a-1][k] = H[a][k] - H[0][k].
-// Subtracting two RX antennas on ONE shared-clock radio NULLS the common path (LOS + static
-// furniture) and AMPLIFIES the minute per-antenna scattering difference that separates metal vs
-// liquid — distinct from conjugateMultiply, which cancels clock DRIFT; this cancels the common
-// ENVIRONMENT. REQUIRES >= 2 antennas on one radio (independent ESP32 nodes have separate clocks, so
-// a cross-node difference is meaningless) → hardware-gated: only useful with a multi-antenna RX. O(n).
+// Antenna-difference out[a-1][k]=H[a][k]-H[0][k]: on one shared-clock radio this nulls the common environment
+// (LOS + static furniture) and amplifies per-antenna scattering, unlike conjugateMultiply which cancels clock drift. O(n).
 inline void combinedChannelDifference(const CsiFrame& in, CsiFrame& out) {
   const uint16_t A = in.numAntennas();
   const uint16_t S = in.numSubcarriers();
@@ -64,17 +57,15 @@ inline void combinedChannelDifference(const CsiFrame& in, CsiFrame& out) {
   }
 }
 
-// Hampel outlier test on one window: returns `current` unless it deviates beyond k*1.4826*MAD from
-// the window median, in which case it returns the median (REFERENCE_DIGEST §2.4). 1.4826 makes MAD
-// a consistent sigma estimator for Gaussians. scratch must hold >= w floats. O(w) (nth_element).
+// Hampel outlier test: returns `current` unless it deviates beyond k*1.4826*MAD from the window median
+// (1.4826 makes MAD a consistent sigma estimator for Gaussians), else returns the median. O(w) (nth_element).
 inline float hampel(const float* window, size_t w, float current, float* scratch, float k) {
   if (w == 0) return current;
   const size_t mid = w / 2;
   for (size_t i = 0; i < w; ++i) scratch[i] = window[i];
   std::nth_element(scratch, scratch + mid, scratch + w);
   const float med = scratch[mid];
-  // |scratch_i - med| is the same multiset as |window_i - med| (nth_element only permuted it),
-  // so the median of these deviations is the MAD.
+  // nth_element only permuted scratch, so its median-of-deviations here is still the MAD.
   for (size_t i = 0; i < w; ++i) scratch[i] = std::fabs(scratch[i] - med);
   std::nth_element(scratch, scratch + mid, scratch + w);
   const float mad = scratch[mid];
@@ -82,8 +73,7 @@ inline float hampel(const float* window, size_t w, float current, float* scratch
   return current;
 }
 
-// One streaming phase-unwrap step: bring the step from the previous wrapped phase into (-pi, pi]
-// and add it to the running unwrapped value (REFERENCE_DIGEST §2.3). O(1).
+// One streaming phase-unwrap step: bring the step from the previous wrapped phase into (-pi, pi] and add it to the running unwrapped value. O(1).
 inline float unwrapStep(float curWrapped, float prevWrapped, float prevUnwrapped) {
   float d = curWrapped - prevWrapped;
   while (d > WT_PI) d -= WT_TWO_PI;
@@ -93,15 +83,8 @@ inline float unwrapStep(float curWrapped, float prevWrapped, float prevUnwrapped
 
 // --- Streaming preprocessor (the hot-path chain) --------------------------------------------
 
-// Per-frame DSP front-end: conjugate-multiply -> Hampel -> unwrap -> normalize, producing a
-// drift-free, spike-cleaned, detrended differential-phase grid (float). Stateful/streaming: Hampel
-// uses a per-cell time window (RingBuffer) and unwrap/normalize keep per-cell running state, so
-// the result depends on the frame history. All buffers are sized once in the ctor -> O(n)/frame
-// with zero hot-path allocation. Memory ~ numCells * (window + ~5) floats.
-//
-// Hampel runs on the differential MAGNITUDE (where RF interference spikes physically appear); when
-// a spike is detected the phase for that frame is held at the last good value so a corrupt packet
-// cannot inject a phase glitch. Output cell count = (A-1)*S (cross-antenna) or (S-1) (single-ant).
+// Per-frame DSP front-end: conjugate-multiply -> Hampel -> unwrap -> normalize into a drift-free, spike-cleaned,
+// detrended differential-phase grid; stateful, alloc-free after ctor. Hampel gates on magnitude; on a spike the phase holds at the last good value.
 class Preprocessor {
 public:
   Preprocessor(uint16_t numAntennas, uint16_t numSubcarriers, size_t hampelWindow = 7,
@@ -186,8 +169,7 @@ private:
     prevWrapped_[c] = p;
     prevUnwrapped_[c] = u;
 
-    // Normalize: subtract an exponential moving average to remove the static phase offset / slow
-    // drift, centering the motion signal. O(1).
+    // Subtract an EMA to remove the static phase offset / slow drift, centering the motion signal. O(1).
     if (!emaInit_[c]) {
       ema_[c] = u;
       emaInit_[c] = 1;

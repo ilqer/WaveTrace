@@ -42,12 +42,12 @@ class NodeHealthMeter:
         now = time.time()
         g = np.asarray(frame.grid)               # (A, S) complex
         amp = np.abs(g)                          # (A, S)
-        sub_mean = float(amp.mean())             # bulk level
+        subMean = float(amp.mean())             # bulk level
         # cross-subcarrier CV (std/mean over per-antenna-averaged subcarriers) = turbulence/motion
-        per_sub = amp.mean(axis=0)               # (S,) antenna-averaged
-        cv = float(per_sub.std() / per_sub.mean()) if per_sub.mean() > 0 else 0.0
+        perSub = amp.mean(axis=0)               # (S,) antenna-averaged
+        cv = float(perSub.std() / perSub.mean()) if perSub.mean() > 0 else 0.0
         self._recv[nid].append(now)
-        self._amp[nid].append(sub_mean)
+        self._amp[nid].append(subMean)
         self._cv[nid].append(cv)
         self._count[nid] += 1
         self._last_ts[nid] = float(frame.timestamp)
@@ -64,22 +64,22 @@ class NodeHealthMeter:
         out = []
         for nid in sorted(self._recv.keys()):
             amp = np.asarray(self._amp[nid], dtype=np.float64)
-            mean_amp = float(amp.mean()) if amp.size else 0.0
-            floor = float(np.percentile(amp, 5)) if amp.size >= 20 else mean_amp * 0.1
-            snr_db = float(20.0 * np.log10(mean_amp / floor)) if floor > 1e-12 else 0.0
+            meanAmp = float(amp.mean()) if amp.size else 0.0
+            floor = float(np.percentile(amp, 5)) if amp.size >= 20 else meanAmp * 0.1
+            snrDb = float(20.0 * np.log10(meanAmp / floor)) if floor > 1e-12 else 0.0
             hz = self._hz(nid)
             ref = self._gain_ref.get(nid)
-            gain_drift = round(mean_amp / ref, 3) if (ref and ref > 0) else None
+            gainDrift = round(meanAmp / ref, 3) if (ref and ref > 0) else None
             out.append({
                 "node_id": nid,
                 "band": "5GHz" if nid >= 100 else "2.4GHz",
                 "hz": round(hz, 1),
                 "hz_ok": hz >= self.min_hz,
                 "frames": self._count[nid],
-                "mean_amp": round(mean_amp, 4),
-                "snr_db": round(snr_db, 1),
+                "mean_amp": round(meanAmp, 4),
+                "snr_db": round(snrDb, 1),
                 "cv": round(float(np.mean(list(self._cv[nid]))) if self._cv[nid] else 0.0, 4),
-                "gain_drift": gain_drift,
+                "gain_drift": gainDrift,
                 "loss_pct": round(max(0.0, (self.target_hz - hz) / self.target_hz * 100.0), 1),
                 "subcarriers": self._subc.get(nid, []),
                 "last_ts": round(self._last_ts.get(nid, 0.0), 4),
@@ -108,10 +108,10 @@ def baseline_drift(calib_result, recent_frames) -> dict:
     base = np.asarray(calib_result.baseline_mag, dtype=np.float64)
     n = min(cur.size, base.size)
     ratio = cur[:n] / np.where(base[:n] > 1e-9, base[:n], 1e-9)
-    mean_r = float(np.mean(ratio))
-    max_r = float(np.max(np.abs(ratio - 1.0)) + 1.0)
-    return {"mean_ratio": round(mean_r, 3), "max_ratio": round(max_r, 3),
-            "recalibrate": abs(mean_r - 1.0) > 0.2}
+    meanR = float(np.mean(ratio))
+    maxR = float(np.max(np.abs(ratio - 1.0)) + 1.0)
+    return {"mean_ratio": round(meanR, 3), "max_ratio": round(maxR, 3),
+            "recalibrate": abs(meanR - 1.0) > 0.2}
 
 
 def feature_separation(x_intercarrier, y, *, variance_col=9) -> dict:
@@ -134,13 +134,13 @@ def feature_separation(x_intercarrier, y, *, variance_col=9) -> dict:
     auc = (ranks[:pos.size].sum() - pos.size * (pos.size + 1) / 2) / (pos.size * neg.size)
     auc = float(max(auc, 1 - auc))  # fold: 0.5=random, 1.0=perfect
     edges = np.linspace(float(feat.min()), float(feat.max()), 33)
-    h_pos, _ = np.histogram(pos, bins=edges)
-    h_neg, _ = np.histogram(neg, bins=edges)
+    hPos, _ = np.histogram(pos, bins=edges)
+    hNeg, _ = np.histogram(neg, bins=edges)
     return {
         "auc": round(auc, 3),
         "edges": edges.tolist(),
-        "weapon_hist": h_pos.tolist(),
-        "none_hist": h_neg.tolist(),
+        "weapon_hist": hPos.tolist(),
+        "none_hist": hNeg.tolist(),
         "separable": auc > 0.65,
     }
 

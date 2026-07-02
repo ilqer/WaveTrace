@@ -132,7 +132,7 @@ def main():
 
     nodes, classes = load_count_nodes(args.cal, args.model)
     if not nodes:
-        print(f"[ERROR] No count models under {args.model}/node*/model.joblib with a matching "
+        print(f"[ERROR] no count models under {args.model}/node*/model.joblib with a matching "
               f"{args.cal}/node*/. Run collect_baseline.py then collect_count.py first.")
         return
     k = len(classes)
@@ -167,7 +167,7 @@ def main():
                 continue
             next_fuse = now + CHUNK_S
 
-            for buf in buffers.values():  # trim each buffer to the last BUFFER_S seconds
+            for buf in buffers.values():
                 if buf:
                     cutoff = buf[-1].timestamp - BUFFER_S
                     while buf and buf[0].timestamp < cutoff:
@@ -206,7 +206,7 @@ def main():
             print(f"PEOPLE {count_name(count, args.max_count):>3}  (~{expected:0.1f})  "
                   f"[{len(breakdown)} links] " + " ".join(breakdown))
     except KeyboardInterrupt:
-        print("\nstopped.")
+        print("\nstopped")
     finally:
         sock.close()
 

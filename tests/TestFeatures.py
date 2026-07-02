@@ -39,7 +39,6 @@ def test_reconstruct_complex_csi_removes_linear_ramp_keeps_material():
 
     out = reconstruct_complex_csi(h)
 
-    # magnitude is preserved
     assert np.allclose(np.abs(out), mag, atol=1e-4)
     # the linear component is removed; the residual equals phase minus its own least-squares line
     coeffs = np.polyfit(idx, phase, 1)
@@ -152,9 +151,7 @@ def test_inter_carrier_stats_matches_numpy():
 
 
 def test_inter_carrier_stats_metal_lower_variance():
-    # The §0B discriminator DIRECTION: a flat metal reflector reflects all subcarriers evenly -> LOW
-    # inter-carrier variance; the diffuse human body -> HIGH. Magnitudes are constructed directly (the
-    # synthetic fixture deliberately cannot fake a weapon signature — plan.md Phase 5).
+    # flat metal reflects evenly -> LOW variance; diffuse body -> HIGH (fixture can't fake it directly).
     rng = np.random.default_rng(8)
     flat = (np.full(52, 5.0) + rng.standard_normal(52) * 0.05).astype(np.float32)     # metal-like
     diffuse = (5.0 + rng.standard_normal(52) * 2.0).astype(np.float32)                # body-like
@@ -173,8 +170,7 @@ def test_inter_carrier_stats_edge_cases():
 # --- Per-frame inter-subcarrier PHASE dispersion (phase counterpart of sigma2[p]) ------------
 
 def test_inter_carrier_phase_stats_recovers_slope():
-    # A linear phase ramp across subcarriers = a pure group-delay (ToF) slope: the fit recovers the
-    # slope and the non-linear residual is ~0 (coherent, metal-like).
+    # A linear phase ramp = pure group-delay (ToF) slope: fit recovers it, residual ~0 (coherent).
     k = 52
     slope_true = 0.2  # rad/subcarrier
     phase = (slope_true * np.arange(k) + 1.3).astype(np.float32)  # ramp + constant offset
@@ -186,8 +182,7 @@ def test_inter_carrier_phase_stats_recovers_slope():
 
 
 def test_inter_carrier_phase_stats_coherent_vs_diffuse():
-    # The discriminator DIRECTION: a coherent reflector -> near-linear phase -> LOW residual; the
-    # diffuse body -> scattered phase -> HIGH residual.
+    # coherent reflector -> near-linear phase -> LOW residual; diffuse body -> HIGH residual.
     rng = np.random.default_rng(11)
     k = 52
     ramp = 0.15 * np.arange(k)
@@ -248,7 +243,7 @@ def _phaseSeries(seed=9):
         perturbationHz=fTrue, perturbationDepth=1.0, cfoHz=4.0, noiseStd=0.002, seed=seed,
     )
     pre = Preprocessor(1, 64, normalize_alpha=0.01)  # gentle high-pass so 0.3 Hz passes
-    out = np.stack([pre.process(f).copy()[0] for f in frames])  # (T, S-1)
+    out = np.stack([pre.process(f).copy()[0] for f in frames])
     return out.mean(axis=1).astype(np.float32), fs, gt["perturbation_hz"]
 
 
@@ -320,8 +315,7 @@ def test_amplitude_features_detect_modulation():
 
     mod = nine_features(modAmp)
     flat = nine_features(flatAmp)
-    # A slow (0.25 Hz) envelope lifts the SPREAD features (std=1, IQR=4, MAD=7) far above the noise
-    # floor; it barely touches waveform-length (sensitive to fast step-to-step change, ~noise-bound).
+    # a slow 0.25 Hz envelope lifts spread features (std/IQR/MAD) but barely touches waveform-length.
     for idx in (1, 4, 7):
         assert mod[idx] > 20 * flat[idx]
     assert mod[8] > flat[8]  # waveform-length still increases, just modestly

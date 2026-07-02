@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { clsx } from 'clsx';
 import { Crosshair, ChevronDown, ChevronRight } from 'lucide-react';
 
-// Static σ²[p] go/no-go before ML. per_link=true scores each directed tx→rx link
-// separately — surfaces which round-robin directions carry weapon signal (NLOS geometry).
+// Static σ²[p] go/no-go before ML; per_link=true scores each directed tx→rx link separately (NLOS geometry).
 interface HistData { edges: number[]; clear: number[]; weapon: number[]; }
 
 interface LitmusRow {

@@ -30,8 +30,7 @@ import numpy as np
 from wavetrace.Config import ModelConfig
 from wavetrace.recognition.Model import sklearn_pipeline
 
-# Column of the 27-block holding the WINDOW MEAN of the per-packet σ²[p] series
-# (series order µ|σ²|CV, 9 stats each, stat 0 = mean).
+# Column of the 27-block holding the WINDOW MEAN of the per-packet σ²[p] series (µ|σ²|CV, 9 stats each, stat 0 = mean).
 VARIANCE_FEATURE = 9
 
 
@@ -62,8 +61,7 @@ class WeaponHead:
     def __init__(self, config: ModelConfig, *, variance_feature: int = VARIANCE_FEATURE):
         self.config = config
         self._vf = int(variance_feature)
-        # how the serving layer (Cli.run) must assemble x: "ic27" | "fusion" | "cnn" (set by
-        # train_weapon, persisted in save). None for directly-constructed heads.
+        # how the serving layer (Cli.run) must assemble x: "ic27" | "fusion" | "cnn"; None for directly-constructed heads.
         self.feature_mode: str | None = None
         self._pipe = sklearn_pipeline(config) if config.backend in ("mlp", "svm") else None
         self._classes: np.ndarray | None = None
@@ -91,7 +89,6 @@ class WeaponHead:
         classes = np.unique(y)
         if classes.size < 2:
             # 1-class data -> a model that only ever predicts that class (silent failure); refuse.
-            # (The synthetic weapon signature is off unless --weapon-depth > 0 — see Cli.py warning.)
             raise ValueError(
                 f"WeaponHead.fit: training data has a single class {classes.tolist()}; need both "
                 "weapon and no-weapon windows (check weapon label spans / --weapon-depth)"
@@ -118,8 +115,7 @@ class WeaponHead:
             raise ValueError("variance backend needs both classes in the training data")
         pos_below = np.cumsum(is_pos)              # positives among xs[:i+1]
         n_below = np.arange(1, xs.size + 1)
-        # balanced accuracy of "positive when x <= thr" at every split point (and its complement
-        # for the opposite direction); one O(n) pass over the sorted feature
+        # balanced accuracy of "positive when x <= thr" at every split point; one O(n) pass over the sorted feature
         tpr_low = pos_below / P
         tnr_low = (N - (n_below - pos_below)) / N
         bal_low = (tpr_low + tnr_low) / 2.0
@@ -167,8 +163,7 @@ class WeaponHead:
             ep_loss_avg = float(np.mean(batch_losses)) if batch_losses else 0.0
             print(f"      cnn ep {ep+1:3d}/{epochs}  loss={ep_loss_avg:.4f}", end="\r", flush=True)
             if report is not None:
-                # within-epoch batch-loss spread = the confidence band on the live training curve
-                # (notebook-style report); train accuracy from an eval-mode pass (cheap on small data).
+                # batch-loss spread = confidence band on the live training curve; accuracy from a cheap eval-mode pass
                 ep_loss_std = float(np.std(batch_losses)) if len(batch_losses) > 1 else 0.0
                 net.eval()
                 with torch.no_grad():

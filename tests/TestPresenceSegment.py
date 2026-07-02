@@ -53,8 +53,7 @@ def test_presence_segmenter_reports_segment_bounds():
 
 
 def test_presence_segmenter_hysteresis_no_chatter():
-    # A signal hovering between exit and enter must NOT flip state once below enter (hysteresis): a
-    # quiet tail after one active burst stays inactive rather than re-triggering on small ripples.
+    # Hysteresis: a quiet tail after one active burst stays inactive, not re-triggering on ripples.
     frames, n = _quiet_active_quiet()
     seg = PresenceSegmenter(window=20, enter_cv=0.05, exit_cv=0.02)
     transitions = 0

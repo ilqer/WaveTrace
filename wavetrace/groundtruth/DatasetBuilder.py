@@ -49,16 +49,16 @@ class Dataset:
 def _attach_labels(wts, label_source, tolerance):
     """Attach aligned or callable labels to a list of window timestamps. Returns (sel, sel_labels, stats)."""
     if callable(label_source):
-        sel_labels = [label_source(t) for t in wts]
+        selLabels = [label_source(t) for t in wts]
         sel = list(range(len(wts)))
         stats = {"mean_dt": 0.0, "max_abs_dt": 0.0, "p95_abs_dt": 0.0,
                  "matched": len(wts), "dropped": 0}
     else:
         res = align(wts, label_source, tolerance)
         sel = [wi for wi, _ in res.matched]
-        sel_labels = [lab for _, lab in res.matched]
+        selLabels = [lab for _, lab in res.matched]
         stats = res.stats
-    return sel, sel_labels, stats
+    return sel, selLabels, stats
 
 
 def build_dataset(

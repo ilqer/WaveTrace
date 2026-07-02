@@ -7,8 +7,7 @@ interface Props {
   links?: LinkHealth[];
 }
 
-// Per directed (tx→rx) link: delivered rate + missing-frame fraction. The node table aggregates per
-// RX board; this breaks it down by direction so a single weak round-robin link is visible.
+// Per directed (tx→rx) link rate/loss — breaks down what the node table aggregates per RX board.
 function LinkHealthTable({ links }: { links: LinkHealth[] }) {
   if (links.length === 0) return null;
   return (

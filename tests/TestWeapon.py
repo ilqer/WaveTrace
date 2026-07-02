@@ -139,8 +139,7 @@ def test_train_weapon_ic27_and_fusion(weapon_data, tmp_path):
     assert (tmp_path / "w_ic" / "model.joblib").exists()
     assert (tmp_path / "w_ic" / "metrics.json").exists()
 
-    # fusion: hstack(X_ic, X_features) — the ic27 datasets lack gain-locked features (built with
-    # gain_lock=None), so X_features is the raw-magnitude 9·K block; width = 27 + 9·K
+    # fusion: hstack(X_ic, X_features); X_features is the raw-magnitude 9·K block, width = 27 + 9·K.
     head_fu, m_fu = train_weapon(ds_dirs, out_dir=tmp_path / "w_fu",
                                  feature_mode="fusion",
                                  config=ModelConfig(stage="weapon", k=K, backend="mlp"))
@@ -285,8 +284,7 @@ def test_mode_session_validates_mode():
 # ----- 7p-e: soft segment voting -------------------------------------------------------------------
 
 def test_voter_recovers_segment_label_from_noisy_windows():
-    # weak per-window head: correct class barely wins on average, often loses per window (Zhou's
-    # 51.1% snapshots -> correct walk verdict via the soft vote)
+    # weak per-window head, correct class barely wins on average (Zhou's soft-vote-recovers-walk case).
     rng = np.random.default_rng(5)
     voter = SegmentVoter()
     correct = 0

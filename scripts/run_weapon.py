@@ -109,7 +109,6 @@ def load_weapon_links(cal_root, model_root):
             session = mode_session("weapon", model_path)
             apply_lock, intercarrier, pick = _serving_plan("weapon", session.head)
             classes = list(session.head.classes_)
-            # IC background subtraction is a property of how THIS head was trained (head config),
             # rebuilt from the node's calibration so train/serve subtract the same baseline (Item 10).
             ic_baseline = (result.baseline_mag
                            if getattr(session.head.config, "subtract_ic_baseline", False) else None)
@@ -178,7 +177,7 @@ def main():
 
     entries = load_weapon_links(args.cal, args.model)
     if not entries:
-        print(f"[ERROR] No weapon heads under {args.model}/node*/[link*/]model.joblib with a matching "
+        print(f"[ERROR] no weapon heads under {args.model}/node*/[link*/]model.joblib with a matching "
               f"{args.cal}/node*/. Run collect_baseline.py then collect_weapon.py first.")
         return
     weapon_i = next(iter(entries.values()))["weapon_i"]  # ordering validated equal in load_weapon_links
@@ -215,7 +214,7 @@ def main():
                 continue
             next_fuse = now + CHUNK_S
 
-            for buf in buffers.values():  # trim each buffer to the last BUFFER_S seconds
+            for buf in buffers.values():
                 if buf:
                     cutoff = buf[-1].timestamp - BUFFER_S
                     while buf and buf[0].timestamp < cutoff:
@@ -255,7 +254,7 @@ def main():
             print(f"{label}  P {p_weapon:0.2f}  {bar:<20}  [{len(breakdown)} links] "
                   + " ".join(breakdown))
     except KeyboardInterrupt:
-        print("\nstopped.")
+        print("\nstopped")
     finally:
         sock.close()
 

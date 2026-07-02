@@ -122,12 +122,12 @@ class HeatmapTrack:
         pi, pj, pval = self.occ.peak()
         fr, fc, measured = self._kalman.update(float(pi), float(pj), t, confidence)
         # grid cell -> metres (row 0 = far, last row = near; col centre = 0)
-        x_m = (fc - self.g / 2) * self.cell
-        y_m = (self.g - fr) * self.cell
+        xM = (fc - self.g / 2) * self.cell
+        yM = (self.g - fr) * self.cell
         return {
             "grid": fused.flatten().tolist(),
             "peak": [pi, pj, pval],
-            "track": {"x": round(x_m, 3), "y": round(y_m, 3), "measured": measured},
+            "track": {"x": round(xM, 3), "y": round(yM, 3), "measured": measured},
         }
 
     def reset(self) -> None:

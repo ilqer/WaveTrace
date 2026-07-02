@@ -22,21 +22,20 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("0.0.0.0", PORT))
 sock.settimeout(0.5)
 
-# Discovery broadcast: send a ping every 2s so nodes can find this PC's IP
+# discovery broadcast: ping every 2s so nodes can find this PC's IP
 DISCOVERY_PORT = 9878
-discovery_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-discovery_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-last_ping = 0
+discoverySock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+discoverySock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+lastPing = 0
 
 last = {}   # node -> (recv_time, health dict)
 print(f"health monitor on udp/{PORT}  (Ctrl+C to stop)\n")
 try:
     while True:
         now = time.time()
-        # Send discovery ping every 2 seconds
-        if now - last_ping > 2.0:
-            discovery_sock.sendto(b"WAVETRACE_PING", ("255.255.255.255", DISCOVERY_PORT))
-            last_ping = now
+        if now - lastPing > 2.0:
+            discoverySock.sendto(b"WAVETRACE_PING", ("255.255.255.255", DISCOVERY_PORT))
+            lastPing = now
 
         try:
             payload, addr = sock.recvfrom(2048)
@@ -45,7 +44,6 @@ try:
                 last[int(h["node"])] = (time.time(), h, addr[0])
         except (socket.timeout, ValueError, KeyError, IndexError):
             pass
-        # redraw table
         now = time.time()
         rows = ["  node  ip              age   csi_hz tx_hz peers leader gain  agc rssi heap(KB) up(s) clk"]
         for n in sorted(last):

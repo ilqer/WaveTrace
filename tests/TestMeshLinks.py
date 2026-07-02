@@ -39,8 +39,8 @@ def test_splits_two_transmitters_into_two_links():
     ]
     links = parse_batch_links(_batch(rows, node_id=7))
     assert set(links) == {("00:01", 7), ("00:02", 7)}
-    assert len(links[("00:01", 7)]) == 3   # three frames from TX a
-    assert len(links[("00:02", 7)]) == 2   # two frames from TX b
+    assert len(links[("00:01", 7)]) == 3
+    assert len(links[("00:02", 7)]) == 2
     for frames in links.values():
         assert all(fr.node_id == 7 and fr.num_subcarriers == S for fr in frames)
 

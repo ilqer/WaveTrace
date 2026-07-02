@@ -15,8 +15,7 @@ export interface SerialPort {
   likely_esp: boolean;
 }
 
-// Hardware control: serial discovery + monitor, flashing, Pi capture. Streams from /ws/device,
-// which is independent of the inference pipeline sockets so it stays live across run/stop.
+// Streams from /ws/device, independent of the inference pipeline sockets, so it stays live across run/stop.
 export function useDevice() {
   const [lines, setLines] = useState<DeviceLine[]>([]);
   const [ports, setPorts] = useState<SerialPort[]>([]);

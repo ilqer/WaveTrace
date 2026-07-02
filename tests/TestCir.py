@@ -21,7 +21,7 @@ DF = SUBCARRIER_SPACING_HZ
 def _two_tap_csi(k, taus, amps):
     """H[k] = Σ aᵢ·exp(-j2π·k·Δf·τᵢ) over contiguous subcarriers 0..k-1."""
     idx = np.arange(k)[:, None]
-    atoms = np.exp(-2j * np.pi * idx * DF * np.asarray(taus)[None, :])  # (k, n_paths)
+    atoms = np.exp(-2j * np.pi * idx * DF * np.asarray(taus)[None, :])
     return (atoms @ np.asarray(amps, dtype=np.complex128)).astype(np.complex64)
 
 

@@ -1,5 +1,4 @@
-// pybind11 module `_wavetrace`: exposes the Phase 1 core types to Python orchestration.
-// The hot-path DSP (Phase 3+) will be added to this same single extension.
+// pybind11 module `_wavetrace`: exposes the core C++ types and hot-path DSP to Python orchestration.
 #include <pybind11/complex.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
@@ -21,9 +20,7 @@
 namespace py = pybind11;
 using namespace wavetrace;
 
-// Zero-copy (numAntennas x numSubcarriers) complex64 view sharing the frame's buffer. Writable:
-// mutations from NumPy land directly in the C++ grid (no per-frame copy). `frame` is the base
-// object so the buffer outlives the array.
+// Zero-copy writable (numAntennas x numSubcarriers) complex64 view sharing the frame's buffer; `frame` is the base object so the buffer outlives the array.
 static py::array gridView(py::object frame) {
   CsiFrame& f = frame.cast<CsiFrame&>();
   const auto rows = static_cast<py::ssize_t>(f.numAntennas());
@@ -86,8 +83,7 @@ PYBIND11_MODULE(_wavetrace, m) {
                               static_cast<size_t>(info.size), timestamp, nodeId);
           },
           py::arg("raw"), py::arg("timestamp") = 0.0, py::arg("node_id") = -1,
-          // Returns the parser's reused CsiFrame (same object each call); tie its lifetime to the
-          // parser and keep `raw` alive for the duration of the decode.
+          // Ties the reused CsiFrame's lifetime to the parser and keeps `raw` alive for the decode.
           py::return_value_policy::reference_internal, py::keep_alive<0, 2>(),
           "Decode one raw int8 [imag,real] frame into the reused CsiFrame (returned). O(n).");
 
@@ -98,8 +94,7 @@ PYBIND11_MODULE(_wavetrace, m) {
       .def("synced", &NodeAggregator::synced, py::arg("tolerance"),
            "Latest frame per node within `tolerance` s of the newest submit (copies). O(m).");
 
-  // Phase 3 — signal preprocessing. Stateless transforms first (bound for unit tests), then the
-  // streaming Preprocessor.
+  // Signal preprocessing: stateless transforms first (bound for unit tests), then the streaming Preprocessor.
   m.def("conjugate_multiply", &conjugateMultiply, py::arg("in_frame"), py::arg("out_frame"),
         "Geometry-adaptive conjugate multiply (cancels CFO/SFO) into out_frame (reshaped). O(n).");
   m.def("combined_channel_difference", &combinedChannelDifference, py::arg("in_frame"),
@@ -203,8 +198,7 @@ PYBIND11_MODULE(_wavetrace, m) {
           py::arg("frame"),
           "Process one frame -> drift-free differential-phase grid (zero-copy view). O(n).");
 
-  // Phase 4 — features + spectrogram. Stateless FFT/feature fns (bound for unit tests), then the
-  // streaming FeatureExtractor and SpectrogramBuilder.
+  // Features + spectrogram: stateless FFT/feature fns (bound for unit tests), then the streaming extractors.
   m.def(
       "fft",
       [](py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> x) {

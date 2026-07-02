@@ -56,7 +56,6 @@ def test_parse_csi_line_valid():
     csi, ts, mac = result
     assert csi.shape == (4,)
     assert csi.dtype == np.complex64
-    # csi[k] = complex(data[2k+1], data[2k]) i.e. Python complex(real, imag)
     assert csi[0] == pytest.approx(complex(csi_ints[1], csi_ints[0]))
     assert csi[1] == pytest.approx(complex(csi_ints[3], csi_ints[2]))
     assert ts == 12345

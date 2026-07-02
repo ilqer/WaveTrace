@@ -40,7 +40,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     Per-link so training matches per-link serving (run_weapon). Keeps the dominant subcarrier width per
     link. Stops when every expected RX node has appeared AND all known links reach n, OR max_capture_s
     elapses (the recv timeout fires only on TOTAL silence, so the deadline is what stops a quiet link)."""
-    print(f"\n>> {prompt}\n   Press Enter to start...", flush=True)
+    print(f"\n>> {prompt}\n   press Enter to start...", flush=True)
     input()
     if countdown:
         for d in range(countdown, 0, -1):
@@ -69,7 +69,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
                 break
             if now - start > max_capture_s:
                 short = [k for k, v in sorted(links.items()) if len(v) < n]
-                print(f"\n[WARN] capture deadline {max_capture_s:g}s hit; links short of {n}: {short}")
+                print(f"\n[WARN] deadline {max_capture_s:g}s hit; links short of {n}: {short}")
                 break
             if now - last_print >= 1.0:
                 per_node = dict(sorted(collections.Counter(k[1] for k in links).items()))
@@ -96,13 +96,11 @@ def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_su
         if len(fr) < WINDOW:
             continue
         span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
-        tag = key[0].replace(":", "")  # tx mac-short, ':'-free for a path segment
+        tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
         rec = f"{root}/weapon_rec/{sess_id}/{cond}/node{nid}/link_{tag}"
         ds = f"{root}/weapon_ds/node{nid}/{sess_id}_{cond}_link{tag}"
         save_recording(fr, rec)
-        # stage="weapon" -> intercarrier dataset + weapon_label_fn; spans=[span] -> class 1 over the
-        # whole segment, spans=[] -> class 0. Same session_id for both conditions so LOGO folds cleanly.
-        # bg_subtract -> null the quiet-room channel from σ²[p] (Item 10/CAUSE 2B); serving mirrors it.
+        # spans=[span] -> class 1 over the segment, spans=[] -> class 0; bg_subtract nulls σ²[p]'s quiet-room channel (Item 10/CAUSE 2B)
         collect_source(RecordingSource(rec), f"{cal_root}/node{nid}", ds,
                        [span] if weapon else [],
                        stage="weapon", session_id=sess_id, subject_id=subject,
@@ -175,22 +173,22 @@ def main():
                        for d in glob.glob(os.path.join(args.cal, "node*"))
                        if os.path.basename(d)[len("node"):].isdigit())
     if not cal_nodes:
-        print(f"\n[ERROR] No per-node calibrations in {args.cal}/node*. Run collect_baseline.py first.",
+        print(f"\n[ERROR] no per-node calibrations in {args.cal}/node*. Run collect_baseline.py first.",
               file=sys.stderr)
         return
     if args.node is not None:
         cal_nodes = [args.node] if args.node in cal_nodes else []
         if not cal_nodes:
-            print(f"\n[ERROR] --node {args.node} has no calibration in {args.cal}.", file=sys.stderr)
+            print(f"\n[ERROR] node {args.node} has no calibration in {args.cal}.", file=sys.stderr)
             return
-    print(f"Will train nodes: {cal_nodes}  (subject={args.subject}, carry={args.carry})")
+    print(f"training nodes: {cal_nodes}  (subject={args.subject}, carry={args.carry})")
 
     os.makedirs(args.model, exist_ok=True)
     for i in range(args.sessions):
         sess_id = f"{args.subject}_{args.carry}_s{i}"
-        clear = capture_links(f"Session {i+1}/{args.sessions} — stand STILL, NO weapon on you.",
+        clear = capture_links(f"session {i+1}/{args.sessions} — stand still, no weapon on you.",
                               args.frames, args.port, cal_nodes, countdown=5)
-        armed = capture_links(f"Session {i+1}/{args.sessions} — stand STILL, weapon concealed on you.",
+        armed = capture_links(f"session {i+1}/{args.sessions} — stand still, weapon concealed on you.",
                               args.frames, args.port, cal_nodes, countdown=5)
         for nid in cal_nodes:
             _emit(clear, args.root, args.cal, nid, sess_id, args.subject, args.carry, "clear",
@@ -199,7 +197,7 @@ def main():
                   weapon=True, bg_subtract=args.bg_subtract)
 
     unit = "per-link (tx->rx)" if args.per_link else "per-node"
-    print(f"\nTraining {unit} weapon models (ic27) on the CUMULATIVE pool...")
+    print(f"\ntraining {unit} weapon models (ic27) on the cumulative pool...")
     trained = []
     for nid in cal_nodes:
         ds_dirs = sorted(glob.glob(f"{args.root}/weapon_ds/node{nid}/*"))
@@ -214,7 +212,7 @@ def main():
             if tag is not None:
                 by_tag[tag].append(d)
         if not by_tag:
-            print(f"   [SKIP] Node {nid}: no per-link datasets (re-capture with collect_weapon).")
+            print(f"   [SKIP] node {nid}: no per-link datasets, re-capture with collect_weapon.")
             continue
         for tag in sorted(by_tag):
             if _train_and_report(by_tag[tag], f"{args.model}/node{nid}/link{tag}",
@@ -222,7 +220,7 @@ def main():
                 trained.append((nid, tag))
 
     if not trained:
-        print("\n[ERROR] Nothing trained — need both no-weapon AND weapon captures in the pool.",
+        print("\n[ERROR] nothing trained — need both no-weapon and weapon captures in the pool.",
               file=sys.stderr)
         return
     dest = f"{args.model}/node*/link*/" if args.per_link else f"{args.model}/node*/"

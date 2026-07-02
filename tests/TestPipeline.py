@@ -159,8 +159,7 @@ def test_end_to_end_weapon(tmp_path):
 
 
 def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
-    # #5: a camera label source (here a callable producing G×G masks) flows through collect_source and
-    # the heatmap mask + tier survive to the saved dataset — the camera-supervised collection path.
+    # #5: a camera label source (G×G masks) flows through collect_source; mask + tier survive to disk.
     frames = _weapon_recording(duration=4.0)
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     grid = 4

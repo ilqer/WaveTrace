@@ -113,7 +113,7 @@ def train_presence(
 
     t0 = time.perf_counter()
     head = PresenceHead(config).fit(X, y)
-    fit_s = time.perf_counter() - t0
+    fitS = time.perf_counter() - t0
 
     classes, counts = np.unique(y, return_counts=True)
     metrics = {
@@ -127,7 +127,7 @@ def train_presence(
         "subjects": sorted({str(s) for s in subj}),
         "train_accuracy": float((head.predict(X) == y).mean()),  # sanity only — see module note
         "logo": _logo_metrics(X, y, sess, subj, lambda: PresenceHead(config)),  # the HEADLINE number
-        "fit_seconds": round(fit_s, 3),
+        "fit_seconds": round(fitS, 3),
     }
     out = Path(out_dir)
     head.save(out / "model.joblib")
@@ -158,13 +158,13 @@ def train_weapon(
     if isinstance(dataset_dirs, (str, Path)):
         dataset_dirs = [dataset_dirs]
     loaded: list[Dataset] = [load_dataset(d) for d in dataset_dirs]
-    X_feat, y, sess, subj = concat_datasets(loaded)
+    XFeat, y, sess, subj = concat_datasets(loaded)
 
     if feature_mode == "ic27":
         X = concat_arrays(loaded, "X_intercarrier")
     elif feature_mode == "fusion":
-        X_ic = concat_arrays(loaded, "X_intercarrier")
-        X = np.hstack([X_ic, X_feat]).astype(np.float32)
+        XIc = concat_arrays(loaded, "X_intercarrier")
+        X = np.hstack([XIc, XFeat]).astype(np.float32)
     else:  # cnn
         X = concat_arrays(loaded, "X_image")
 
@@ -188,7 +188,7 @@ def train_weapon(
     head.feature_mode = feature_mode  # self-describing: Cli.run reads it to assemble x at serve time
     t0 = time.perf_counter()
     head.fit(X, y, report=report)  # report fires per epoch on the cnn backend (live UI curves); ignored otherwise
-    fit_s = time.perf_counter() - t0
+    fitS = time.perf_counter() - t0
 
     classes, counts = np.unique(y, return_counts=True)
     metrics = {
@@ -205,7 +205,7 @@ def train_weapon(
         "train_accuracy": float((head.predict(X) == y).mean()),
         "logo": _logo_metrics(X, y, sess, subj, lambda: WeaponHead(config)),  # the HEADLINE number
         "subtract_ic_baseline": bool(config.subtract_ic_baseline),
-        "fit_seconds": round(fit_s, 3),
+        "fit_seconds": round(fitS, 3),
     }
     out = Path(out_dir)
     head.save(out / "model.joblib")

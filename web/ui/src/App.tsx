@@ -95,7 +95,6 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-6 font-sans">
-      {/* Header */}
       <header className="flex justify-between items-center mb-8">
         <div className="flex items-center gap-3">
           <div className="bg-emerald-600 p-2 rounded-lg">
@@ -149,7 +148,6 @@ function App() {
               Drift {(driftRatio * 100).toFixed(0)}% — recalibrate
             </div>
           )}
-          {/* Model upload */}
           <div className="relative">
             <input ref={modelUploadRef} type="file" accept=".joblib,.pkl" className="hidden" onChange={handleModelUpload} />
             <button
@@ -178,7 +176,7 @@ function App() {
       </header>
 
       <main className="max-w-[1600px] mx-auto">
-        {/* Full-width layout — Devices and Diagnostics own the full canvas */}
+        {/* Devices and Diagnostics tabs own the full canvas width */}
         {activeTab === 'devices' || activeTab === 'diagnostics' ? (
           <div className="grid grid-cols-12 gap-6">
             <div className="col-span-12">
@@ -225,9 +223,7 @@ function App() {
             </div>
           </div>
         ) : (
-          /* 3-column layout — sensing and training tabs */
           <div className="grid grid-cols-12 gap-6">
-            {/* Left Column: Controls and Node Power */}
             <div className="col-span-3 space-y-6 flex flex-col">
               <Controls
                 onStart={start}
@@ -267,7 +263,6 @@ function App() {
               </section>
             </div>
 
-            {/* Middle Column */}
             <div className="col-span-6 space-y-6">
               {activeTab === 'sensing' ? (
                 <>
@@ -365,7 +360,6 @@ function App() {
                     </section>
                   </div>
 
-                  {/* Temporal Variance — sensing tab only */}
                   <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2 text-slate-400">
@@ -396,7 +390,6 @@ function App() {
                   </section>
                 </>
               ) : (
-                /* Training tab */
                 <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-[700px]">
                   <div className="px-4 py-3 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 shrink-0">
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
@@ -416,7 +409,6 @@ function App() {
               )}
             </div>
 
-            {/* Right Column: System Logs */}
             <div className="col-span-3 flex flex-col min-h-[600px]">
               <section className="bg-slate-900 rounded-xl border border-slate-800 flex flex-col flex-1 overflow-hidden h-full">
                 <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50">

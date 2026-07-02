@@ -11,19 +11,12 @@
 
 namespace wavetrace {
 
-// Phase 4 — windowed feature front-end (target-agnostic recognition input). Two paths:
-//   * §2.9 nine-feature TIME-domain vector per series (the proven, compact base — fewer features
-//     generalized better in the reference; kurtosis/entropy/slope were deliberately dropped, §2.9/§4).
-//   * FREQUENCY-domain cues the time-domain nine cannot capture: a power spectrum (PSD) and Doppler
-//     (max shift + spectral spread). Doppler is the high-value addition from the plan's richer set —
-//     a motion/velocity cue (f_d = 2v/lambda) for carried/drawn weapon and dynamic posture. A full
-//     amplitude+phase+PSD concatenation is intentionally deferred until a head needs it (the FFT is
-//     now here, so it is cheap to add).
+// Windowed feature front-end, two paths: a compact nine-feature TIME-domain vector per series (fewer
+// features generalized better; kurtosis/entropy/slope deliberately dropped), and FREQUENCY-domain PSD + Doppler (f_d = 2v/lambda).
 
 // --- §2.9 order statistics helper -----------------------------------------------------------
 
-// Percentile of an ASCENDING-sorted buffer with linear interpolation (matches numpy's default,
-// so the unit test can compare against np.percentile directly). p in [0,1]. O(1).
+// Percentile of an ascending-sorted buffer via linear interpolation, matching numpy's default. p in [0,1]. O(1).
 inline float percentileSorted(const float* sorted, size_t n, float p) {
   if (n == 1) return sorted[0];
   const float idx = p * static_cast<float>(n - 1);
@@ -33,12 +26,8 @@ inline float percentileSorted(const float* sorted, size_t n, float p) {
   return sorted[lo] + frac * (sorted[hi] - sorted[lo]);
 }
 
-// REFERENCE_DIGEST §2.9 nine-feature vector over one CHRONOLOGICAL window (a subcarrier's amplitude
-// series, or the turbulence scalar). Fills out[0..8] in this fixed order:
-//   0 mean · 1 std · 2 max · 3 min · 4 IQR(P75-P25) · 5 skewness · 6 lag-1 autocorrelation ·
-//   7 MAD(median|x-median|) · 8 waveform-length(Σ|x_i - x_{i-1}|)
-// scratch must hold >= n floats (order statistics). Two-pass moments (stable, §2.8). The IQR/MAD
-// sorts make this O(n log n); the moments and the two order-dependent features are O(n).
+// Nine-feature vector over one chronological window, out[0..8] = mean, std, max, min, IQR(P75-P25), skewness,
+// lag-1 autocorrelation, MAD(median|x-median|), waveform-length(sum|x_i-x_i-1|). O(n log n) (IQR/MAD sorts).
 inline void nineFeatures(const float* x, size_t n, float* scratch, float* out) {
   if (n == 0) {
     for (size_t i = 0; i < 9; ++i) out[i] = 0.0f;
@@ -95,14 +84,8 @@ struct InterCarrierStat {
   float variance;  // sigma2[p]  = sample variance (M-1) across subcarriers; metal -> LOWER
 };
 
-// Per-packet dispersion of the K subcarrier magnitudes at ONE frame (Yousaf 2025 Eq.3-4 / LUMS Eq.3-4,
-// REFERENCE §0B). A flat metal reflector reflects all subcarriers evenly -> sigma2 is SMALLER than for
-// the diffuse human body, so this is the documented concealed-metal discriminator (and the cheapest
-// threshold head). It is the TRANSPOSE of nineFeatures (which is per-subcarrier across time) and equals
-// the espectre "spatial turbulence" scalar (§2.8 MVS), so one primitive serves Stage-A presence and
-// Stage-E weapon. Run it over ALL valid subcarriers, not the NBVI subset (NBVI selects on time-variance,
-// orthogonal to this cross-subcarrier reduction). Sample variance (M-1) matches the papers. Two-pass
-// (stable, §2.8). O(K), no allocation.
+// Per-packet dispersion of K subcarrier magnitudes: a flat metal reflector reflects evenly so sigma2 is smaller
+// than for a diffuse human body, the documented concealed-metal discriminator. Run over all valid subcarriers, not the NBVI subset. O(K).
 inline InterCarrierStat interCarrierStats(const float* mags, size_t k) {
   if (k == 0) return {0.0f, 0.0f};
   double mean = 0.0;
@@ -122,18 +105,11 @@ inline InterCarrierStat interCarrierStats(const float* mags, size_t k) {
 
 struct InterCarrierPhaseStat {
   float slope;        // least-squares phase slope across subcarriers (rad/subcarrier) ~ group delay (ToF)
-  float residualStd;  // RMS phase after removing the linear ToF slope; a coherent flat reflector ->
-                      // LOWER residual, the diffuse human body -> HIGHER (scattered phase)
+  float residualStd;  // RMS residual after removing ToF slope: lower for a coherent reflector, higher for a diffuse body
 };
 
-// Inter-subcarrier phase dispersion at ONE frame: unwrap the phase across subcarriers, fit a line
-// (the linear term is the group-delay/ToF slope), and return the slope + the RMS of the non-linear
-// residual. A metal reflector reflects coherently -> near-linear phase across the band -> small
-// residual; the diffuse human body scatters -> large residual. This is the PHASE analogue of
-// interCarrierStats (Wi-Metal is phase-based: phase resolves mm-level path-length change, so the
-// slope is the delay term compressed sensing later super-resolves). `phase` = per-subcarrier phase at
-// one frame (e.g. std::arg of each H[k], or a Preprocessor differential-phase row). `scratch` holds
-// >= k floats (the unwrapped phase). O(k), no allocation beyond the caller's scratch.
+// Inter-subcarrier phase dispersion: unwrap phase across subcarriers, fit a line (slope = group-delay/ToF),
+// return slope + RMS residual — the phase analogue of interCarrierStats. O(k), no allocation beyond scratch.
 inline InterCarrierPhaseStat interCarrierPhaseStats(const float* phase, size_t k, float* scratch) {
   if (k < 2) return {0.0f, 0.0f};
   constexpr float PI = 3.14159265358979323846f;
@@ -169,14 +145,8 @@ inline InterCarrierPhaseStat interCarrierPhaseStats(const float* phase, size_t k
 
 // --- Complex-CSI material reconstruction (in-baggage CNS'18 §IV / material-ID) ---------------
 
-// Reconstruct sanitized COMPLEX CSI for one frame (one antenna). Raw CSI phase carries an unknown
-// linear STO/CFO ramp across subcarriers that buries the material signature. Unwrap the phase across
-// the k subcarriers, fit a line by least squares (the slope is the ToF/STO term), SUBTRACT it, and
-// recombine the residual phase with the ORIGINAL magnitude → a drift-free complex value whose
-// clustering in the complex plane separates materials (metal / liquid / none). Unlike the
-// Preprocessor's DIFFERENTIAL phase (conj-mult, which discards absolute phase), this keeps the
-// ABSOLUTE residual phase the paper shows carries the material signature. `in`/`out` length k;
-// `scratch` holds >= k floats (the unwrapped phase). O(k), no allocation beyond the caller's scratch.
+// Reconstruct sanitized complex CSI: unwrap phase, subtract the least-squares ToF/STO slope, recombine
+// the residual with the original magnitude -> drift-free value whose clustering separates materials. O(k).
 inline void reconstructComplexCsi(const std::complex<float>* in, size_t k, std::complex<float>* out,
                                   float* scratch) {
   if (k == 0) return;
@@ -212,12 +182,8 @@ inline void reconstructComplexCsi(const std::complex<float>* in, size_t k, std::
   }
 }
 
-// Beta-null reflection isolation (in-baggage CNS'18 Eq.4): out[i] = h1[i] + beta[i]*h2[i],
-// beta[i] = -hb1[i]/hb2[i] from the EMPTY-ROOM baseline (hb1, hb2 = the two TX→RX paths' quiet CFR).
-// The weight is chosen so the two paths CANCEL when the room is empty → out ≈ 0; when an object
-// appears its reflection no longer cancels, so |out| is the object's PURE reflection (LOS + static
-// multipath nulled at the COMPLEX level — stronger than an amplitude ratio). REQUIRES 2 paths/antennas
-// on one radio. All arrays length k. O(k).
+// Beta-null reflection isolation: out=h1+beta*h2, beta=-hb1/hb2 from an empty-room baseline, chosen so the
+// two paths cancel when empty; an object's reflection then survives as |out| (complex-level null, requires 2 paths). O(k).
 inline void reflectionNull(const std::complex<float>* h1, const std::complex<float>* h2,
                            const std::complex<float>* hb1, const std::complex<float>* hb2, size_t k,
                            std::complex<float>* out) {
@@ -228,10 +194,8 @@ inline void reflectionNull(const std::complex<float>* h1, const std::complex<flo
   }
 }
 
-// Non-overlapping block-average decimation (LUMS GLOBECOM'18 preprocessing): average every `factor`
-// consecutive samples into one → length n/factor. Denoises + shrinks the CNN input (LUMS reduced 5000
-// packets to 250 with factor 20). The trailing remainder (< factor) is dropped. `out` holds
-// >= n/factor floats. Returns the number of output samples. O(n).
+// Non-overlapping block-average decimation: averages every `factor` samples into one (length n/factor),
+// denoising and shrinking the CNN input; trailing remainder dropped. Returns the output count. O(n).
 inline size_t blockAverageDecimate(const float* x, size_t n, size_t factor, float* out) {
   if (factor == 0) return 0;
   const size_t m = n / factor;
@@ -245,10 +209,8 @@ inline size_t blockAverageDecimate(const float* x, size_t n, size_t factor, floa
 
 // --- Frequency domain: PSD + Doppler (REFERENCE §2.6) ---------------------------------------
 
-// Power spectral density of a real series via the §2.6 recipe: detrend (subtract mean), Hann
-// window (reduces leakage), zero-pad to fft.size(), FFT, power = re^2 + im^2 over the first
-// nfft/2+1 bins. `scratch` is complex work of length fft.size(); `power` holds >= nfft/2+1 floats.
-// Caller owns the Fft (size = a power of two >= n). O(nfft log nfft).
+// PSD of a real series: detrend, Hann window (reduces leakage), zero-pad to fft.size(), FFT, power = |z|^2
+// over the first nfft/2+1 bins. Caller owns the Fft (power-of-two size >= n). O(nfft log nfft).
 inline void powerSpectrum(const float* x, size_t n, const Fft& fft, std::complex<float>* scratch,
                           float* power) {
   const size_t nfft = fft.size();
@@ -272,10 +234,8 @@ struct DopplerFeature {
   float spreadHz;    // power-weighted spectral spread (how broad the motion energy is)
 };
 
-// Doppler features from the power spectrum of a (differential-phase) window. The peak frequency in
-// (0, fHi] is the max Doppler shift; the power-weighted RMS deviation about the spectral centroid is
-// the spread. DC (bin 0) is excluded so a residual offset cannot masquerade as the peak. Caller
-// supplies fft + complex scratch (fft.size()) + power buffer (>= nfft/2+1). O(nfft log nfft).
+// Doppler features from the power spectrum: peak frequency in (0, fHi] is the max shift, power-weighted RMS
+// deviation about the centroid is the spread; DC (bin 0) excluded so a residual offset can't masquerade as the peak. O(nfft log nfft).
 inline DopplerFeature dopplerFeatures(const float* x, size_t n, float fs, float fHi, const Fft& fft,
                                       std::complex<float>* scratch, float* power) {
   powerSpectrum(x, n, fft, scratch, power);
@@ -311,12 +271,8 @@ inline DopplerFeature dopplerFeatures(const float* x, size_t n, float fs, float 
 
 // --- Streaming §2.9 feature extractor -------------------------------------------------------
 
-// Streaming nine-feature extractor over C parallel scalar series (e.g. the gain-locked amplitudes at
-// the K selected subcarriers, one series each). Buffers the last `window` samples per series and,
-// once the window is full, emits the 9-feature block per series every `hop` frames into a reused
-// output vector of length 9*C (consume/copy before the next emit — same zero-copy contract as
-// Preprocessor). Per-frame push O(C); emit O(C * window log window), only every hop. Buffers sized
-// in the ctor -> zero hot-path allocation. Memory ~ C * (window + ~9) floats.
+// Streaming nine-feature extractor over C parallel scalar series: buffers the last `window` samples per series
+// and emits a 9*C feature block every `hop` frames. Push O(C); emit O(C*window log window), buffers sized in ctor.
 class FeatureExtractor {
 public:
   static constexpr size_t FEATURES_PER_SERIES = 9;
@@ -339,8 +295,7 @@ public:
   size_t outputSize() const { return output_.size(); }
   const float* data() const { return output_.data(); }
 
-  // Push one frame's C values; returns true when a feature vector was emitted (window full and `hop`
-  // frames since the last emit), then available via data(). Non-emit frames are O(C).
+  // Returns true when a feature vector was emitted (window full and `hop` frames since last), then available via data(). Non-emit frames are O(C).
   bool push(const float* values) {
     for (size_t i = 0; i < c_; ++i) rings_[i].push(values[i]);
     ++sinceEmit_;
@@ -368,17 +323,8 @@ private:
 
 // --- Streaming inter-subcarrier amplitude-dispersion extractor (windows sigma2[p]) -----------
 
-// Turns the per-packet inter-subcarrier amplitude statistic into a classifier-ready feature block —
-// the change that makes the §0B weapon discriminator usable by a head (the signal is in how
-// sigma2[p] BEHAVES over the ~1.3 s window, not in one packet). Each frame's K subcarrier magnitudes
-// are reduced to {mu[p], sigma2[p], cv[p]=std/mu}; each scalar is buffered as a series and, once
-// `window` frames are in, the §2.9 nineFeatures of each series are emitted every `hop` frames
-// (output length 27 = 3*9, order: mu | sigma2 | cv).
-// INPUT CONTRACT: push RAW per-frame magnitudes (NOT gain-locked / mean-normalized) — a per-frame
-// mean lock cancels the cross-subcarrier flatness that IS the metal signature; cv[p] is the
-// gain-invariant series to prefer if a gain lock is unavoidable. Run over ALL valid subcarriers, not
-// the NBVI subset (NBVI ranks on time-variance, orthogonal to this cross-subcarrier reduction).
-// Per-frame push O(K); emit O(window log window) only every hop. Zero hot-path allocation.
+// Turns per-packet inter-subcarrier dispersion into a classifier-ready block: reduces K magnitudes to {mu[p], sigma2[p], cv[p]=std/mu}, emitting nineFeatures of each series every `hop` frames (output 27 = 3*9).
+// INPUT CONTRACT: push RAW magnitudes, not gain-locked — a mean lock cancels the flatness that IS the metal signature. O(K) push.
 class InterCarrierExtractor {
 public:
   static constexpr size_t NUM_SERIES = 3;  // 0 mu, 1 sigma2, 2 cv

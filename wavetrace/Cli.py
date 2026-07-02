@@ -70,17 +70,14 @@ def collect_source(source, calib_dir, out_dir, spans, *, stage="presence", windo
     ScriptedLabeler over `spans` (the no-camera path).
     tier: 'open' | 'wrapped' | 'concealed', stamped into meta['tier'] so a concealed collection can be
     held out by evaluate_concealment_gap (the open→concealed transfer measurement)."""
-    result, gain_lock = load_calibration(calib_dir)
+    result, gainLock = load_calibration(calib_dir)
     if labeler is None:
-        label_fn = weapon_label_fn if stage == "weapon" else presence_label_fn
-        labeler = ScriptedLabeler([(s, e, True) for s, e in spans], label_fn=label_fn)
+        labelFn = weapon_label_fn if stage == "weapon" else presence_label_fn
+        labeler = ScriptedLabeler([(s, e, True) for s, e in spans], label_fn=labelFn)
     intercarrier = stage == "weapon"
-    # weapon IC and CNN paths must see raw (un-locked) magnitudes: the IC contract in
-    # Features.hpp forbids gain-locking (per-frame mean-scale cancels sigma2[p], the metal
-    # discriminator), and _serving_plan already sets apply_lock=False for all weapon backends.
-    # Passing None here aligns training with serving so the model sees the same distribution.
-    effective_lock = None if intercarrier else gain_lock
-    ds = build_dataset(list(source.frames()), result, effective_lock, labeler, window=window, hop=hop,
+    # weapon IC/CNN paths need raw magnitudes: gain-locking cancels sigma2[p] (the metal discriminator)
+    effectiveLock = None if intercarrier else gainLock
+    ds = build_dataset(list(source.frames()), result, effectiveLock, labeler, window=window, hop=hop,
                        session_id=session_id, subject_id=subject_id, intercarrier=intercarrier,
                        frame_average=frame_average, subtract_baseline=subtract_baseline,
                        subtract_ic_baseline=subtract_ic_baseline)
@@ -137,25 +134,24 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
     """Stream a source through the front-end and publish one verdict per window (+ a final soft-vote
     verdict when vote=True). When guard=True, wires AlertGuard+DriftMonitor for debounce and drift
     advisory (O(S)/frame extra — acceptable on the Pi serving side). O(windows)."""
-    result, gain_lock = load_calibration(calib_dir)
+    result, gainLock = load_calibration(calib_dir)
     session = mode_session(mode, model_path)
-    apply_lock, intercarrier, pick = _serving_plan(mode, session.head)
+    applyLock, intercarrier, pick = _serving_plan(mode, session.head)
     cfg = session.head.config
 
-    img_subc = getattr(result, "image_subcarriers", None)
-    img_base = None
+    imgSubc = getattr(result, "image_subcarriers", None)
+    imgBase = None
     if cfg.subtract_baseline:
-        img_base = image_baseline(result, locked=(apply_lock and gain_lock is not None))
+        imgBase = image_baseline(result, locked=(applyLock and gainLock is not None))
     # weapon IC background subtraction (Item 10/CAUSE 2B): raw baseline, IC path only, mirrors training
-    ic_base = result.baseline_mag if getattr(cfg, "subtract_ic_baseline", False) else None
+    icBase = result.baseline_mag if getattr(cfg, "subtract_ic_baseline", False) else None
 
-    frames_iter = source.frames()
+    framesIter = source.frames()
     if guard:
         from wavetrace.output.Guard import AlertGuard, DriftMonitor
-        drift_mon = DriftMonitor(result.baseline_mag)
-        alert_guard = AlertGuard()
-        # feed raw (pre-lock) per-frame mags to DriftMonitor without disrupting the frame stream
-        # O(S)/frame extra — acceptable on Pi serving side (not the hot DSP path)
+        driftMon = DriftMonitor(result.baseline_mag)
+        alertGuard = AlertGuard()
+        # tee raw (pre-lock) per-frame mags to DriftMonitor without disrupting the frame stream
         def _tee_drift(frames, monitor, pub):
             import numpy as _np
             for fr in frames:
@@ -164,24 +160,24 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
                 if ev:
                     pub.publish_event(ev)
                 yield fr
-        frames_iter = _tee_drift(frames_iter, drift_mon, publisher)
+        framesIter = _tee_drift(framesIter, driftMon, publisher)
 
     voter = SegmentVoter() if vote else None
     out = []
     for t, features, image, ic in iter_windows(
-        frames_iter, result.subcarriers, gain_lock if apply_lock else None,
+        framesIter, result.subcarriers, gainLock if applyLock else None,
         window=cfg.window, hop=cfg.hop, intercarrier=intercarrier,
-        image_subcarriers=img_subc,
+        image_subcarriers=imgSubc,
         frame_average=cfg.frame_average,
-        image_baseline=img_base,
-        ic_baseline=ic_base,
+        image_baseline=imgBase,
+        ic_baseline=icBase,
     ):
         cls, conf = session.predict_window(pick(features, image, ic))
         r = RecognitionResult(); r.class_id = cls; r.confidence = conf; r.timestamp = t
         publisher.publish(r)
         out.append(r)
         if guard:
-            ev = alert_guard.update(t, cls)
+            ev = alertGuard.update(t, cls)
             if ev:
                 publisher.publish_event(ev)
         if voter is not None:
@@ -205,9 +201,7 @@ def _source_from_args(args):
     if args.synthetic:
         from fixtures.SyntheticRecording import generatePairedRecording
         if _parse_spans(args.weapon) and args.weapon_depth <= 0.0:
-            # weapon spans with depth 0 inject NO signal -> weapon windows are physically identical
-            # to no-weapon ones; the resulting dataset is unlearnable (and WeaponHead.fit will reject
-            # it as single-class). Warn loudly instead of silently producing a dead model (B3).
+            # depth 0 injects no signal -> weapon windows are unlearnable (single-class); warn (B3)
             warnings.warn("synthetic --weapon spans set but --weapon-depth is 0: weapon windows will "
                           "carry no signature (pass --weapon-depth > 0)", stacklevel=2)
         spans = _parse_spans(args.presence)
@@ -245,69 +239,69 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="wavetrace", description="WiFi-CSI sensing pipeline")
     sub = ap.add_subparsers(dest="mode", required=True)
 
-    p_cap = sub.add_parser("capture", help="record CSI frames to disk")
-    _add_source_args(p_cap)
-    p_cap.add_argument("--out", required=True)
+    pCap = sub.add_parser("capture", help="record CSI frames to disk")
+    _add_source_args(pCap)
+    pCap.add_argument("--out", required=True)
 
-    p_cal = sub.add_parser("calibrate", help="quiet-baseline calibration -> calibration dir")
-    _add_source_args(p_cal)
-    p_cal.add_argument("--out", required=True)
-    p_cal.add_argument("--baseline-packets", type=int, default=300, dest="baseline_packets")
-    p_cal.add_argument("--no-gain-lock", action="store_true", dest="no_gain_lock")
+    pCal = sub.add_parser("calibrate", help="quiet-baseline calibration -> calibration dir")
+    _add_source_args(pCal)
+    pCal.add_argument("--out", required=True)
+    pCal.add_argument("--baseline-packets", type=int, default=300, dest="baseline_packets")
+    pCal.add_argument("--no-gain-lock", action="store_true", dest="no_gain_lock")
 
-    p_col = sub.add_parser("collect-data", help="frames + scripted labels -> dataset dir")
-    _add_source_args(p_col)
-    p_col.add_argument("--calibration", required=True)
-    p_col.add_argument("--out", required=True)
-    p_col.add_argument("--stage", choices=["presence", "weapon"], default="presence")
-    p_col.add_argument("--label-spans", default="", dest="label_spans",
+    pCol = sub.add_parser("collect-data", help="frames + scripted labels -> dataset dir")
+    _add_source_args(pCol)
+    pCol.add_argument("--calibration", required=True)
+    pCol.add_argument("--out", required=True)
+    pCol.add_argument("--stage", choices=["presence", "weapon"], default="presence")
+    pCol.add_argument("--label-spans", default="", dest="label_spans",
                        help="present/weapon spans 'a:b,c:d'")
-    p_col.add_argument("--window", type=int, default=128)
-    p_col.add_argument("--hop", type=int, default=32)
-    p_col.add_argument("--session-id", default="", dest="session_id")
-    p_col.add_argument("--subject-id", default="", dest="subject_id")
-    p_col.add_argument("--tier", choices=["open", "wrapped", "concealed"], default="",
+    pCol.add_argument("--window", type=int, default=128)
+    pCol.add_argument("--hop", type=int, default=32)
+    pCol.add_argument("--session-id", default="", dest="session_id")
+    pCol.add_argument("--subject-id", default="", dest="subject_id")
+    pCol.add_argument("--tier", choices=["open", "wrapped", "concealed"], default="",
                        help="weapon ground-truth tier -> meta['tier'] (concealed = held-out test split)")
-    p_col.add_argument("--frame-average", type=int, default=1, dest="frame_average")
-    p_col.add_argument("--subtract-baseline", action="store_true", dest="subtract_baseline")
+    pCol.add_argument("--frame-average", type=int, default=1, dest="frame_average")
+    pCol.add_argument("--subtract-baseline", action="store_true", dest="subtract_baseline")
 
-    p_tr = sub.add_parser("train", help="dataset(s) -> model")
-    p_tr.add_argument("datasets", nargs="+")
-    p_tr.add_argument("--out", required=True)
-    p_tr.add_argument("--stage", choices=["presence", "weapon"], default="presence")
-    p_tr.add_argument("--backend", default=None, help="mlp|svm|variance|cnn (default per stage)")
-    p_tr.add_argument("--feature-mode", default="ic27", dest="feature_mode",
+    pTr = sub.add_parser("train", help="dataset(s) -> model")
+    pTr.add_argument("datasets", nargs="+")
+    pTr.add_argument("--out", required=True)
+    pTr.add_argument("--stage", choices=["presence", "weapon"], default="presence")
+    pTr.add_argument("--backend", default=None, help="mlp|svm|variance|cnn (default per stage)")
+    pTr.add_argument("--feature-mode", default="ic27", dest="feature_mode",
                       choices=["ic27", "fusion", "cnn"], help="weapon stage only")
 
-    p_loc = sub.add_parser("localize", help="AoA spatial heatmap (where) -> track + heatmap dir")
-    _add_source_args(p_loc)
-    p_loc.add_argument("--out", required=True)
-    p_loc.add_argument("--spacing", type=float, default=0.5,
+    pLoc = sub.add_parser("localize", help="AoA spatial heatmap (where) -> track + heatmap dir")
+    _add_source_args(pLoc)
+    pLoc.add_argument("--out", required=True)
+    pLoc.add_argument("--spacing", type=float, default=0.5,
                        help="ULA element spacing in wavelengths (default 0.5 = lambda/2)")
-    p_loc.add_argument("--method", choices=["music", "bartlett"], default="music")
-    p_loc.add_argument("--num-sources", type=int, default=1, dest="num_sources")
-    p_loc.add_argument("--num-angles", type=int, default=181, dest="num_angles")
-    p_loc.add_argument("--subcarrier-hz", type=float, default=312.5e3, dest="subcarrier_hz",
+    pLoc.add_argument("--method", choices=["music", "bartlett"], default="music")
+    pLoc.add_argument("--num-sources", type=int, default=1, dest="num_sources")
+    pLoc.add_argument("--num-angles", type=int, default=181, dest="num_angles")
+    pLoc.add_argument("--subcarrier-hz", type=float, default=312.5e3, dest="subcarrier_hz",
                        help="subcarrier spacing for the range axis (HT20/64 = 312.5 kHz)")
-    p_loc.add_argument("--max-range-m", type=float, default=12.0, dest="max_range_m")
-    p_loc.add_argument("--num-ranges", type=int, default=64, dest="num_ranges",
+    pLoc.add_argument("--max-range-m", type=float, default=12.0, dest="max_range_m")
+    pLoc.add_argument("--num-ranges", type=int, default=64, dest="num_ranges",
                        help="range grid resolution of the joint 2-D room map")
-    p_loc.add_argument("--no-range", action="store_true", dest="no_range",
+    pLoc.add_argument("--no-range", action="store_true", dest="no_range",
                        help="azimuth only (skip the joint 2-D range axis)")
-    p_loc.add_argument("--track", default=None,
+    pLoc.add_argument("--track", default=None,
                        help="JSONL file for the per-frame localization track (default <out>/track.jsonl)")
-    p_loc.add_argument("--no-filter", action="store_true", dest="no_filter",
+    pLoc.add_argument("--no-filter", action="store_true", dest="no_filter",
                        help="publish raw per-frame fixes (skip the constant-velocity Kalman tracker)")
 
-    p_run = sub.add_parser("run", help="stream inference -> publish verdicts")
-    _add_source_args(p_run)
-    p_run.add_argument("--calibration", required=True)
-    p_run.add_argument("--model", required=True)
-    p_run.add_argument("--head-mode", choices=["presence", "weapon"], default="presence",
+    pRun = sub.add_parser("run", help="stream inference -> publish verdicts")
+    _add_source_args(pRun)
+    pRun.add_argument("--calibration", required=True)
+    pRun.add_argument("--model", required=True)
+    pRun.add_argument("--head-mode", choices=["presence", "weapon"], default="presence",
                        dest="head_mode", help="which operating mode to serve")
-    p_run.add_argument("--out", default=None, help="JSONL output file (default stdout)")
-    p_run.add_argument("--vote", action="store_true", help="also emit a final soft-vote verdict")
-    p_run.add_argument("--guard", action="store_true", help="enable AlertGuard debounce + DriftMonitor advisory")
+    pRun.add_argument("--out", default=None, help="JSONL output file (default stdout)")
+    pRun.add_argument("--vote", action="store_true", help="also emit a final soft-vote verdict")
+    pRun.add_argument("--guard", action="store_true", help="enable AlertGuard debounce + DriftMonitor advisory")
 
     args = ap.parse_args(argv)
 
@@ -333,8 +327,7 @@ def main(argv=None) -> int:
         else:
             cfg = None
             if args.backend:
-                # k is filled from the dataset meta inside train_weapon when config is None; pass a
-                # config only to override the backend
+                # config only needed to override the backend; k still comes from dataset meta
                 from wavetrace.groundtruth import load_dataset
                 k = int(load_dataset(args.datasets[0]).meta["K"])
                 cfg = ModelConfig(stage="weapon", k=k, backend=args.backend)

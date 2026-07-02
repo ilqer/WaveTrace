@@ -64,8 +64,7 @@ class FrameSnooper:
         self._source = source
         self.latest_grid = None
         self.latest_frame = None
-        # node_id -> latest mean |CSI| over subcarriers. Each UDP/mesh frame is single-antenna
-        # (CsiFrame(1, S)) tagged with a node_id, so power is per RX board, not per antenna.
+        # node_id -> latest mean |CSI|; each UDP/mesh frame is single-antenna, so power is per RX board.
         self.node_power: dict[int, float] = {}
         self._meter = health_meter
 
@@ -169,7 +168,7 @@ class WaveTraceRunner:
         _sub = sorted(_glob.glob(os.path.join(dataset_path, "*")))
         ds_dirs = [d for d in _sub if os.path.isdir(d) and os.path.exists(os.path.join(d, "X_features.npy"))]
         if not ds_dirs:
-            ds_dirs = [dataset_path]  # treat as a single dataset dir
+            ds_dirs = [dataset_path]
 
         if not any(os.path.exists(d) for d in ds_dirs):
             self.log(f"No dataset at {dataset_path}; run 'collect' first.")
@@ -293,8 +292,7 @@ class WaveTraceRunner:
         load_mode = "presence" if mode == "count" else mode
         
         if is_mesh:
-            self.log(f"Mesh setup detected! Loading per-node models from {model_path}...")
-            # Inline loading logic for mesh nodes
+            self.log(f"Mesh setup detected. Loading per-node models from {model_path}...")
             import glob, json
             nodes = {}
             for mdir in sorted(glob.glob(os.path.join(model_path, "node*"))):
@@ -308,8 +306,7 @@ class WaveTraceRunner:
                 sess = mode_session(load_mode, mpath)
                 alock, ic, pck = _serving_plan(load_mode, sess.head)
                 classes = [int(c) for c in sess.head.classes_]
-                # Item 10/CAUSE 2B: if this weapon head was trained with IC background subtraction,
-                # serve with the SAME per-node baseline or σ²[p] silently mismatches training.
+                # Item 10/CAUSE 2B: must serve with the same IC baseline used in training or σ²[p] mismatches.
                 ic_base = (res.baseline_mag
                            if getattr(sess.head.config, "subtract_ic_baseline", False) else None)
                 nodes[nid] = dict(
@@ -342,7 +339,6 @@ class WaveTraceRunner:
             _pos_idx = global_classes.index(1) if 1 in global_classes else -1
             _ant_weights = None
         else:
-            # Single node fallback
             self.log("Single-node setup detected.")
             result, gain_lock = load_calibration(calib_dir)
             session = mode_session(load_mode, model_path)
@@ -408,7 +404,6 @@ class WaveTraceRunner:
         last_t = 0.0
         _last_tel_t = [0.0]
 
-        # Mesh specific state
         import collections
         from wavetrace.Source import parse_batch_links
         buffers = collections.defaultdict(lambda: collections.deque(maxlen=300))  # ~3s at 100Hz (#17)
@@ -419,9 +414,7 @@ class WaveTraceRunner:
         self.log("Stream started.")
         try:
             if is_mesh:
-                # P5: per-link serving math lives once in run_weapon; the streamer calls it so a
-                # weapon-serving change is made in a single place. Works for all mesh modes (the dwell
-                # vote is head-agnostic), so presence/count/weapon share it.
+                # per-link serving math lives once in run_weapon; presence/count/weapon all share it.
                 from scripts.run_weapon import dwell_proba_detailed, _link_health
                 # Use raw UDP ingestion for parse_batch_links instead of snooper.frames()
                 import socket
@@ -445,7 +438,6 @@ class WaveTraceRunner:
                     if now < next_fuse: continue
                     next_fuse = now + 1.5
 
-                    # Trim buffers to 3 seconds
                     for buf in buffers.values():
                         if buf:
                             cutoff = buf[-1].timestamp - 3.0
@@ -468,15 +460,13 @@ class WaveTraceRunner:
                         m = _lookup_entry(key)
                         if m is None: continue
 
-                        # Accumulate node power for UI
                         grids = [np.abs(f.grid).mean() for f in buffers[key]]
                         node_power[key[1]] = float(np.mean(grids))
                         _hz, _miss = _link_health(list(buffers[key]))
                         link_stats.append({"tx": key[0], "rx": key[1],
                                            "hz": round(_hz, 1), "miss": round(_miss, 3)})
 
-                        # Shared dwell vote (run_weapon.dwell_proba_detailed) — temporal soft vote over
-                        # the buffer + the last window's image/features/ic for the spectrogram.
+                        # temporal soft vote over the buffer + last window's image/features/ic for the spectrogram
                         last_probs, image, features, ic, _nw = dwell_proba_detailed(
                             list(buffers[key]), 100.0, m)
                         if last_probs is None: continue
@@ -676,8 +666,7 @@ class WaveTraceRunner:
             return
 
         self.log(f"[CAM] Capturing {duration:g}s  stage={req.col_stage}  cam={cam_index}  port={req.udp_port}")
-        # Camera runs at 5 fps for YOLO labeling — labels change slowly (person enters/leaves room),
-        # CSI windows are 1.28s wide, so one label per 200ms is plenty. Reduces CPU load 3x vs 15fps.
+        # 5fps is plenty since labels change slowly relative to the 1.28s CSI window; cuts CPU load 3x vs 15fps.
         CAM_FPS = 5.0
 
         per_node = _col.defaultdict(list)
