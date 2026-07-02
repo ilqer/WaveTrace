@@ -13,7 +13,7 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
   const [key,   setKey]     = useState(0);
   const retryTimer          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Clear any pending auto-retry timer when the URL changes
+  // Clear auto-retry on URL change.
   useEffect(() => {
     setError(false);
     setKey(k => k + 1);
@@ -22,7 +22,7 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
 
   const handleError = useCallback(() => {
     setError(true);
-    // Auto-retry after 5s, covering a briefly-busy camera (e.g. another ffmpeg process releasing it)
+    // Auto-retry after 5s (covers briefly-busy camera during ffmpeg release).
     retryTimer.current = setTimeout(() => {
       setError(false);
       setKey(k => k + 1);
@@ -46,7 +46,7 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
         </div>
       )}
 
-      {/* <img> stays mounted (src set to about:blank) to force-abort the MJPEG stream — unmounting mid-download leaks the connection in Chrome. */}
+      {/* Keep <img> mounted with about:blank to force-abort MJPEG stream (prevents Chrome connection leak). */}
       <img
         key={key}
         src={camUrl || 'about:blank'}

@@ -1,4 +1,4 @@
-"""T6/P10 — LinkVoter probability fusion and accuracy_weights."""
+"""LinkVoter probability fusion and accuracy weights tests."""
 
 import numpy as np
 import pytest
@@ -74,8 +74,8 @@ def test_finalize_without_add_raises():
 
 
 def test_link_fusion_beats_best_single_link():
-    """#6: two complementary above-chance links (2.4 GHz mesh vs 5 GHz Pi) fuse to beat either alone.
-    Each link misses a different window; the accuracy-weighted blend recovers both."""
+    """Fusing two complementary links (2.4 GHz mesh vs 5 GHz Pi) beats either one alone.
+    Accuracy-weighted blend recovers when each link misses a different window."""
     y = np.array([0, 0, 1, 1])
     # link A: confident-correct except window 3; link B: confident-correct except window 0
     pa = np.array([[0.9, 0.1], [0.8, 0.2], [0.2, 0.8], [0.6, 0.4]])  # wrong on 3 -> acc 0.75

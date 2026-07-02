@@ -38,7 +38,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
 
 
 
-  // Schema mirrors each script's real argparse; `flag` omitted means positional (order = schema).
+  // Argparse schema (missing flag means positional).
   type Opt = { name: string; flag?: string; kind: 'text' | 'number' | 'bool'; def?: string; help?: string };
   const SCRIPT_SCHEMA: Record<string, Opt[]> = {
     'scripts/health_monitor.py': [{ name: 'port', kind: 'number', def: '9877', help: 'positional UDP port' }],
@@ -133,7 +133,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
   const LOCAL_SCRIPTS = Object.keys(SCRIPT_SCHEMA);
   const schema = SCRIPT_SCHEMA[scriptName] ?? [];
 
-  // Positionals fill earlier gaps with their default so argparse position is preserved.
+  // Fill positional gaps with defaults to preserve argparse order.
   const buildArgs = (): string => {
     const parts: string[] = [];
     const positionals = schema.filter(o => !o.flag);

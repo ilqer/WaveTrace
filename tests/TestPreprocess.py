@@ -1,7 +1,7 @@
-"""Phase 3 (step 3a) — signal/preprocess: conj-mult -> Hampel -> unwrap -> normalize.
+"""Signal preprocess tests: conj-mult, Hampel, unwrap, normalize.
 
-Per-transform unit tests + streaming Preprocessor integration tests. Validates the physics
-(CFO/SFO cancellation, spike rejection, phase continuity) on synthetic data with known truth.
+Validates physics logic: CFO/SFO cancellation, spike rejection, phase continuity.
+Uses synthetic data with known ground truth.
 """
 
 import numpy as np
@@ -19,7 +19,7 @@ from wavetrace import (
 from fixtures.SyntheticCsi import generateStream
 
 
-# --- combined_channel_difference: nulls the common environment (in-baggage material feature) ---
+# --- combined_channel_difference: subtracts common environment ---
 
 def test_combined_channel_difference_subtracts_antenna_zero():
     rng = np.random.default_rng(7)
@@ -92,9 +92,9 @@ def test_hampel_passes_normal_replaces_spike():
 # --- unwrap_step -----------------------------------------------------------------------------
 
 def test_unwrap_step_continuity_and_wrap():
-    # Small step: just accumulates.
+    # Small step: accumulates.
     assert unwrap_step(0.2, 0.1, 10.0) == pytest.approx(10.1)
-    # Apparent jump 3.0 -> -3.0 is physically +0.2832 rad (crossed +pi), not -6.0.
+    # Apparent jump 3.0 -> -3.0 is physically +0.2832 rad (crossed +pi).
     assert unwrap_step(-3.0, 3.0, 0.0) == pytest.approx(-6.0 + 2 * np.pi, abs=1e-5)
 
 
@@ -108,8 +108,8 @@ def test_preprocessor_output_geometry():
 # --- Preprocessor: matches an independent numpy implementation of the chain ------------------
 
 def _referenceChain(frames, alpha):
-    """numpy reference for the A=1 cross-subcarrier chain (Hampel disabled): conj-mult adjacent
-    subcarriers -> temporal unwrap -> EMA-detrend normalize."""
+    """Numpy reference for A=1 cross-subcarrier chain (Hampel disabled).
+    conj-mult -> temporal unwrap -> EMA-detrend normalize."""
     H = np.stack([f.grid[0] for f in frames])
     D = H[:, 1:] * np.conj(H[:, :-1])
     u = np.unwrap(np.angle(D), axis=0)
@@ -121,7 +121,7 @@ def _referenceChain(frames, alpha):
 
 
 def test_preprocessor_chain_matches_numpy_reference():
-    # Wrapping motion exercises unwrap; Hampel disabled (k huge) to isolate the rest of the chain.
+    # Wrapping motion tests unwrap. Hampel disabled (k huge) to isolate other steps.
     rng = np.random.default_rng(5)
     T, S = 200, 6
     psi = rng.uniform(-np.pi, np.pi, S)
@@ -144,14 +144,14 @@ def test_preprocessor_chain_matches_numpy_reference():
 # --- Preprocessor: spike rejection holds phase ----------------------------------------------
 
 def test_preprocessor_rejects_magnitude_spike():
-    # Small amplitude jitter gives the Hampel window non-zero MAD; one frame gets a magnitude spike
-    # + phase jump on one cell — Hampel(magnitude) must hold the phase so output stays ~0.
+    # Hampel(magnitude) must hold phase steady during a magnitude spike.
+    # Output should stay near 0.
     rng = np.random.default_rng(7)
     A, S, T, f = 2, 4, 30, 15
     h0 = np.exp(1j * rng.uniform(-np.pi, np.pi, (A, S))).astype(np.complex64)
     frames = []
     for ti in range(T):
-        g = (h0 * rng.uniform(0.9, 1.1)).astype(np.complex64)  # real scale -> jitter |.|, keep phase
+        g = (h0 * rng.uniform(0.9, 1.1)).astype(np.complex64)  # Jitter amplitude, keep phase
         if ti == f:
             g[1, 0] = 50.0 * np.exp(1j * (np.angle(h0[1, 0]) + 2.0))  # |.|=50 spike + 2 rad twist
         frame = CsiFrame(A, S)
@@ -180,7 +180,7 @@ def test_preprocessor_recovers_motion_frequency():
     pre = Preprocessor(1, 64, normalize_alpha=0.01)  # gentle high-pass so 0.3 Hz passes
     out = np.stack([pre.process(f).copy()[0] for f in frames])
 
-    # Average power spectrum across cells (all oscillate at fTrue) to lift SNR, then band-argmax.
+    # Average power spectrum across cells to lift SNR. Band-argmax to find fTrue.
     n = out.shape[0]
     x = (out - out.mean(0)) * np.hanning(n)[:, None]
     nfft = 1 << (max(4 * n, 64) - 1).bit_length()

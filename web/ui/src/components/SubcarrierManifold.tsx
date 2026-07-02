@@ -16,7 +16,7 @@ export function SubcarrierManifold({ data }: SubcarrierManifoldProps) {
   const subs  = data?.length       ?? 32;
   const slots = data?.[0]?.length  ?? 128;
 
-  // Rebuild geometry only when dimensions change; pre-allocate color attribute.
+  // Rebuild geometry on dimension change; pre-allocate colors.
   const geo = useMemo(() => {
     const g = new THREE.PlaneGeometry(W, D, subs - 1, slots - 1);
     g.rotateX(-Math.PI / 2);  // lay flat in XZ plane; Y becomes height
@@ -24,7 +24,7 @@ export function SubcarrierManifold({ data }: SubcarrierManifoldProps) {
     return g;
   }, [subs, slots]);
 
-  // Dispose GPU geometry when it's replaced by a new one.
+  // Dispose GPU geometry on replacement.
   useEffect(() => () => { geo.dispose(); }, [geo]);
 
   useEffect(() => {

@@ -1,21 +1,10 @@
-"""Phase 6c — the LOCKED eval gate: leave-one-session-out AND leave-one-subject-out (rev-7 #1,
-2601.02177) + the two no-train baselines the head must beat.
+"""Phase 6c: Eval gate (LOGO + baselines).
 
-NEVER report a random within-session split as the headline number: CSI windows from one session are
-heavily autocorrelated (hop < window), so a random split leaks near-duplicate windows across
-train/test and inflates accuracy. LeaveOneGroupOut holds out every window of one session (or one
-subject) at a time — the honest generalization measure.
+Always use LeaveOneGroupOut (LOGO) for generalization metrics. Random splits leak autocorrelated windows.
 
 Baselines:
-  * majority-class — predict the training fold's most frequent class.
-  * PresenceSegmenter — the no-train DSP gate (signal/PresenceSegment.hpp): windowed CV of the mean
-    channel energy with hysteresis. It is a *segment detector*, not a per-window classifier, so the
-    mapping here is: replay each window's per-frame energies through a fresh segmenter and call the
-    window "present" if the gate ever opens inside it. Fed from X_image (the same windows the head
-    sees); note X_image is gain-locked — the per-frame mean over ALL subcarriers is pinned by the
-    lock, but the K NBVI subcarriers' mean still varies, so the CV gate keeps signal.
-
-All offline. O(folds · fit) for the gate; segmenter baseline O(n · window · cv_window).
+* majority-class: predict training fold's frequent class.
+* PresenceSegmenter: no-train DSP gate. Windowed CV of mean channel energy. It's a segment detector, mapped here to per-window.
 """
 
 import numpy as np
@@ -28,10 +17,7 @@ from wavetrace.recognition.Model import PresenceHead
 
 
 def leave_one_group_out(X, y, groups, make_head) -> dict:
-    """Hold out one group per fold; fit a FRESH head on the rest (make_head() -> unfitted head).
-
-    Returns {"folds": [{group, n, accuracy, majority_accuracy}], "accuracy", "majority_accuracy"
-    (pooled over all held-out windows), "confusion" (C×C ndarray, rows=true, pooled)}."""
+    """Hold out one group per fold; fit a fresh head on the rest. Returns metrics dict."""
     X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y, dtype=np.int64)
     groups = np.asarray(groups)
@@ -73,8 +59,7 @@ def leave_one_group_out(X, y, groups, make_head) -> dict:
 
 
 def binary_rates(confusion) -> dict:
-    """{tpr, fp_rate} from a 2×2 confusion matrix (rows=true, cols=pred, classes sorted asc —
-    positive class = the larger id, i.e. present/weapon = 1). O(1)."""
+    """{tpr, fp_rate} from 2x2 confusion matrix. O(1)."""
     cm = np.asarray(confusion, dtype=np.float64)
     if cm.shape != (2, 2):
         raise ValueError(f"binary_rates expects a 2x2 confusion matrix, got {cm.shape}")
@@ -87,10 +72,7 @@ def binary_rates(confusion) -> dict:
 
 
 def tier_verdict(reports, *, fp_max: float = 0.10, tpr_min: float = 0.90) -> dict:
-    """The Phase-7 tier gate (LOCKED 2026-06-10): PASS iff EVERY report meets FP ≤ fp_max AND
-    TPR ≥ tpr_min (conservative worst-of-splits). FAIL-method vs FAIL-hardware attribution is a
-    human call — the harness reports which bound broke. `reports` = dict name -> report carrying
-    tpr/fp_rate (e.g. {"session": ..., "subject": ...})."""
+    """Phase-7 tier gate: PASS iff EVERY report meets FP <= fp_max AND TPR >= tpr_min."""
     worst_tpr = min(r["tpr"] for r in reports.values())
     worst_fp = max(r["fp_rate"] for r in reports.values())
     reasons = []
@@ -112,11 +94,7 @@ def evaluate_weapon(
     X, y, *, session_ids, subject_ids, make_head,
     fp_max: float = 0.10, tpr_min: float = 0.90,
 ) -> dict:
-    """Stage-E tier report: LOGO over session AND subject + the locked verdict.
-
-    make_head: () -> unfitted WeaponHead (any backend; pass X matching its input contract).
-    For the 7d RF sweep, call this once per RF config on that config's capture and report
-    per-config (the harness itself is config-agnostic)."""
+    """Stage-E tier report: LOGO over session and subject + verdict. make_head returns unfitted WeaponHead."""
     reports = {
         "session": leave_one_group_out(X, y, session_ids, make_head),
         "subject": leave_one_group_out(X, y, subject_ids, make_head),
@@ -131,19 +109,11 @@ def evaluate_concealment_gap(
     X, y, is_concealed, groups, make_head, *,
     fp_max: float = 0.10, tpr_min: float = 0.90,
 ) -> dict:
-    """Measure the open→concealed transfer the whole weapon strategy bets on (3-tier ground truth,
-    REFERENCE_DIGEST §0B): train ONLY on the visible tiers (open / see-through-wrapped) and test on
-    the fully held-out truly-concealed split. The concealed set is never in any training fold, so its
-    TPR/FP is the honest deployment number — the project's documented "hope it transfers" turned into
-    a measurement instead of an assumption.
+    """Evaluate open->concealed transfer. Train on visible, test on concealed.
 
-    is_concealed: (n,) bool — True for tier-3 (scripted, truly concealed) samples.
-    groups: (n,) session/subject ids — folds the *visible* reference (within-condition LOGO), so the
-    gap compares like-for-like generalization, not optimistic resubstitution.
-    make_head: () -> unfitted WeaponHead (binary). O(folds·fit + fit).
-
-    Returns {"concealed": {n,tpr,fp_rate,accuracy}, "visible": logo_report, "tpr_gap", "verdict"}.
-    The verdict gates ONLY on the concealed split (visible passing is necessary but not the target)."""
+    is_concealed: mask for concealed samples.
+    groups: visible reference folds.
+    Returns metrics dict. Verdict based on concealed split."""
     X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y, dtype=np.int64)
     mask = np.asarray(is_concealed, dtype=bool)
@@ -179,11 +149,7 @@ def evaluate_concealment_gap(
 def segmenter_baseline(
     X_image, *, cv_window: int = 32, enter_cv: float = 0.08, exit_cv: float = 0.04
 ) -> np.ndarray:
-    """No-train DSP baseline: per-window present/absent from the C++ PresenceSegmenter.
-
-    X_image (n, K, window) — each window's K-subcarrier amplitudes over time. Per window: collapse to
-    the per-frame mean energy (the segmenter does the K-mean itself), replay through a fresh
-    segmenter, label 1 if the CV gate ever opens. Returns (n,) int64. O(n · window · cv_window)."""
+    """No-train DSP baseline: per-window present/absent from PresenceSegmenter. O(n * window * cv_window)."""
     X_image = np.asarray(X_image, dtype=np.float32)
     if X_image.ndim != 3:
         raise ValueError(f"segmenter_baseline expects (n, K, window), got {X_image.shape}")
@@ -205,10 +171,7 @@ def evaluate_presence(
     X_features, y, *, session_ids, subject_ids, config: ModelConfig, X_image=None,
     segmenter_kwargs: dict | None = None,
 ) -> dict:
-    """The full Phase-6 DoD report: LOGO over sessions AND subjects + both baselines.
-
-    Returns {"session": logo_report, "subject": logo_report, "segmenter_accuracy" (when X_image
-    given — pooled, no folds: the segmenter has nothing to train)}."""
+    """Phase-6 DoD report: LOGO over sessions and subjects + baselines."""
     make_head = lambda: PresenceHead(config)
     report = {
         "session": leave_one_group_out(X_features, y, session_ids, make_head),

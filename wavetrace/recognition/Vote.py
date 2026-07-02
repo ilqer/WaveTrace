@@ -1,20 +1,10 @@
-"""Phase 7p-e — soft majority voting over one presence event (Zhou, "Detection of Suspicious
-Objects Concealed by Walking Pedestrians").
+"""Phase 7p-e: Soft majority voting over presence event.
 
-During one PresenceSegmenter-bounded active segment, every emitted window gets classified and the
-head's CLASS PROBABILITIES are accumulated; at segment close the verdict is argmax of the MEAN
-probability (soft vote — same cost as hard majority, strictly better when calibrated). Zhou's
-per-snapshot CNN was 51.1%; voting over the walk lifted it to 93.3%. ⚠️ The gain is large only in
-the MOVING regime (decorrelated per-window views); near-identical static windows have correlated
-errors and voting helps little (rev-5 note — expect the lift at tier 7c, not 7a/7b).
+Accumulates class probabilities during an active segment; verdict is argmax of mean.
+Voting helps moving subjects, not static windows.
+Options: mid-segment extraction and window decimation.
 
-Zhou options reproduced: mid-segment extraction (middle_fraction — the pedestrian is crossing the
-link in the middle of the segment, the edges are approach/leave) and every-other-window decimation
-(decimate — adjacent windows overlap by window-hop frames, decimation de-correlates votes).
-
-O(1) per add (running per-class sums would lose mid-segment selection, so windows are kept:
-O(votes) memory, O(votes) finalize — votes per segment is small, seconds × emit rate).
-"""
+O(1) per add, O(votes) finalize."""
 
 import numpy as np
 
@@ -37,18 +27,14 @@ class SegmentVoter:
         return len(self._probas)
 
     def add(self, proba) -> None:
-        """One window's class-probability vector (C,) from the mode session's head."""
+        """Add class-probability vector."""
         p = np.asarray(proba, dtype=np.float64).ravel()
         if self._probas and p.size != self._probas[0].size:
             raise ValueError(f"class count changed mid-segment: {p.size} vs {self._probas[0].size}")
         self._probas.append(p)
 
     def finalize(self) -> tuple[int, np.ndarray]:
-        """Segment closed: (argmax class INDEX, mean probability vector) over the selected votes,
-        then reset for the next segment. Map the index through the head's classes_.
-
-        When confidence_weighted=True, each window's vote is weighted by its own peak probability
-        (max over classes), so borderline windows count less than confident ones."""
+        """Close segment: returns (argmax class index, mean probability vector)."""
         if not self._probas:
             raise ValueError("SegmentVoter: no votes in this segment")
         n = len(self._probas)

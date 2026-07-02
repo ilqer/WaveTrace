@@ -2,9 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// Errors that are expected on every browser refresh, uvicorn reload, or brief
-// backend restart. Vite logs them as errors by default; suppress them so only
-// real (unexpected) proxy errors stand out.
+// Suppress expected proxy errors (browser refresh, backend restart) to highlight real issues.
 const EXPECTED_CODES = new Set(['EPIPE', 'ECONNRESET', 'ECONNREFUSED']);
 
 function isSuppressed(err: Error): boolean {

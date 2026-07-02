@@ -1,4 +1,4 @@
-"""Per-node vote weight wiring: _logo_accuracy reads each node's honest LOGO balanced accuracy."""
+"""Tests for per-node vote weighting. _logo_accuracy reads each node's LOGO balanced accuracy."""
 
 import json
 
@@ -26,13 +26,13 @@ def test_falls_back_to_subject(tmp_path):
 
 
 def test_none_when_no_logo(tmp_path):
-    """A model trained without a foldable group has no honest number -> None (neutral weight 1.0)."""
+    """Model trained without foldable groups lacks validation accuracy -> returns None (neutral weight 1.0)."""
     assert _logo_accuracy(_write(tmp_path, {"logo": {}})) is None
     assert _logo_accuracy(_write(tmp_path, {})) is None
 
 
 def test_none_when_file_missing_or_bad(tmp_path):
-    """Missing/corrupt metrics.json must not crash serving -> None."""
+    """Missing or corrupt metrics.json returns None to avoid crashing serving."""
     assert _logo_accuracy(str(tmp_path / "nope.json")) is None
     bad = tmp_path / "bad.json"
     bad.write_text("{not json")

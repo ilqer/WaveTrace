@@ -1,7 +1,6 @@
-"""Phase 4 (step 4c) — signal/Spectrogram: the sliding selected-subcarrier × time CSI image.
+"""Spectrogram tests: sliding selected-subcarrier x time CSI image.
 
-Validates emit cadence, output shape, chronological column ordering, and determinism — the DoD
-"spectrogram has the expected shape and is reproducible on the fixture" check.
+Validates emit cadence, output shape, chronological column ordering, and determinism.
 """
 
 import numpy as np
@@ -15,12 +14,12 @@ def test_spectrogram_shape_and_cadence():
     sb = SpectrogramBuilder(K, T, H)
     emits = [i for i in range(300) if sb.push(np.full(K, float(i), dtype=np.float32))]
     assert sb.image.shape == (K, T)
-    assert emits[0] == T - 1               # first image once the window first fills
-    assert all((e - emits[0]) % H == 0 for e in emits)  # then every hop
+    assert emits[0] == T - 1               # First image emitted once window fills.
+    assert all((e - emits[0]) % H == 0 for e in emits)  # Then emits every hop.
 
 
 def test_spectrogram_column_order_and_content():
-    # Encode frame index + subcarrier into each value so we can check the (K x T) layout exactly.
+    # Encode frame index and subcarrier to verify (K x T) layout.
     K, T, H = 4, 8, 2
     sb = SpectrogramBuilder(K, T, H)
     emitFrame = None

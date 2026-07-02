@@ -1,6 +1,4 @@
-"""MacBook webcam camera-labeling core: offline YOLO labeling of (ts, frame) streams and the
-throttled frame buffer. The cv2/ultralytics deps are NOT needed here — `stream_labels` is detector-
-agnostic (stub detector via VisionLabeler) and `record_frames` takes an injected grab/clock."""
+"""Webcam labeling core. Offline YOLO stream labeling and throttled frame buffer."""
 
 import threading
 
@@ -65,7 +63,7 @@ def test_record_frames_stop_event_returns_empty():
 
 
 def test_record_labels_online_labels_live_and_calls_back():
-    """Online path runs the labeler per grabbed frame and fires on_label live; returns sorted Labels."""
+    """Online path runs labeler per frame, fires on_label, returns sorted Labels."""
     lab = VisionLabeler(_stub_detector, label_fn=presence_label_fn)
     imgs = iter([(2.0, "person"), (1.0, "empty"), (0.5, "person")])
     ticks = {"t": 0.0}

@@ -99,19 +99,18 @@ export function useWaveTrace() {
   const wsLogs = useRef<WebSocket | null>(null);
   const wsTraining = useRef<WebSocket | null>(null);
 
-  // Each connect() call bumps this; onclose handlers bail if the generation has moved on (socket
-  // was intentionally closed), avoiding the raciness of the old closingRef+setTimeout(0) hack.
+  // Generation counter prevents stale onclose handlers from racing after intentional disconnects.
   const generation = useRef(0);
 
-  // Reconnect state — exponential backoff capped at 30 s
+  // Reconnect with exponential backoff (max 30s).
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(2000);
-  // Training WS reconnects independently — backend closes it when idle, so it can't share connect().
+  // Training WS reconnects independently (backend closes it when idle).
   const trainingReconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trainingReconnectDelay = useRef(2000);
-  // Debounce disconnect so brief WebSocket cycles don't flash the disconnected UI
+  // Debounce disconnects to prevent UI flashing during WS reconnects.
   const disconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Stable ref so onclose handlers can always call the latest connect()
+  // Stable ref for onclose handlers to call latest connect().
   const connectRef = useRef<() => void>(() => {});
 
   const addLog = useCallback((msg: string) => {
@@ -121,7 +120,7 @@ export function useWaveTrace() {
 
   const connect = useCallback(() => {
     const wsUrl = `ws://${window.location.host}`;
-    // Bump generation — any onclose from a prior generation is stale and ignored.
+    // Bump generation to ignore stale onclose handlers.
     const gen = ++generation.current;
     const isStale = () => generation.current !== gen;
 
@@ -157,7 +156,7 @@ export function useWaveTrace() {
       }, reconnectDelay.current);
     };
 
-    // Close old sockets; their onclose fires later but isStale() is already true, so no reconnect loop.
+    // Close old sockets (isStale() prevents reconnect loop).
     if (trainingReconnectTimer.current) { clearTimeout(trainingReconnectTimer.current); trainingReconnectTimer.current = null; }
     wsStream.current?.close();
     wsInference.current?.close();
@@ -235,7 +234,7 @@ export function useWaveTrace() {
     openTrainingWs();
   }, [addLog]);
 
-  // Keep connectRef in sync so reconnect closures call the latest version
+  // Sync connectRef for reconnect closures.
   useEffect(() => { connectRef.current = connect; }, [connect]);
 
   useEffect(() => {
@@ -245,7 +244,7 @@ export function useWaveTrace() {
       .catch(e => console.error(e));
     connect();
 
-    // Bump generation to invalidate pending onclose/timer handlers before closing sockets.
+    // Bump generation to invalidate pending handlers before closing.
     return () => {
       ++generation.current;
       if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }

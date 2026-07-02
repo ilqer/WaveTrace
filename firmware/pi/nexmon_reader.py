@@ -1,23 +1,11 @@
-"""Read the live Nexmon CSI stream on the Pi and yield complex CSI vectors.
+"""Read live Nexmon CSI stream on Pi and yield complex CSI vectors.
+Decodes UDP datagrams on port 5500 from Nexmon firmware (CYW43455).
 
-The Nexmon CSI firmware (CYW43455) emits one UDP datagram per received frame to the local
-broadcast on port 5500. We bind a UDP socket to that port and decode each datagram.
+Payload layout: 18-byte header then NFFT complex subcarriers (int16 I/Q).
+NFFT = (len-18)//4. 5GHz HT80 = 256.
 
-Payload layout (Nexmon CSI, bcm43455c0 — same as the `nexcsi` decoder):
-    18-byte header:
-        u16 magic | i8 rssi | u8 frame_control | u8[6] source_mac | u16 seq
-        u16 core_spatial | u16 chanspec | u16 chip_version
-    then NFFT complex subcarriers as int16 I/Q pairs (4 bytes each) -> NFFT = (len-18)//4.
-
-  Input:  UDP datagrams on NEXMON_PORT.
-  Output: iterator of (timestamp_s, source_mac_bytes, complex64 csi[S]).
-  Errors: malformed/short datagrams are skipped (never raises mid-stream).
-
-NOTE (verify on hardware, Part A step 2): the int16 I/Q ordering below assumes
-[real, imag] per subcarrier. This is irrelevant for any MAGNITUDE feature — presence AND the
-weapon σ²[p] both read |csi|, and |a+bj| = |b+aj|, so an I/Q swap can't change them. Only
-PHASE/CIR methods (Cir.py, complex reconstruction) depend on the ordering — confirm before those.
-NFFT = FFT size: 5 GHz HT40 = 128, HT80 = 256 (this deployment uses HT80 -> EXPECT_S = 256).
+Note: Assumes [real, imag] ordering. Irrelevant for magnitude features like presence/weapon.
+Only matters for phase/CIR methods.
 """
 import socket
 import struct
@@ -31,7 +19,7 @@ _MAC_OFF = 4
 
 
 def parse_nexmon_csi(payload: bytes) -> Optional[Tuple[bytes, np.ndarray]]:
-    """One Nexmon UDP payload -> (source_mac_bytes, complex64 csi[NFFT]) or None if malformed."""
+    """Parse UDP payload to (mac, csi) or None."""
     if len(payload) <= _HDR_LEN or (len(payload) - _HDR_LEN) % 4 != 0:
         return None
     srcMac = payload[_MAC_OFF:_MAC_OFF + 6]
@@ -41,11 +29,8 @@ def parse_nexmon_csi(payload: bytes) -> Optional[Tuple[bytes, np.ndarray]]:
 
 
 class NexmonReader:
-    """Yield (ts, mac, csi) from the local Nexmon CSI UDP stream, pinned to one subcarrier width.
-
-    expect_s pins the width (off-width frames dropped); None locks to the first frame's width.
-    ap_mac (optional) keeps only frames from that transmitter — a cheap software backstop to the
-    firmware's makecsiparams MAC filter."""
+    """Yield (ts, mac, csi) from local UDP stream.
+    expect_s pins subcarrier width. ap_mac filters transmitter."""
 
     def __init__(self, port: int, expect_s: Optional[int] = None, ap_mac: Optional[bytes] = None):
         self._port = port

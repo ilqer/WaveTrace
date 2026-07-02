@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal LAN SNTP server — the shared clock for the WaveTrace mesh when there is NO internet.
+"""Minimal LAN SNTP server. Provides shared clock for mesh when there's no internet.
+Run on PC (PC_IP). ESP nodes sync to this for cross-node frame alignment (ms-level).
 
-Run on the PC (the one at PC_IP). The ESP nodes have SNTP_SERVER=PC_IP, so they discipline their
-clocks to this machine and the PC can align CSI frames across nodes (ms-level; that is all the
-learned fusion needs — there is no cross-node phase coherence regardless).
+    sudo .venv/bin/python scripts/ntp_server.py
 
-    sudo .venv/bin/python scripts/ntp_server.py        # UDP port 123 needs root
-
-If the deployment router DOES have internet, you don't need this — point SNTP_SERVER at a real NTP
-host instead. Without a synced clock the mesh still runs; only cross-node fusion alignment is lost.
+If router has internet, point SNTP_SERVER to real NTP instead. Unsynced mesh still runs, but fusion alignment is lost.
 """
 
 import socket
@@ -20,7 +16,7 @@ NTP_EPOCH = 2208988800  # seconds from 1900-01-01 (NTP epoch) to 1970-01-01 (Uni
 
 
 def _ntp_ts(t: float):
-    """Unix seconds -> (NTP seconds, NTP fraction) 32-bit pair."""
+    """Unix seconds to NTP 32-bit pair."""
     sec = int(t) + NTP_EPOCH
     frac = int((t - int(t)) * (1 << 32)) & 0xFFFFFFFF
     return sec & 0xFFFFFFFF, frac
@@ -49,7 +45,7 @@ def main():
         if len(data) < 48:
             print(f"  short packet ({len(data)} bytes), ignoring")
             continue
-        origin = data[40:48]  # client's transmit timestamp -> echoed as our originate timestamp
+        origin = data[40:48]  # Client's transmit timestamp (echoed).
         refS, refF = _ntp_ts(recvT - 1.0)
         recS, recF = _ntp_ts(recvT)
         txS, txF = _ntp_ts(time.time())

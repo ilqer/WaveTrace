@@ -14,7 +14,7 @@ interface ControlsProps {
 
 type Action = 'run' | 'calib' | 'collect' | 'train';
 
-// text input + folder/file icon that opens a native OS dialog via /api/paths/browse (osascript on macOS)
+// Path input + browse button (uses native macOS osascript via /api/paths/browse).
 interface FilePickerProps {
   value: string;
   onChange: (v: string) => void;
@@ -113,7 +113,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
     train_per_link: false,
   });
 
-  // Fetch pinned subcarrier width whenever the calibration path changes.
+  // Fetch pinned subcarrier width when calib path changes.
   useEffect(() => {
     fetch(`/api/calib/info?path=${encodeURIComponent(config.calibration)}`)
       .then(r => r.json())
@@ -163,7 +163,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
   return (
     <div className="flex flex-col gap-4 bg-slate-800 p-4 rounded-xl border border-slate-700">
 
-      {/* Hardware config: shown regardless of the selected action tab */}
+      {/* Shared hardware config */}
       <div className="space-y-2 pb-3 border-b border-slate-700">
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Hardware Config</p>
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600 pl-1.5 border-l-2 border-slate-600">Camera</p>
@@ -204,7 +204,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
         </div>
 
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600 pl-1.5 border-l-2 border-sky-800 mt-1">RF Capture</p>
-        {/* shared across all action tabs */}
+        {/* Shared config */}
         <div className="space-y-1">
           <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center justify-between">
             <span>Calibration Dir</span>
@@ -413,7 +413,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
             )}
             <div className="pt-1 border-t border-slate-700/50 space-y-2">
               <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
-                     title="Use webcam + YOLO-seg for live labeling instead of scripted time spans.">
+                     title="Use webcam YOLO-seg for live labeling instead of fixed time spans.">
                 <input type="checkbox" checked={config.camera_collect}
                        onChange={e => setConfig({ ...config, camera_collect: e.target.checked })} />
                 <Camera size={11} /> Camera-supervised (YOLO)
@@ -437,7 +437,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
                   </div>
                   {config.col_stage === 'weapon' && (
                     <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"
-                           title="Also build per-link (tx→rx) weapon datasets for directional heads">
+                           title="Build per-link (tx→rx) weapon datasets for directional heads">
                       <input type="checkbox" checked={config.col_per_link}
                              onChange={e => setConfig({ ...config, col_per_link: e.target.checked })} />
                       Per-link weapon datasets

@@ -1,5 +1,5 @@
-// ESP32-S3 CSI receiver, APSTA: SoftAP "WaveTrace-RX1" captures CSI from the TX's UDP flood, STA joins the router so CSI can be unicast to PC_IP, sidestepping macOS's subnet-broadcast blocking.
-// SoftAP channel is forced to match the router's once STA connects; TX finds it via scan. ESP-IDF v5.x (esp32s3), console baud 921600.
+// ESP32-S3 CSI receiver (APSTA). SoftAP captures CSI from TX UDP flood. STA joins router to unicast CSI to PC_IP.
+// SoftAP channel matches router.
 
 #include <stdio.h>
 #include <string.h>
@@ -60,7 +60,7 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info) {
     s_csi_count++;
 }
 
-// 1-second heartbeat; printf is safe here since this isn't the Wi-Fi task.
+// 1-second heartbeat.
 static void stats_task(void *) {
     uint32_t last = 0;
     for (;;) {
@@ -108,7 +108,7 @@ extern "C" void app_main(void) {
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);
 
-    // APSTA: SoftAP for the TX, STA for the router backhaul
+    // APSTA: SoftAP for TX, STA for router backhaul.
     esp_wifi_set_mode(WIFI_MODE_APSTA);
 
     wifi_config_t ap_cfg = {};
@@ -128,7 +128,7 @@ extern "C" void app_main(void) {
     esp_wifi_start();
     esp_wifi_connect();
 
-    // CSI capture: all preamble fields on, no channel filter or scaling
+    // CSI capture configuration.
     wifi_csi_config_t csi_cfg = {
         .lltf_en = true, .htltf_en = true, .stbc_htltf2_en = true,
         .ltf_merge_en = true, .channel_filter_en = false, .manu_scale = false,
@@ -141,7 +141,7 @@ extern "C" void app_main(void) {
     xTaskCreate(udp_sender_task, "csi_udp", 4096, NULL, 5, NULL);
     xTaskCreate(stats_task, "stats", 4096, NULL, 2, NULL);
 
-    // drain the TX's UDP flood on UDP_PORT so lwIP buffers don't fill up
+    // Drain TX UDP flood to prevent lwIP buffer overflow.
     int s = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in a = {};
     a.sin_family = AF_INET; a.sin_addr.s_addr = INADDR_ANY; a.sin_port = htons(UDP_PORT);

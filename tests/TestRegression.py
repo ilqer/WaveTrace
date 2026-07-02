@@ -1,7 +1,7 @@
-"""Regression tests for the bug fixes:
-  B2 — a single-class training set must raise (not silently fit an all-one-verdict model).
-  B3 — synthetic --weapon spans with --weapon-depth 0 must warn (unlearnable dataset).
-  B5 — build_dataset must accept a generator of frames (fs estimate re-indexes frames).
+"""Regression tests:
+  B2: Single-class training set must raise an error.
+  B3: Zero-depth synthetic weapon spans must warn.
+  B5: build_dataset must accept a generator of frames.
 """
 
 import warnings
@@ -60,6 +60,6 @@ def test_build_dataset_accepts_generator():
         cal.observe(fr)
     result = cal.finalize()
     labeler = ScriptedLabeler([(0.0, 4.0, True)], label_fn=presence_label_fn)
-    # pass a GENERATOR (not a list): build_dataset must materialize it before the fs estimate
+    # Pass a generator: build_dataset must materialize it before fs estimation.
     ds = build_dataset(iter(frames), result, cal.gain_lock, labeler, window=128, hop=32)
     assert ds.meta["fs"] > 0.0 and ds.y.size > 0

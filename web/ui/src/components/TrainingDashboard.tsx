@@ -29,7 +29,7 @@ function Stat({ label, value, color = 'text-emerald-400' }: { label: string; val
   );
 }
 
-// Build an approximate 2×2 confusion matrix from tpr + fp_rate + class counts.
+// Approximate 2x2 confusion matrix from tpr, fp_rate, and class counts.
 function buildMatrix(logo: any, classCounts: any, axis?: string): number[][] | null {
   const axisData = axis ? logo?.[axis] : (logo?.session ?? logo?.subject);
   if (!axisData) return null;
@@ -45,7 +45,7 @@ function buildMatrix(logo: any, classCounts: any, axis?: string): number[][] | n
   return [[tn, fp_], [fn, tp]];
 }
 
-// Shown when MLP/SVM finishes: no epoch loop, just a final metrics dict.
+// Final metrics view for MLP/SVM (no epochs).
 function ResultCard({ result }: { result: Record<string, any> }) {
   const availableAxes = Object.keys(result.logo ?? {}).filter(
     ax => result.logo[ax]?.tpr != null
@@ -181,7 +181,7 @@ const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, re
     }));
   }, [meta, result]);
 
-  // band=[lo,hi] renders a shaded ±σ range in recharts; only present when the cnn head reported a batch-loss std.
+  // Shaded ±σ range (requires CNN batch-loss std).
   const lossData = useMemo(() => metrics.map(m => ({
     epoch: m.epoch,
     loss: m.loss,
@@ -325,7 +325,7 @@ const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, re
         </div>
       )}
 
-      {/* Per-epoch log (CNN only, irrelevant for MLP) */}
+      {/* Per-epoch log (CNN only) */}
       {metrics.length > 0 && (
         <div className="flex flex-col border border-slate-800 bg-slate-950 rounded-xl shrink-0">
           <div className="px-4 py-2 border-b border-slate-900 bg-slate-900/50 flex justify-between items-center rounded-t-xl">

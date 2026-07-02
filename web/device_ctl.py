@@ -1,9 +1,5 @@
-"""Hardware device control for the dashboard: serial port discovery, live ESP serial
-monitor, firmware flashing, and Pi capture control over SSH.
-
-Everything streams line-by-line to one asyncio queue (the /ws/device socket) tagged with a
-`source` so the UI can colour/route it. The backend owns at most ONE long-running device op
-at a time (a serial port has a single owner), so starting a flash stops an active monitor."""
+"""Device hardware control: serial discovery, ESP monitor, flashing, Pi SSH capture.
+Streams line-by-line to /ws/device queue with a source tag. Backend limits to one long-running device op per serial port (flashing stops active monitors)."""
 
 import asyncio
 import json
@@ -22,7 +18,7 @@ FIRMWARE_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "f
 
 
 def list_serial_ports() -> list[dict]:
-    """All serial devices, USB ones first (the ESPs); Bluetooth/debug noise sinks to the bottom."""
+    """Returns serial devices, prioritizing USB ESPs."""
     ports = []
     for p in list_ports.comports():
         dev = p.device
@@ -38,7 +34,7 @@ def list_serial_ports() -> list[dict]:
 
 
 class DeviceHub:
-    """Single-owner hub for the serial port. Publishes every line to `queue` from worker threads."""
+    """Hub for serial port. Publishes lines to queue from worker threads."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
         self.loop = loop
@@ -105,7 +101,7 @@ class DeviceHub:
         return {"status": "stopped", "port": port}
 
     def send_input(self, proc_id: str, data: str) -> dict:
-        """Send input to a running process's stdin."""
+        """Sends input to process stdin."""
         if proc_id in self._procs:
             proc = self._procs[proc_id]
             if proc.stdin:
@@ -119,7 +115,7 @@ class DeviceHub:
 
     # ---- subprocess streaming (flash + ssh) -----------------------------------------
     def _stream(self, source: str, proc_id: str, argv: list[str], cwd: str | None = None) -> int:
-        """Run argv, pumping combined stdout/stderr to the device socket; returns exit code."""
+        """Runs argv, pumping stdout/stderr to device socket; returns exit code."""
         try:
             proc = subprocess.Popen(
                 argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -137,7 +133,7 @@ class DeviceHub:
         return code
 
     def flash(self, role: str, node_id: int | None, port: str, clean: bool = False) -> None:
-        """Flash one board via firmware/flash.sh (NO_MONITOR so the call returns)."""
+        """Flashes board via firmware/flash.sh with NO_MONITOR."""
         if port in self._monitors:
             self._publish("flash", f"stopping monitor on {port} first", level="system")
             self.stop_monitor(port)
@@ -162,7 +158,7 @@ class DeviceHub:
         self._stream("flash", "flash", ["bash", "-lc", inner], cwd=FIRMWARE_DIR)
 
     def run_pi(self, host: str, command: str) -> None:
-        """Run a command on the Pi over SSH and stream its output (capture control, Nexmon setup)."""
+        """Runs SSH command on Pi and streams output."""
         if not host:
             self._publish("pi", "no Pi host configured", level="error")
             return
@@ -171,7 +167,7 @@ class DeviceHub:
         self._stream("pi", "pi", ["ssh", "-tt", host, command])
 
     def run_script(self, script_name: str, args: str = "") -> None:
-        """Run a local python script from the root directory and stream its output."""
+        """Runs local python script from root dir and streams output."""
         if not script_name.endswith(".py"):
             self._publish("script", "Invalid script name", level="error")
             return

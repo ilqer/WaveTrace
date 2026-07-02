@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(0.5)
 
 
-# joblib.load is pickle (RCE) and dest is an arbitrary file write, so confine both to output/.
+# Confine arbitrary file writes and pickle (RCE) via joblib.load to output/ dir.
 ALLOWED_ROOT = os.path.realpath("output")
 
 def _safe_output_path(path: str) -> str:
@@ -311,8 +311,8 @@ async def fusion_weights(path: str):
 
 @app.get("/api/weapon/litmus")
 async def weapon_litmus(root: str = "data", node: int | None = None, per_link: bool = False):
-    """Static σ²[p] go/no-go: per-node (default) or per directed tx→rx link (per_link=true).
-    Rows are sorted by AUC descending. Each row includes histogram bins for the PDF overlay."""
+    """Static σ²[p] check: per-node (default) or tx→rx link (per_link=true).
+    Rows sorted by AUC desc. Includes histogram bins for PDF overlay."""
     from experiments.weapon_litmus import gather_sigma2, separation, _verdict, _key_label, json_hist
     try:
         data = gather_sigma2(root, node, per_link=per_link)
@@ -344,9 +344,9 @@ async def weapon_litmus(root: str = "data", node: int | None = None, per_link: b
 
 @app.get("/api/calib/info")
 async def calib_info(path: str = "output/calib"):
-    """Read a saved calibration directory and return the pinned subcarrier width.
-    K is derived from max(image_subcarriers)+1 — the highest subcarrier index the
-    radio produced during calibration. bw_label maps that to HT20/HT40/HT80."""
+    """Reads saved calib for pinned subcarrier width.
+    K is max(image_subcarriers)+1 (highest index from radio during calib).
+    bw_label maps K to HT20/HT40/HT80."""
     import json as _json
     meta_path = os.path.join(path, "meta.json")
     if not os.path.exists(meta_path):
@@ -375,8 +375,7 @@ async def calib_info(path: str = "output/calib"):
 
 @app.get("/api/paths/scan")
 async def scan_paths():
-    """Scan the project tree for existing calibration dirs, model files, and dataset dirs.
-    Used by the UI path-picker dropdowns — lets users click instead of type."""
+    """Scans project for calib dirs, models, and datasets. Populates UI path-pickers."""
     import glob as _glob
 
     def _scan():
@@ -417,10 +416,9 @@ async def scan_paths():
 
 @app.get("/api/paths/browse")
 async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str = ""):
-    """Open a native macOS Finder dialog (via osascript) and return the chosen path.
-    type: 'dir' → choose folder, 'file' → choose file.
-    ext: comma-separated extensions to filter by (file mode only, e.g. 'joblib,pt').
-    Returns {"path": "/abs/path"} or {"path": null} when cancelled."""
+    """Opens macOS Finder dialog (osascript) and returns chosen path.
+    type: 'dir' or 'file'. ext: csv extensions (file mode).
+    Returns {"path": "/abs/path"} or {"path": null} on cancel."""
     import subprocess as _sp
 
     def _open_dialog():
@@ -465,7 +463,7 @@ class ModelUploadRequest(BaseModel):
 
 @app.post("/api/model/upload")
 async def model_upload(req: ModelUploadRequest):
-    """Receive a PC-trained model.joblib (base64) and write it to the Pi."""
+    """Receives base64 PC-trained model.joblib and writes to Pi."""
     import base64
     try:
         dest = _safe_output_path(req.dest)
@@ -570,7 +568,7 @@ _yolo_lock = _threading.Lock()
 
 
 def _load_yolo(weights: str = "yolov8n-seg.pt"):
-    """Load (and cache) a YOLO model; safe to call from any thread."""
+    """Thread-safely loads and caches YOLO model."""
     with _yolo_lock:
         if weights not in _yolo_cache:
             try:
@@ -583,7 +581,7 @@ def _load_yolo(weights: str = "yolov8n-seg.pt"):
 
 
 def _annotate_frame(model, frame, weapon_classes=(43,)):
-    """Draw YOLO seg masks + labels on a copy of frame. Green = person, orange = weapon/knife."""
+    """Draws YOLO seg masks and labels on frame copy (Green = person, orange = weapon)."""
     import cv2, numpy as np
     results = model(frame, verbose=False)
     out = frame.copy()
@@ -611,8 +609,7 @@ def _annotate_frame(model, frame, weapon_classes=(43,)):
     return out
 
 
-# Camera capture uses an ffmpeg subprocess, not cv2.VideoCapture, to avoid a macOS AVFoundation
-# run-loop segfault on background threads; cv2 is only used for YOLO annotation.
+# Use ffmpeg subprocess (not cv2.VideoCapture) to avoid macOS AVFoundation run-loop segfault on background threads. cv2 is only for YOLO annotation.
 
 import subprocess as _subprocess
 import shutil as _shutil
@@ -629,10 +626,8 @@ def _ffmpeg_bin() -> str:
 
 
 def _ffmpeg_grab_one(index: int) -> bytes | None:
-    """Capture a single JPEG frame from camera `index` via ffmpeg.
-    Returns raw JPEG bytes, or None on failure.
-    macOS: ffmpeg uses AVFoundation natively and triggers the permission dialog
-    on first run — no Terminal camera grant needed."""
+    """Captures one JPEG frame from camera `index` via ffmpeg. Returns raw bytes or None.
+    macOS: ffmpeg uses AVFoundation, triggering permission dialog on first run (no Terminal grant needed)."""
     try:
         ffmpeg = _ffmpeg_bin()
     except RuntimeError:
@@ -698,9 +693,9 @@ def camera_stop():
 @app.get("/api/camera/stream")
 async def camera_stream(request: Request, index: int = 0, annotate: bool = False,
                         weights: str = "yolov8n-seg.pt"):
-    """Local webcam MJPEG stream via asyncio subprocess (pure async — no threads, no queues).
-    ffmpeg outputs MJPEG to stdout; we parse JPEG SOI/EOI markers and stream multipart chunks.
-    annotate=true overlays YOLO seg masks (cv2 decode/encode only — no capture)."""
+    """Webcam MJPEG stream via asyncio subprocess (no threads/queues).
+    Parses ffmpeg stdout for JPEG SOI/EOI markers for multipart chunks.
+    annotate=true overlays YOLO seg masks (cv2 decode/encode only)."""
     global _camera_active
     _camera_active = True
     

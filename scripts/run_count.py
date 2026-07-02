@@ -1,13 +1,10 @@
-"""Independent live PEOPLE-COUNT — every (tx->rx) link served through its RX node's own cal + count
-head, fused into one people-count. Standalone from run_live_mesh (imports only library code), reads the
-count models from data/model_count.
+"""Live PEOPLE-COUNT fusion. Every link uses its RX node's cal + count head.
+Reads models from data/model_count.
 
-Each link's RX-node head emits a probability over its count classes; per-node heads may have learned
-different class subsets, so each proba is expanded into the GLOBAL class space (union over nodes) before
-fusion. LinkVoter blends them weighted by static reliability (per-node LOGO accuracy, chance=1/K) x live
-decision margin; the blended vector's argmax is the reported count, plus an expected-value estimate.
-
-    .venv/bin/python scripts/run_count.py --max-count 3
+Each RX-node head emits class probabilities. Since heads may learn different classes,
+probabilities are expanded to global class space. LinkVoter blends them weighted by
+static reliability (LOGO accuracy) x live margin.
+Result is the count and an expected-value estimate.
 """
 
 import argparse
@@ -30,13 +27,13 @@ from collect_count import count_name  # shared label formatting (count module is
 
 
 def _min_width(result):
-    """Subcarrier width the calibration needs = highest index it references + 1."""
+    """Calibration subcarrier width (highest index + 1)."""
     idx = [int(i) for i in list(result.subcarriers) + list(result.image_subcarriers)]
     return 1 + max(idx)
 
 
 def _logo_acc(metrics_path):
-    """A node head's honest (LOGO) accuracy — session axis preferred, subject fallback; None if absent."""
+    """Node head LOGO accuracy (session or subject)."""
     try:
         with open(metrics_path) as f:
             logo = json.load(f).get("logo", {})
@@ -50,8 +47,7 @@ def _logo_acc(metrics_path):
 
 
 def _expand_proba(proba, col_map, k):
-    """Place a node head's per-class proba into the GLOBAL k-class vector via col_map (head col -> global
-    col). Classes the head never saw stay 0. Sum is preserved (each head's proba already sums to 1)."""
+    """Expand node head proba into global k-class vector. Unseen classes stay 0."""
     g = np.zeros(k, dtype=np.float64)
     for j, col in enumerate(col_map):
         g[col] = proba[j]
@@ -59,7 +55,7 @@ def _expand_proba(proba, col_map, k):
 
 
 def _last_window_proba(frames, fs, result, gain_lock, cfg, intercarrier, pick, session):
-    """Resample one link's frames to fs, window them, return the LAST window's class-proba or None."""
+    """Resample frames, window, and return last window's proba."""
     res = resample_uniform(frames, fs)
     if len(res) < cfg.window:
         return None
@@ -74,10 +70,8 @@ def _last_window_proba(frames, fs, result, gain_lock, cfg, intercarrier, pick, s
 
 
 def load_count_nodes(cal_root, model_root):
-    """Discover per-RX-node calibrations + count heads -> ({node_id: dict(...)}, global_classes).
-
-    Builds the global class space (union over nodes) and, per node: a col_map (head class -> global col)
-    and a static weight from LOGO accuracy with chance = 1/K (so a multi-class head isn't zeroed out)."""
+    """Discover calibrations and count heads per RX-node.
+    Builds global class space, col_map, and static weight (LOGO accuracy with chance 1/K)."""
     nodes = {}
     accs = {}
     for model_dir in sorted(glob.glob(os.path.join(model_root, "node*"))):
@@ -106,7 +100,7 @@ def load_count_nodes(cal_root, model_root):
     for nid, m in nodes.items():
         m["col_map"] = [col_of[c] for c in m["classes"]]
         a = accs[nid]
-        # static reliability prior; chance-aware so a decent K-class head isn't zeroed; None -> 1.0.
+        # Chance-aware static reliability prior. None -> 1.0.
         m["weight"] = max(a - chance, 0.0) / max(1.0 - chance, 1e-9) if a is not None else 1.0
     return nodes, classes
 
@@ -173,7 +167,7 @@ def main():
                     while buf and buf[0].timestamp < cutoff:
                         buf.popleft()
 
-            # static per-node reliability x live margin (LinkVoter multiplies them); uniform fallback.
+            # Static per-node reliability x live margin. Uniform fallback.
             link_static = {lid: nodes[key[1]]["weight"] for key, lid in link_ids.items()}
             static = link_static if any(w > 0 for w in link_static.values()) else None
             voter = LinkVoter(static)
@@ -188,7 +182,7 @@ def main():
                     continue
                 g = _expand_proba(proba, m["col_map"], k)
                 top = np.sort(proba)[::-1]
-                quality = float(top[0] - top[1]) if proba.size > 1 else float(top[0])  # decision margin
+                quality = float(top[0] - top[1]) if proba.size > 1 else float(top[0])  # Decision margin.
                 voter.add(link_ids[key], g, quality=quality)
                 breakdown.append(f"{key[0]}->{key[1]}:{classes[int(np.argmax(g))]}")
 
@@ -202,7 +196,7 @@ def main():
                 continue
             blended = np.asarray(blended, dtype=np.float64)
             count = classes[int(np.argmax(blended))]
-            expected = float((cls_arr * blended).sum())  # soft estimate (handles 'N+' as N)
+            expected = float((cls_arr * blended).sum())  # Soft estimate (handles 'N+' as N).
             print(f"PEOPLE {count_name(count, args.max_count):>3}  (~{expected:0.1f})  "
                   f"[{len(breakdown)} links] " + " ".join(breakdown))
     except KeyboardInterrupt:

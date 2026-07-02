@@ -1,14 +1,8 @@
-"""Learned late-fusion of per-band models (2.4 GHz ESP32s vs 5 GHz Pi).
+"""Learned late-fusion of per-band models.
 
-Each band has its own trained head; a logistic-regression combiner maps their positive-class
-probabilities -> the final probability. The combiner's coefficients ARE the band weights so the UI
-can show 'this room learned to trust 5 GHz 0.71 / 2.4 GHz 0.29'.
+Logistic regression maps band probabilities to final probability. Stacking learns weights from validation split.
 
-Why stacking and not a hand-weighted average: stacking learns the weights from a validation split
-with no magic numbers, stays interpretable, and lets you add/remove a band by retraining only the
-(cheap) combiner. A single end-to-end two-branch net is the later option if this plateaus.
-
-Band split rule (matches NodeHealthMeter): node_id < 100 = 2.4 GHz, node_id >= 100 = 5 GHz."""
+Band split: node_id < 100 is 2.4 GHz, node_id >= 100 is 5 GHz."""
 
 from pathlib import Path
 
@@ -18,11 +12,7 @@ from sklearn.linear_model import LogisticRegression
 
 
 class BandFusion:
-    """Combine N per-band heads into one verdict with learned weights.
-
-    bands: dict[band_name -> fitted head] (each exposes predict_proba(X) -> (n, C)).
-    Fit the combiner on a HELD-OUT VALIDATION split — not the same data used to train each band head,
-    or the combiner just echoes the strongest single-band head."""
+    """Combine per-band heads with learned weights. Fit on held-out validation split."""
 
     def __init__(self, bands: dict):
         self.bands = dict(bands)
@@ -39,7 +29,7 @@ class BandFusion:
         return np.column_stack(cols)
 
     def fit(self, X_by_band_val: dict, y_val) -> "BandFusion":
-        """Fit the combiner on VALIDATION split band probabilities + true labels. Offline."""
+        """Fit combiner on validation split."""
         Z = self._stack_probs(X_by_band_val)
         y = np.asarray(y_val, dtype=np.int64)
         self._combiner = LogisticRegression(max_iter=1000).fit(Z, y)
@@ -56,8 +46,7 @@ class BandFusion:
 
     @property
     def weights_(self) -> dict:
-        """Learned per-band trust: softmax of combiner coefficients, sums to 1. For display.
-        Positive coef = this band pushes toward the weapon/present class."""
+        """Learned per-band trust: softmax of coefficients. For display."""
         if self._combiner is None:
             return {}
         coef = self._combiner.coef_.ravel()
@@ -66,8 +55,7 @@ class BandFusion:
         return {b: round(float(w[i]), 3) for i, b in enumerate(self.band_order)}
 
     def contribution(self, X_by_band: dict) -> dict:
-        """Per-band positive probability for ONE window (for the DecisionContribution widget).
-        Returns {band: prob, ..., 'fused': final_prob, 'weights': learned_weights}."""
+        """Per-band positive probability for one window."""
         single = {b: (X_by_band[b][:1] if np.asarray(X_by_band[b]).ndim > 1
                       else np.asarray(X_by_band[b]).reshape(1, -1))
                   for b in self.band_order}

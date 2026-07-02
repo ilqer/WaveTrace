@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""Entry point: stream 5 GHz CSI from the Pi's Nexmon firmware to the WaveTrace host as node 5.
+"""Entry point: stream 5 GHz CSI from Nexmon to WaveTrace host as node 5.
+Pipeline: Nexmon (UDP 5500) -> NexmonReader -> quantize -> BatchPublisher (UDP 9876) -> Mac
 
-  Nexmon firmware --(UDP 5500, on-Pi)--> NexmonReader --> quantize --> BatchPublisher
-                                                                  --(UDP 9876, eth0)--> Mac
+Run after setup_nexmon.sh, start_capture.sh, and illuminate.sh: python3 pi5_csi_node.py
+Requires config.py filled.
 
-Run on the Pi after the firmware is set up (setup_nexmon.sh) and capture is started
-(start_capture.sh), with the Mac illuminating modem B (illuminate.sh):
-    python3 pi5_csi_node.py
-Fill in firmware/pi/config.py first (PC_IP, AP_BSSID).
-
-NOTE: for cross-node fusion with the ESP mesh, keep this Pi's clock NTP-synced to the same source
-the ESP nodes use (the Mac). On the Pi: `sudo timedatectl set-ntp true` pointing at the Mac, or
-add the Mac as an NTP server. Single-node (Pi-only) weapon/presence does not need this.
+Note: Cross-node fusion requires Pi clock NTP-synced to Mac (`sudo timedatectl set-ntp true`).
+Single-node capture does not.
 """
 import subprocess
 import time
@@ -20,13 +15,12 @@ import config
 from nexmon_reader import NexmonReader
 from publisher import BatchPublisher, mac_to_bytes, quantize_csi, quantize_csi_i16
 
-LOW_RATE_HZ = 50.0   # warn below this; usually means the Mac stopped illuminating modem B (AP idle ~10 Hz)
-LOW_RATE_HOLD = 5    # consecutive low-rate seconds before escalating to a sustained-outage warning
+LOW_RATE_HZ = 50.0   # Warn below this (usually Mac stopped illuminating).
+LOW_RATE_HOLD = 5    # Consecutive low-rate seconds for sustained warning.
 
 
 def _ntp_synced() -> bool | None:
-    """True/False if the Pi clock is NTP-disciplined, None if it can't be determined (no systemd).
-    The publisher stamps ntp_ms from the OS wall clock, so cross-node fusion drifts if this is False."""
+    """Check if Pi clock is NTP-disciplined. Crucial for cross-node fusion sync."""
     try:
         out = subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
                              capture_output=True, text=True, timeout=3)
@@ -39,8 +33,7 @@ def main() -> None:
     config.validate()
     synced = _ntp_synced()
     if synced is False:
-        # Single-node Pi capture tolerates an unsynced clock; multi-node fusion doesn't, since
-        # timestamps from this Pi and the ESP mesh won't share an origin. Warn instead of aborting.
+        # Single-node capture tolerates unsynced clock; multi-node fusion requires it. Warn.
         print("[pi5-csi] WARNING: Pi clock is not NTP-synchronized. Cross-node fusion with the ESP "
               "mesh will drift. Fix: `sudo timedatectl set-ntp true` (point at the Mac). "
               "Single-node Pi-only capture can ignore this.", flush=True)
@@ -51,7 +44,7 @@ def main() -> None:
     reader = NexmonReader(config.NEXMON_PORT, expect_s=config.EXPECT_S, ap_mac=apMac)
     pub = BatchPublisher(config.PC_IP, config.UDP_PORT, config.NODE_ID, config.AP_BSSID,
                          ver=config.WIRE_VER)
-    # int16 (ver 3) keeps absolute amplitude for weapon; int8 (ver 2) is the lighter presence-only path.
+    # int16 (ver 3) keeps absolute amplitude for weapon; int8 (ver 2) is presence-only.
     encode = quantize_csi_i16 if config.WIRE_VER == 3 else quantize_csi
 
     print(
@@ -71,7 +64,7 @@ def main() -> None:
             sent += 1
 
             now = time.monotonic()
-            # Bound latency at low rates: force a flush ~50 ms even if the MTU batch isn't full.
+            # Force flush at ~50ms to bound latency at low rates.
             if now - tFlush >= 0.05:
                 pub.flush()
                 tFlush = now

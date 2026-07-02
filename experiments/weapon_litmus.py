@@ -1,13 +1,10 @@
-"""Static-σ²[p] PDF litmus — the pre-ML go/no-go test for weapon detection (diagnosis CAUSE 5A).
+"""Static-σ²[p] PDF litmus — weapon detection go/no-go test.
+Checks if per-packet inter-subcarrier variance σ²[p] separates clear vs weapon (see Yousaf Fig 17).
+If PDFs overlap, signal is lost at radio/geometry level. Fix hardware before training ML.
 
-Before training ANY weapon model, answer one physics question on YOUR hardware: does the per-packet
-inter-subcarrier variance σ²[p] separate the no-weapon (clear) and weapon conditions at all? Yousaf
-Fig 17 / Hanif Fig 5 plot exactly this. If the two PDFs overlap, NO classifier can recover the
-signal — the problem is upstream (radio/geometry), and you save weeks of model tuning by knowing it.
-
-σ²[p] is computed the SAME way the live InterCarrierExtractor sees it (Frontend.py:76): per frame,
-antenna-collapse the magnitude `|grid|.mean(antennas)`, then sample-variance (ddof=1) over ALL
-subcarriers — not the presence subset (diagnosis 5B). Metal physics: weapon -> LOWER σ².
+σ²[p] computation mirrors InterCarrierExtractor: per frame, antenna-collapse magnitude `|grid|.mean(antennas)`,
+then sample-variance (ddof=1) over all subcarriers.
+Physics: metal weapons lower σ².
 
 Reads the recordings collect_weapon.py already saves:
     <root>/weapon_rec/<session>/<clear|weapon>/node<id>/link_<tag>/grid.npy
@@ -16,8 +13,8 @@ Reads the recordings collect_weapon.py already saves:
     .venv/bin/python experiments/weapon_litmus.py --root data/5g_ht80 --node 2
     .venv/bin/python experiments/weapon_litmus.py --plot          # also write PNG PDFs if matplotlib present
 
-Per-node breakdown is deliberate: gain=LOCK vs gain=SKIP boards live on different amplitude scales
-(diagnosis CAUSE 10), so a pooled PDF can blur a node that actually separates. Judge each node.
+Per-node breakdown is required: gain=LOCK and gain=SKIP boards have different amplitude scales.
+A pooled PDF blurs node separation. Evaluate per node.
 """
 
 import argparse
@@ -28,8 +25,7 @@ import numpy as np
 
 
 def sigma2_per_frame(grid):
-    """(F,A,S) complex CSI -> (F,) per-frame σ²[p]: sample variance (ddof=1) of the antenna-collapsed
-    subcarrier magnitudes. Mirrors the live IC extractor's input exactly. O(F·A·S)."""
+    """(F,A,S) complex CSI -> (F,) per-frame σ²[p]. Sample variance of antenna-collapsed subcarrier magnitudes."""
     mag = np.abs(np.asarray(grid)).mean(axis=1)        # (F, S) antenna-collapsed magnitude
     return mag.var(axis=1, ddof=1)                     # (F,) inter-subcarrier variance per packet
 
@@ -62,10 +58,7 @@ def _key_label(key):
 
 def gather_sigma2(root, node=None, per_link=False):
     """Walk <root>/weapon_rec for clear/weapon grids -> {key: {"clear": arr, "weapon": arr}}.
-    key is the RX node id, or (rx_node, tx_tag) per directed link when per_link=True — the latter
-    scores each of the round-robin's directions separately (a node-as-RX sees several TX angles, and
-    only the NLOS-scatter ones carry weapon signal; pooling them per node washes that out).
-    Concatenates σ²[p] across every session of each condition. O(total frames)."""
+    If per_link=True, key is (rx_node, tx_tag) to score directions separately. Only NLOS-scatter carries weapon signals; pooling washes them out."""
     out = {}
     for cond in ("clear", "weapon"):
         for gpath in glob.glob(os.path.join(root, "weapon_rec", "**", cond, "**", "grid.npy"),
@@ -83,9 +76,7 @@ def gather_sigma2(root, node=None, per_link=False):
 
 
 def separation(clear, weapon):
-    """Single-feature separability of σ²[p] between the two conditions. Returns None if either is
-    empty. AUC is direction-folded to >=0.5 (orientation can flip the sign of the metal shift, so
-    |0.5-AUC| is the honest 'how separable', not which way). Cohen's d uses the pooled SD."""
+    """Separability of σ²[p]. AUC is direction-folded to >=0.5 (orientation flips metal shift sign)."""
     if clear.size == 0 or weapon.size == 0:
         return None
     from sklearn.metrics import roc_auc_score

@@ -1,13 +1,8 @@
-"""Phase 3c — per-session calibration flow.
+"""Phase 3c: Per-session calibration.
 
-Calibrate on a QUIET, empty space (REFERENCE_DIGEST §4): collect a baseline of still frames,
-optionally lock the AGC gain (GainLock), and select the informative subcarriers (NBVI). The result
-feeds the deployment pipeline: rescale amplitudes with the locked gain and restrict features to the
-chosen subcarriers. All offline (not the real-time path).
+Empty-room baseline calibration. Output sets amplitude scale and subcarrier selection (NBVI).
 
-GainLock is OPTIONAL (`use_gain_lock`, gated by Config.signal.gain_lock_enabled): it serves only the
-amplitude / presence feature path. The phase path is scale-invariant and the material features
-(σ²[p], reflection_signature) must NOT consume gain-locked frames — see reflection_signature.
+GainLock is optional. Only use it for amplitude/presence features. Do not use for phase or material features (they need absolute attenuation).
 """
 
 from dataclasses import dataclass, field
@@ -30,18 +25,12 @@ class CalibrationResult:
 
 
 def reflection_signature(grid, result: CalibrationResult):
-    """Material/reflection signature of a subject frame vs the empty-room baseline (REFERENCE §0B,
-    in-baggage/material-ID). Returns (mag_ratio, phase_delta):
-      * mag_ratio[k]   = |H_subj(k)| / |H_base(k)|   — the reflection/attenuation coefficient; a metal
-                         object in the path drives it away from 1 (per-subcarrier dielectric signature).
-      * phase_delta[k] = ∠( D_subj(k) · conj(D_base(k)) ), D(k)=H(k)·conj(H(k-1)) — the change in the
-                         CFO-FREE differential (group-delay) phase; phase resolves mm-level path-length
-                         change, and D is the complex quantity compressed sensing super-resolves in the
-                         delay domain. CFO is common-mode within a frame so the differential cancels it,
-                         making this comparable across captures (raw absolute phase is NOT).
-    `grid` = one subject frame's RAW complex CSI (A x S) — do NOT pass a GainLock.apply'd frame: gain
-    lock rescales every frame to a common mean, which cancels exactly the bulk attenuation mag_ratio
-    measures. Antennas are averaged (magnitude) / complex-fused (differential). Offline. O(A·S)."""
+    """Material signature (subject vs baseline). Returns (mag_ratio, phase_delta).
+
+    * mag_ratio[k]: Attenuation coefficient. Metal changes it from 1.
+    * phase_delta[k]: Shift in CFO-free differential phase. Measures mm-level path-length changes.
+
+    Pass raw CSI grid. Do NOT pass GainLock'd frames (destroys attenuation info). Antennas are averaged/fused. O(A·S)."""
     g = np.asarray(grid)
     amp = np.abs(g).mean(axis=0)
     diff = (g[:, 1:] * np.conj(g[:, :-1])).mean(axis=0)
@@ -51,11 +40,7 @@ def reflection_signature(grid, result: CalibrationResult):
 
 
 def image_baseline(result: "CalibrationResult", *, locked: bool) -> np.ndarray:
-    """Quiet-room per-subcarrier baseline in the image path's amplitude basis. O(S).
-
-    When locked=True and a reference scale was set, rescales the raw baseline to the gain-lock basis
-    (each frame is rescaled to reference_scale / frame_mean, so the locked basis baseline =
-    raw_baseline * reference_scale / mean(raw_baseline) — exact, not approximate)."""
+    """Quiet-room baseline. O(S). Rescales to gain-lock basis if locked."""
     b = np.asarray(result.baseline_mag, dtype=np.float32)
     if locked and not np.isnan(float(result.reference_scale)):
         return b * (float(result.reference_scale) / float(b.mean()))
@@ -63,11 +48,7 @@ def image_baseline(result: "CalibrationResult", *, locked: bool) -> np.ndarray:
 
 
 class Calibration:
-    """Accumulate quiet-baseline frames, then produce a CalibrationResult.
-
-    NBVI is computed on the antenna-averaged magnitude per subcarrier (the caller's geometry is
-    collapsed to a per-subcarrier view, since NBVI selects subcarriers, not antennas).
-    """
+    """Accumulate baseline frames, produce CalibrationResult."""
 
     def __init__(
         self,
@@ -96,8 +77,7 @@ class Calibration:
 
     @property
     def ready(self) -> bool:
-        """True once enough baseline frames have been collected (per baseline_packets). Counts
-        observed frames directly so it holds whether or not the gain lock is enabled."""
+        """True when baseline_packets frames observed."""
         return len(self._amps) >= self._baseline_packets
 
     @property
@@ -112,11 +92,7 @@ class Calibration:
         return self._gain
 
     def finalize(self) -> CalibrationResult:
-        """Lock the gain (if enabled) and run NBVI; returns the calibration result. Offline.
-
-        Guards on `ready`: a too-short quiet baseline yields a weak reference scale / NBVI ranking,
-        so finalize refuses unless baseline_packets frames were observed (raise, don't silently
-        proceed). reference_scale is NaN when the gain lock is disabled."""
+        """Finalize calibration: lock gain, run NBVI. Returns CalibrationResult."""
         if not self._amps:
             raise ValueError("Calibration: no baseline frames observed")
         if not self.ready:
@@ -165,8 +141,7 @@ def save_calibration(result: CalibrationResult, out_dir) -> Path:
 
 
 def load_calibration(out_dir) -> tuple[CalibrationResult, GainLock | None]:
-    """Round-trip a saved calibration. Returns (result, gain_lock): the GainLock is rebuilt locked
-    from the persisted reference_scale (via lock_to), or None when the lock was disabled (NaN). O(S)."""
+    """Round-trip saved calibration. Returns (result, gain_lock). O(S)."""
     p = Path(out_dir)
     with open(p / "meta.json") as f:
         meta = json.load(f)

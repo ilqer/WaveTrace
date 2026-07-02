@@ -14,7 +14,7 @@ export function SegmentVoteTrace({ probs, threshold = 0.5 }: Props) {
         Segment vote trace
       </h3>
       <div className="relative flex items-end gap-px h-10 bg-slate-950 rounded border border-slate-800 p-0.5 overflow-hidden">
-        {/* threshold line — absolute inside relative container */}
+        {/* Threshold line (absolute in relative container) */}
         <div
           className="absolute inset-x-0 border-t border-dashed border-amber-500/70 pointer-events-none z-10"
           style={{ bottom: `${threshPct}%` }}

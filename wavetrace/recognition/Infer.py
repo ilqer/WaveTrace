@@ -1,18 +1,10 @@
-"""Phase 6d/7 — the real-time inference path: load a persisted head, classify one window, <8 ms.
+"""Real-time inference path: load head, classify window, <8ms.
 
-TWO OPERATING MODES (user decision 2026-06-11 — REPLACES the earlier A→E two-stage gate; the
-application runs ONE mode at a time, selected by the operator, with NO cross-gating):
-  * "presence" — human detection: PresenceHead on the gain-locked 9·K feature vector.
-  * "weapon"   — weapon detection: WeaponHead on its backend's input (raw inter-carrier block for
-    variance/mlp/svm, CSI image for cnn) — classifies EVERY emitted window, independent of any
-    presence verdict. Soft voting (Vote.SegmentVoter) still applies WITHIN this mode over a
-    PresenceSegmenter-bounded active segment (that is a DSP activity gate, not the presence model).
-Use `mode_session(mode, path)` to get the right serving session.
+Modes:
+* 'presence': human detection.
+* 'weapon': weapon detection. Classifies every emitted window.
 
-Forward pass is O(1) (fixed-length feature vector through a tiny MLP/SVM). The (1, d) input row is
-reused across calls (no per-window wrapper allocation on our side; sklearn allocates internally —
-acceptable Python glue, the future C++/numpy-tiny path removes it).
-"""
+Forward pass is O(1). Input row buffer is reused."""
 
 import time
 
@@ -23,11 +15,7 @@ from wavetrace.recognition.Weapon import WeaponHead
 
 
 class InferenceSession:
-    """Serve one persisted head on the real-time path.
-
-    Default loader = PresenceHead.load; pass loader=WeaponHead.load for a Stage-E session (P7), or
-    head=<fitted head> to wrap an in-memory model. CNN weapon heads accept the flattened window
-    image here (they reshape internally)."""
+    """Serve a persisted head."""
 
     def __init__(self, model_path=None, *, head=None, loader=None):
         if head is not None:
@@ -41,7 +29,7 @@ class InferenceSession:
         return self._head
 
     def predict_proba_window(self, feature_vector) -> np.ndarray:
-        """(d,) -> (C,) class probabilities; reuses the same row buffer as predict_window. O(1)."""
+        """Predict class probabilities. Reuses row buffer. O(1)."""
         v = np.asarray(feature_vector, dtype=np.float32).ravel()
         if self._row is None or self._row.shape[1] != v.size:
             self._row = np.empty((1, v.size), dtype=np.float32)
@@ -56,8 +44,7 @@ class InferenceSession:
 
 
 def mode_session(mode: str, model_path) -> InferenceSession:
-    """The application's mode switch: 'presence' (human detection) or 'weapon' (weapon detection).
-    Modes are independent — each loads its own model and consumes its own feature contract. O(1)."""
+    """Mode switch: 'presence' or 'weapon'. O(1)."""
     if mode == "presence":
         loader = PresenceHead.load
     elif mode == "weapon":
@@ -68,8 +55,7 @@ def mode_session(mode: str, model_path) -> InferenceSession:
 
 
 def measure_latency(session: InferenceSession, feature_vector, iters: int = 200) -> dict:
-    """Per-call predict_window latency over `iters` calls (after a small warmup so one-time sklearn
-    setup doesn't pollute the gate). Returns mean/p95/max in ms — the Phase-6 DoD asserts max < 8."""
+    """Measure inference latency over iters calls. Returns ms stats."""
     for _ in range(5):
         session.predict_window(feature_vector)
     samples = np.empty(iters)

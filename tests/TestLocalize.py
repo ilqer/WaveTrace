@@ -1,6 +1,7 @@
-"""Spatial localization (AoA) tests — plant a known azimuth into a ULA and assert MUSIC/Bartlett
-recover it, plus the range/heatmap/aggregate/serialize plumbing. No hardware: the steering is built
-with the same convention the Localizer uses, so a clean rank-1 source must peak at the planted angle.
+"""Spatial localization (AoA) tests.
+Plants a known azimuth into a ULA, verifying MUSIC/Bartlett algorithms recover it.
+Also tests range, heatmap, aggregate, and serialize logic.
+Uses the same steering convention as Localizer. Clean rank-1 source must peak at the planted angle.
 """
 
 import io
@@ -19,7 +20,7 @@ from wavetrace.Localize import (
 
 
 def _meas(angle, conf, t, rng=5.0):
-    """A bare Localization measurement (only the fields the Tracker reads are meaningful)."""
+    """A mock Localization measurement. Only populates fields used by Tracker."""
     e = np.empty(0)
     return Localization(timestamp=t, angles_deg=e, angle_spectrum=e, ranges_m=e, range_profile=e,
                         heatmap=e, peak_angle_deg=angle, peak_range_m=rng, x_m=0.0, y_m=0.0,
@@ -31,7 +32,7 @@ SPACING = 0.5  # lambda/2
 
 
 def _planted_grid(angle_deg, *, num_ant=A, num_sub=S, spacing=SPACING, noise=0.01, seed=0):
-    """(A, S) CSI of ONE plane wave from `angle_deg` (broadside=0): a(theta) x a per-subcarrier gain."""
+    """(A, S) CSI for a single plane wave from `angle_deg` (0 = broadside). Generates a(theta) * per-subcarrier gain."""
     rng = np.random.default_rng(seed)
     m = np.arange(num_ant)
     steer = np.exp(1j * 2 * np.pi * spacing * m * np.sin(np.deg2rad(angle_deg)))
@@ -42,7 +43,7 @@ def _planted_grid(angle_deg, *, num_ant=A, num_sub=S, spacing=SPACING, noise=0.0
 
 
 class _Frame:
-    """Minimal CsiFrame stand-in (grid + timestamp) for the stream/aggregate paths."""
+    """Mock CsiFrame providing only grid and timestamp for stream/aggregate tests."""
     def __init__(self, grid, t):
         self.grid = grid
         self.timestamp = t
@@ -70,7 +71,7 @@ def test_spectrum_normalized_and_confident():
 
 
 def test_locate_per_frame_is_azimuth_spectrum():
-    # a single frame can't resolve a room map: the per-frame heatmap is the (1, G) azimuth spectrum
+    # A single frame cannot resolve 2D range. Heatmap becomes a (1, G) azimuth spectrum.
     loc = Localizer(A, method="music", num_angles=181, max_range_m=15.0)
     out = loc.locate(_planted_grid(20.0, seed=4))
     assert out.heatmap.shape == (1, out.angles_deg.size)
@@ -81,7 +82,7 @@ def test_locate_per_frame_is_azimuth_spectrum():
 
 
 def test_aggregate_is_joint_2d_room_map():
-    # range enabled + >1 frame -> the aggregate heatmap is the joint 2-D (range × angle) MUSIC map
+    # With range enabled and multiple frames, the aggregate heatmap is a joint 2D MUSIC map (range × angle).
     loc = Localizer(A, method="music", num_ranges=48, max_range_m=12.0)
     frames = [_Frame(_planted_grid(25.0, seed=i), t=i) for i in range(12)]
     agg = loc.aggregate(frames)
@@ -91,7 +92,7 @@ def test_aggregate_is_joint_2d_room_map():
 
 
 def test_joint_2d_resolves_planted_range():
-    # inflated bandwidth so the delay phase ramp is observable (real WiFi BW is too small for room-scale range).
+    # Inflated bandwidth to make delay phase ramp observable. Real WiFi BW is too narrow for room-scale range resolution.
     df, S = 5e6, 32
 
     def grid(angle, range_m, seed):
@@ -118,7 +119,7 @@ def test_no_range_mode_is_azimuth_only():
 
 
 def test_aggregate_azimuth_fallback_is_steady():
-    # range disabled -> aggregate averages the per-frame 1-D AoA spectra; robust to noise/gain.
+    # With range disabled, aggregate averages per-frame 1D AoA spectra. Robust to noise and gain variations.
     loc = Localizer(A, method="music", range_enabled=False)
     frames = [_Frame(_planted_grid(30.0, seed=10 + i, noise=0.3), t=i * 0.01) for i in range(20)]
     agg = loc.aggregate(frames)
@@ -169,7 +170,7 @@ def test_localize_source_publishes_track_and_saves_map(tmp_path):
 
 
 def test_tracker_follows_linear_motion():
-    # a target sweeping 2 deg/frame at dt=0.1 -> 20 deg/s; the filter should track angle + rate
+    # Target sweeping 2 deg/frame at dt=0.1s (20 deg/s). Filter must track both angle and angular rate.
     tr = Tracker()
     states = tr.run([_meas(2.0 * i, 0.9, i * 0.1) for i in range(15)])
     last = states[-1]
@@ -179,7 +180,7 @@ def test_tracker_follows_linear_motion():
 
 
 def test_tracker_gates_teleport():
-    # steady at 0, then one frame "teleports" to 80 deg -> gated out, track stays put (anti-teleport)
+    # Target steady at 0, then teleports to 80 deg in one frame. Tracker should gate out the outlier and coast.
     tr = Tracker()
     seq = [0.0, 0.0, 0.0, 0.0, 80.0, 0.0]
     states = tr.run([_meas(a, 0.9, i * 0.1) for i, a in enumerate(seq)])
@@ -189,7 +190,7 @@ def test_tracker_gates_teleport():
 
 
 def test_tracker_confidence_sets_the_gain():
-    # same 5-deg offset, different confidence: higher confidence -> larger Kalman gain -> moves more
+    # Test identical 5-deg offset with different confidences. Higher confidence increases Kalman gain, making tracker move faster.
     def step(conf):
         tr = Tracker(range_enabled=False)
         tr.update(_meas(0.0, 0.9, 0.0, rng=float("nan")))    # init at 0

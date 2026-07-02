@@ -1,12 +1,8 @@
-"""Phase 6b — offline training driver: Phase-5 dataset(s) -> fitted PresenceHead under models/.
+"""Phase 6b: Offline training driver.
 
-Loads one or more serialized datasets (`groundtruth.load_dataset`), concatenates them (one recording
-= one (session, subject) group), fits the head on X_features, and persists model.joblib +
-metrics.json. models/ is gitignored — artifacts never enter the repo. OFFLINE (correctness over
-Big-O); the saved model is what Infer.py serves on the real-time path.
+Loads datasets, concatenates, fits PresenceHead, persists model/metrics. Offline execution.
 
-NOTE: train-set accuracy in metrics.json is a sanity number only. The HEADLINE number must come from
-Evaluate.leave_one_group_out (session AND subject) — never a random within-session split (rev-7 #1).
+Train-set accuracy is sanity check only. Headline number uses Evaluate.leave_one_group_out (session and subject).
 """
 
 from dataclasses import replace
@@ -24,11 +20,7 @@ from wavetrace.recognition.Weapon import WeaponHead
 
 
 def _carry_groups(sess):
-    """Carry-position group per window, parsed from weapon session ids `<subject>_<carry>_s<n>`
-    (collect_weapon's sess_id). Returns None unless EVERY id matches that shape, so presence/other
-    session ids are left untouched and never get a spurious carry axis. The point (diagnosis CAUSE
-    5E): a below-chance head is often keying on a NUISANCE like carry pose, not the weapon — folding
-    on carry exposes that."""
+    """Carry-position group per window from session ids. Folds on carry pose to detect nuisance learning."""
     carries = []
     for s in sess:
         parts = str(s).split("_")
@@ -39,10 +31,7 @@ def _carry_groups(sess):
 
 
 def _logo_metrics(X, y, sess, subj, make_head) -> dict:
-    """Headline leave-one-group-out accuracy over sessions AND subjects (AND carry position when the
-    session ids encode it), computed only when a group has >= 2 distinct values (a single synthetic
-    session can't be folded — rev-7 #1). Stores the pooled accuracy + majority baseline per axis;
-    absent axes are skipped. Confusion drops out (not JSON-native). O(folds·fit)."""
+    """LOGO accuracy over sessions and subjects (and carry position). O(folds*fit)."""
     out: dict = {}
     axes = [("session", sess), ("subject", subj)]
     carry = _carry_groups(sess)
@@ -59,8 +48,7 @@ def _logo_metrics(X, y, sess, subj, make_head) -> dict:
 
 
 def concat_datasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Stack multiple recordings into (X_features, y, session_ids, subject_ids). O(n total).
-    Group ids ride along so the Evaluate fold gate can split on them."""
+    """Stack multiple recordings. O(n total)."""
     ds = list(datasets)
     if not ds:
         raise ValueError("concat_datasets: no datasets")
@@ -75,8 +63,7 @@ def concat_datasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.nd
 
 
 def concat_arrays(datasets, attr: str) -> np.ndarray:
-    """Stack one optional array field (e.g. "X_intercarrier", "X_image") across recordings.
-    Raises if any dataset lacks it (built without intercarrier=True). O(n total)."""
+    """Stack optional array field across recordings. O(n total)."""
     arrs = []
     for i, d in enumerate(datasets):
         a = getattr(d, attr)
@@ -93,11 +80,7 @@ def train_presence(
     out_dir="models/presence",
     config: ModelConfig | None = None,
 ) -> tuple[PresenceHead, dict]:
-    """Train the Stage-A presence head and persist it.
-
-    dataset_dirs: one dataset directory or a sequence of them (each from `save_dataset`).
-    config: ModelConfig; default = presence/MLP with k taken from the dataset meta.
-    Writes <out_dir>/model.joblib + <out_dir>/metrics.json; returns (head, metrics)."""
+    """Train and persist Stage-A presence head. Returns (head, metrics)."""
     if isinstance(dataset_dirs, (str, Path)):
         dataset_dirs = [dataset_dirs]
     loaded: list[Dataset] = [load_dataset(d) for d in dataset_dirs]
@@ -143,16 +126,13 @@ def train_weapon(
     feature_mode: str = "ic27",
     report=None,
 ) -> tuple[WeaponHead, dict]:
-    """Train the Stage-E weapon head and persist it.
+    """Train and persist Stage-E weapon head.
 
-    feature_mode selects which X the head trains on:
-      "ic27"   — X_intercarrier (n, 27) inter-carrier block; requires intercarrier=True datasets.
-                 Works with "variance"/"mlp"/"svm" backends. The baseline to beat under LOGO first.
-      "fusion" — np.hstack([X_intercarrier, X_features]) → (n, 27+9·K); requires dual-block datasets
-                 (intercarrier=True + gain_lock). Only "mlp"/"svm". Test against ic27 baseline; on
-                 small real datasets (≥2 sessions/subjects) overfitting is a real risk.
-      "cnn"    — X_image (n, K, window); only the "cnn" backend.
-    Writes <out_dir>/model.joblib + <out_dir>/metrics.json; returns (head, metrics)."""
+    feature_mode:
+    - 'ic27': inter-carrier block (variance/mlp/svm).
+    - 'fusion': inter-carrier + features (mlp/svm). Overfitting risk.
+    - 'cnn': CSI image (cnn).
+    Returns (head, metrics)."""
     if feature_mode not in ("ic27", "fusion", "cnn"):
         raise ValueError(f"feature_mode must be 'ic27', 'fusion', or 'cnn', got {feature_mode!r}")
     if isinstance(dataset_dirs, (str, Path)):

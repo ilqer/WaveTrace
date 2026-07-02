@@ -1,9 +1,4 @@
-"""Phase 4 (step 4a/4b) — util/Fft + signal/Features.
-
-Unit tests per public function: the radix-2 FFT vs numpy; the §2.9 nine features vs independent
-numpy definitions; PSD + Doppler recovering the injected motion frequency (the DoD motion-recovery
-check, routed through Features); and the streaming FeatureExtractor's cadence, shape, and content.
-"""
+"""Feature extraction tests: FFT, nine features, PSD, Doppler, and FeatureExtractor."""
 
 import numpy as np
 import pytest
@@ -26,21 +21,21 @@ from wavetrace import (
 )
 
 
-# --- reconstruct_complex_csi: strips the linear STO ramp, keeps absolute material phase ------
+# reconstruct_complex_csi: strips STO ramp, keeps material phase.
 
 def test_reconstruct_complex_csi_removes_linear_ramp_keeps_material():
     k = 30
     idx = np.arange(k)
-    mag = (2.0 + 0.1 * np.sin(idx)).astype(np.float64)        # nontrivial magnitude (must survive)
-    ramp = 0.5 * idx - 1.2                                    # unknown STO/CFO linear phase ramp
-    material = 0.3 * np.cos(0.7 * idx)                        # nonlinear residual = material signature
+    mag = (2.0 + 0.1 * np.sin(idx)).astype(np.float64)        # Nontrivial magnitude.
+    ramp = 0.5 * idx - 1.2                                    # Linear STO ramp.
+    material = 0.3 * np.cos(0.7 * idx)                        # Nonlinear material signature.
     phase = ramp + material
     h = (mag * np.exp(1j * phase)).astype(np.complex64)
 
     out = reconstruct_complex_csi(h)
 
     assert np.allclose(np.abs(out), mag, atol=1e-4)
-    # the linear component is removed; the residual equals phase minus its own least-squares line
+    # Linear component removed. Residual is phase minus LS line.
     coeffs = np.polyfit(idx, phase, 1)
     expected_resid = phase - np.polyval(coeffs, idx)
     assert np.allclose(np.angle(out), expected_resid, atol=1e-3)
@@ -55,17 +50,17 @@ def test_reconstruct_complex_csi_pure_ramp_becomes_real():
     assert np.allclose(np.abs(out), 1.5, atol=1e-4)
 
 
-# --- reflection_null: cancels the empty room, leaves the object's reflection -----------------
+# reflection_null: cancels empty room, leaves object reflection.
 
 def test_reflection_null_cancels_empty_room():
     k = 16
     rng = np.random.default_rng(3)
     hb1 = (rng.standard_normal(k) + 1j * rng.standard_normal(k)).astype(np.complex64)
     hb2 = (rng.standard_normal(k) + 1j * rng.standard_normal(k)).astype(np.complex64)
-    # empty room (h == baseline): out = hb1 + (-hb1/hb2)*hb2 = 0
+    # Empty room (h == baseline) -> 0.
     empty = reflection_null(hb1, hb2, hb1, hb2)
     assert np.allclose(empty, 0.0, atol=1e-4)
-    # an object perturbs path 1 -> the null no longer holds -> nonzero residual
+    # Object perturbs path -> nonzero residual.
     obj = reflection_null(hb1 + (0.5 + 0.5j), hb2, hb1, hb2)
     assert np.abs(obj).mean() > 1e-2
 
@@ -76,7 +71,7 @@ def test_reflection_null_length_mismatch_raises():
         reflection_null(a, a, a, np.ones(7, dtype=np.complex64))
 
 
-# --- block_average_decimate: non-overlapping block means (LUMS) ------------------------------
+# block_average_decimate: non-overlapping block means.
 
 def test_block_average_decimate_block_means():
     x = np.arange(100, dtype=np.float32)
@@ -91,7 +86,7 @@ def test_block_average_decimate_drops_remainder():
 from fixtures.SyntheticCsi import generateStream
 
 
-# --- FFT: matches numpy ----------------------------------------------------------------------
+# FFT vs numpy.
 
 def test_fft_matches_numpy():
     rng = np.random.default_rng(0)
@@ -99,7 +94,7 @@ def test_fft_matches_numpy():
         x = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64)
         got = fft(x)
         expected = np.fft.fft(x.astype(np.complex128))
-        # float32 radix-2 vs float64 numpy: tolerance scaled to the spectrum magnitude.
+        # float32 vs float64 numpy.
         assert np.allclose(got, expected, rtol=1e-3, atol=1e-2)
 
 
@@ -108,7 +103,7 @@ def test_fft_non_power_of_two_raises():
         fft(np.ones(10, dtype=np.complex64))
 
 
-# --- §2.9 nine features: match independent numpy definitions ---------------------------------
+# Nine features match numpy.
 
 def _refNineFeatures(x):
     x = x.astype(np.float64)
@@ -132,7 +127,7 @@ def test_nine_features_match_numpy():
 
 
 def test_nine_features_constant_window():
-    # Constant series: spread features vanish; mean/max/min equal the constant.
+    # Constant series -> spread vanishes, mean/max/min equal constant.
     out = nine_features(np.full(32, 3.0, dtype=np.float32))
     mean, std, mx, mn, iqr, skew, lag1, mad, wl = out
     assert mean == pytest.approx(3.0) and mx == pytest.approx(3.0) and mn == pytest.approx(3.0)
@@ -140,7 +135,7 @@ def test_nine_features_constant_window():
     assert mad == pytest.approx(0.0) and wl == pytest.approx(0.0) and skew == pytest.approx(0.0)
 
 
-# --- Per-packet inter-subcarrier dispersion (REFERENCE §0B weapon discriminator) -------------
+# Per-packet inter-subcarrier dispersion (weapon discriminator).
 
 def test_inter_carrier_stats_matches_numpy():
     rng = np.random.default_rng(7)
@@ -151,7 +146,7 @@ def test_inter_carrier_stats_matches_numpy():
 
 
 def test_inter_carrier_stats_metal_lower_variance():
-    # flat metal reflects evenly -> LOW variance; diffuse body -> HIGH (fixture can't fake it directly).
+    # Flat metal -> low variance. Diffuse body -> high variance.
     rng = np.random.default_rng(8)
     flat = (np.full(52, 5.0) + rng.standard_normal(52) * 0.05).astype(np.float32)     # metal-like
     diffuse = (5.0 + rng.standard_normal(52) * 2.0).astype(np.float32)                # body-like
@@ -167,14 +162,14 @@ def test_inter_carrier_stats_edge_cases():
     assert mean1 == pytest.approx(4.0) and var1 == pytest.approx(0.0)
 
 
-# --- Per-frame inter-subcarrier PHASE dispersion (phase counterpart of sigma2[p]) ------------
+# Per-frame inter-subcarrier PHASE dispersion.
 
 def test_inter_carrier_phase_stats_recovers_slope():
-    # A linear phase ramp = pure group-delay (ToF) slope: fit recovers it, residual ~0 (coherent).
+    # Linear phase ramp (pure group delay) -> fit recovers slope, residual ~0.
     k = 52
     slope_true = 0.2  # rad/subcarrier
     phase = (slope_true * np.arange(k) + 1.3).astype(np.float32)  # ramp + constant offset
-    # wrap into (-pi, pi] so the unwrap-across-subcarriers path is exercised
+    # Wrap to [-pi, pi] to exercise unwrap path.
     wrapped = np.angle(np.exp(1j * phase)).astype(np.float32)
     slope, resid = inter_carrier_phase_stats(wrapped)
     assert slope == pytest.approx(slope_true, abs=1e-3)
@@ -182,7 +177,7 @@ def test_inter_carrier_phase_stats_recovers_slope():
 
 
 def test_inter_carrier_phase_stats_coherent_vs_diffuse():
-    # coherent reflector -> near-linear phase -> LOW residual; diffuse body -> HIGH residual.
+    # Coherent reflector -> low residual. Diffuse body -> high residual.
     rng = np.random.default_rng(11)
     k = 52
     ramp = 0.15 * np.arange(k)
@@ -198,7 +193,7 @@ def test_inter_carrier_phase_stats_edge_cases():
     assert slope == pytest.approx(0.0) and resid == pytest.approx(0.0)
 
 
-# --- Streaming inter-subcarrier amplitude-dispersion extractor (windows sigma2[p]) -----------
+# Streaming inter-subcarrier amplitude extractor.
 
 def test_inter_carrier_extractor_cadence_and_shape():
     W, H = 8, 2
@@ -213,7 +208,7 @@ def test_inter_carrier_extractor_cadence_and_shape():
 
 
 def test_inter_carrier_extractor_matches_nine_features():
-    # The windowed extractor must equal nine_features over the per-packet {mu, sigma2, cv} series.
+    # Windowed extractor equals nine_features over {mu, sigma2, cv}.
     rng = np.random.default_rng(13)
     W, H, K = 16, 4, 52
     frames = (5.0 + rng.standard_normal((W, K)) * 0.5).astype(np.float32)
@@ -233,10 +228,10 @@ def test_inter_carrier_extractor_matches_nine_features():
         assert np.allclose(got[series_idx], ref, rtol=1e-4, atol=1e-5)
 
 
-# --- PSD + Doppler recover the injected motion frequency (phase path) -------------------------
+# PSD + Doppler recover injected motion freq.
 
 def _phaseSeries(seed=9):
-    """Differential-phase scalar series (mean across cells) from the synthetic motion stream."""
+    """Differential-phase series from synthetic stream."""
     fs, fTrue = 100.0, 0.3
     frames, gt = generateStream(
         numAntennas=1, numSubcarriers=64, sampleRateHz=fs, numFrames=1024,
@@ -265,21 +260,21 @@ def test_doppler_recovers_motion_frequency():
     assert spread >= 0.0
 
 
-# --- Streaming FeatureExtractor: cadence, shape, content -------------------------------------
+# Streaming FeatureExtractor.
 
 def test_feature_extractor_cadence_and_shape():
     C, W, H = 3, 8, 2
     fe = FeatureExtractor(C, W, H)
     assert fe.output_size == 9 * C
     emits = [i for i in range(20) if fe.push(np.full(C, float(i), dtype=np.float32))]
-    # First emit when the window fills (frame W-1), then every hop.
+    # Emit when window fills, then every hop.
     assert emits[0] == W - 1
     assert all((e - emits[0]) % H == 0 for e in emits)
     assert fe.features.shape == (9 * C,)
 
 
 def test_feature_extractor_matches_nine_features():
-    # The streaming extractor must equal nine_features over the chronological window per series.
+    # Extractor matches nine_features over chronological window.
     rng = np.random.default_rng(3)
     C, W, H = 2, 16, 4
     data = rng.standard_normal((W, C)).astype(np.float32)  # exactly one full window
@@ -299,10 +294,10 @@ def test_feature_extractor_push_wrong_length_raises():
         fe.push(np.ones(3, dtype=np.float32))
 
 
-# --- Amplitude features are meaningful on the extended fixture (Q7) --------------------------
+# Amplitude features detect modulation.
 
 def test_amplitude_features_detect_modulation():
-    # Breathing-like amplitude envelope (Q7 fixture knob) must show up in the §2.9 features.
+    # Amplitude envelope shows up in features.
     fs = 100.0
     kw = dict(numAntennas=1, numSubcarriers=16, sampleRateHz=fs, numFrames=256,
               perturbationHz=0.0, perturbationDepth=0.0, cfoHz=0.0, noiseStd=0.001, seed=4)
@@ -315,7 +310,7 @@ def test_amplitude_features_detect_modulation():
 
     mod = nine_features(modAmp)
     flat = nine_features(flatAmp)
-    # a slow 0.25 Hz envelope lifts spread features (std/IQR/MAD) but barely touches waveform-length.
+    # Slow envelope lifts spread features (std/IQR/MAD).
     for idx in (1, 4, 7):
         assert mod[idx] > 20 * flat[idx]
     assert mod[8] > flat[8]  # waveform-length still increases, just modestly

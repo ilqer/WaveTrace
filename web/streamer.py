@@ -15,8 +15,7 @@ _OCC_GRID = 16
 
 
 def _occupancy_fallback(image: np.ndarray, G: int = _OCC_GRID) -> np.ndarray:
-    """Per-subcarrier variance of (K, window) image tiled/downsampled to G×G flat array [0,1].
-    Tiles when K < G² (avoids zero-padding which makes most bars black)."""
+    """Returns per-subcarrier variance of image scaled to GxG [0,1]. Tiles if K < G² to avoid zero-padding black bars."""
     var = image.var(axis=1).astype(np.float32)  # (K,)
     g2 = G * G
     if var.size < g2:
@@ -32,7 +31,7 @@ def _occupancy_fallback(image: np.ndarray, G: int = _OCC_GRID) -> np.ndarray:
 
 
 def _heatmap_grid(head, image: np.ndarray) -> np.ndarray:
-    """Use trained HeatmapHead if loaded, else spectral fallback."""
+    """Uses trained HeatmapHead or fallback."""
     if head is None:
         return _occupancy_fallback(image)
     try:
@@ -43,7 +42,7 @@ def _heatmap_grid(head, image: np.ndarray) -> np.ndarray:
 
 
 def _class_label(mode: str, c: int) -> str:
-    """Human-readable class name for the per-class decision readout."""
+    """Returns string class label for mode."""
     c = int(c)
     if mode == "presence":
         return {0: "empty", 1: "present"}.get(c, str(c))
@@ -606,9 +605,7 @@ class WaveTraceRunner:
             self.is_running = False
 
     def start_camera_collect_managed(self, req):
-        """Camera-supervised collection: concurrent webcam YOLO + mesh CSI -> datasets.
-        Builds per-node presence/weapon datasets, stacked heatmap dataset, and optionally
-        per-link weapon datasets (when col_stage=weapon and per_link=True)."""
+        """Camera collection: concurrent webcam YOLO and mesh CSI. Builds per-node, stacked heatmap, and optionally per-link weapon datasets."""
         self.is_running = True
         import os, glob as _g, socket as _sock, threading, time as _t, collections as _col
 

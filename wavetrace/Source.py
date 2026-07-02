@@ -203,15 +203,11 @@ def parse_batch_links(payload: bytes, *, tx_mac=None) -> dict:
 
 
 def resample_uniform(frames, fs_hz):
-    """Resample a CSI stream onto a uniform 1/fs_hz time grid (linear interp of complex CSI). O(n·A·S).
+    """Resample stream to uniform 1/fs_hz grid (linear interpolation). O(n·A·S).
 
-    The mesh delivers CSI at a jittery rate (round-robin + contention swings it 30-300 Hz); the
-    front-end builds COUNT-based windows gated by `fs_ok` (Config.fs_tol), so off-rate windows get
-    dropped — wasting capture and gapping coverage. Resampling first onto a fixed grid makes the live
-    fs exactly fs_hz, so windows pass and Doppler/spectrogram features are not smeared by jitter.
+    Mesh rate jitters (30-300 Hz). Resampling fixes fs to fs_hz, preventing dropped windows and smeared spectrograms.
 
-    Pass a SINGLE-link/single-node stream (mixing transmitters interleaves different channels).
-    Returns a new frame list on the uniform grid; input may be unsorted (sorted by timestamp here)."""
+    Pass a single-link stream. Output is sorted."""
     if fs_hz <= 0:
         raise ValueError("resample_uniform: fs_hz must be positive")
     if len(frames) < 2:

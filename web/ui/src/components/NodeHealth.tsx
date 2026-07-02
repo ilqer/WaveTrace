@@ -7,7 +7,7 @@ interface Props {
   links?: LinkHealth[];
 }
 
-// Per directed (tx→rx) link rate/loss — breaks down what the node table aggregates per RX board.
+// Per-link (tx→rx) rate/loss (breaks down RX board aggregation).
 function LinkHealthTable({ links }: { links: LinkHealth[] }) {
   if (links.length === 0) return null;
   return (

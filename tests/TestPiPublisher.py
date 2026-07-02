@@ -1,8 +1,6 @@
-"""Pi node publisher: prove its bytes parse back through the real host wire-format parser.
-
-The Pi is additive and runs on separate hardware, but its UDP datagrams must be byte-exact
-for the existing host (wavetrace.Source). These tests round-trip pi/publisher.py output through
-the host parser so a format drift on either side fails here."""
+"""Pi node publisher serialization tests.
+Validates that byte outputs parse correctly through the host wire-format parser.
+UDP datagrams must remain byte-exact for wavetrace.Source. Round-tripping catches format drift."""
 import os
 import sys
 
@@ -86,7 +84,7 @@ def test_batch_parses_through_host():
 
 
 def test_v3_int16_preserves_exact_amplitude():
-    # ver-3 int16 with a fixed scale round-trips CSI integers EXACTLY, unlike ver-2 int8 (rescales).
+    # v3 int16 with fixed scale perfectly round-trips CSI integers. (v2 int8 only rescales).
     S = 256
     pub = BatchPublisher("127.0.0.1", 9876, NODE, AP, ver=3)
     pub._sock = _FakeSock()

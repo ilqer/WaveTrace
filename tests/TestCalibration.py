@@ -8,8 +8,7 @@ from wavetrace.Calibration import Calibration, CalibrationResult, reflection_sig
 
 
 def _quietBaseline(A, S, F, informative, seed):
-    """A still scene: fixed channel + small noise + per-frame AGC gain, with one subcarrier given
-    extra variation so NBVI has a clear winner."""
+    """A still scene: fixed channel + small noise + per-frame AGC. One subcarrier varies for NBVI."""
     rng = np.random.default_rng(seed)
     baseMag = rng.uniform(0.8, 1.2, (A, S))
     phase = rng.uniform(-np.pi, np.pi, (A, S))
@@ -84,7 +83,7 @@ def test_calibration_ready_guard_rejects_short_baseline():
 
 
 def test_calibration_without_gain_lock():
-    # with gain lock off, NBVI still runs but reference_scale is NaN and gain_lock raises
+    # Without gain lock, NBVI runs but reference_scale is NaN.
     A, S, F = 2, 16, 60
     frames, _ = _quietBaseline(A, S, F, informative=7, seed=9)
     cal = Calibration(baseline_packets=F, use_gain_lock=False)
@@ -98,10 +97,10 @@ def test_calibration_without_gain_lock():
         _ = cal.gain_lock                        # disabled -> no lock to hand out
 
 
-# --- Baseline reflection reference (REFERENCE §0B material/dielectric signature) --------------
+# Baseline reflection reference (material signature).
 
 def test_reflection_signature_baseline_is_neutral():
-    # baseline vs itself -> mag_ratio ~1, phase_delta ~0
+    # Baseline vs itself -> mag_ratio ~1, phase_delta ~0.
     A, S, F = 2, 16, 100
     frames, _ = _quietBaseline(A, S, F, informative=7, seed=6)
     cal = Calibration(baseline_packets=F)
@@ -111,7 +110,7 @@ def test_reflection_signature_baseline_is_neutral():
     assert res.baseline_mag.shape == (S,)
     assert res.baseline_diff.shape == (S - 1,)
 
-    # magnitudes match the stored baseline mean -> ratio 1 everywhere
+    # Magnitudes match baseline mean -> ratio 1.
     ref = CsiFrame(A, S)
     ref.grid[:, :] = res.baseline_mag.astype(np.complex64)
     mag_ratio, _ = reflection_signature(np.asarray(ref.grid), res)
@@ -119,7 +118,7 @@ def test_reflection_signature_baseline_is_neutral():
 
 
 def test_reflection_signature_detects_attenuation():
-    # object attenuates part of the band -> mag_ratio < 1 there
+    # Attenuated band -> mag_ratio < 1.
     A, S, F = 1, 16, 100
     frames, baseMag = _quietBaseline(A, S, F, informative=7, seed=7)
     cal = Calibration(baseline_packets=F)

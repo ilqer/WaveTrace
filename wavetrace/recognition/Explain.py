@@ -1,23 +1,15 @@
-"""Model explainability for the observability UI.
+"""Model explainability for UI.
 
-Two flavours of antenna/channel importance:
-  * STATIC weight (per model)   — L2 norm of the first Conv2d's filters per input channel.
-  * DYNAMIC importance (per window) — channel ablation: zero each channel, measure the confidence
-    drop on the winning class. This is 'which antenna drove THIS decision'.
+* STATIC weight (per model): L2 norm of first Conv2d's filters per input channel.
+* DYNAMIC importance (per window): Channel ablation. Zero channel, measure confidence drop.
 
-Also: permutation importance for MLP/SVM feature heads, and a confusion-matrix helper.
-All offline / UI-cadence — never on the <8 ms inference path.
-"""
+Also: permutation importance for MLP/SVM, and confusion matrix helper. Offline/UI-cadence only."""
 
 import numpy as np
 
 
 def cnn_channel_weights(head) -> np.ndarray | None:
-    """Per-input-channel static weight = L2 norm of the first Conv2d's filters for that input
-    channel, normalized to sum 1. Returns (C,) float32, or None for non-CNN heads.
-
-    For a WeaponHead with CNN backend, C = num nodes (multi-node images are node-as-channel).
-    O(filters)."""
+    """Static weight per input channel (normalized L2 norm of Conv2d filters). O(filters)."""
     net = getattr(head, "_net", None)
     if net is None:
         return None
@@ -32,12 +24,7 @@ def cnn_channel_weights(head) -> np.ndarray | None:
 
 
 def ablation_importance(head, image, *, baseline_value=0.0) -> np.ndarray:
-    """DYNAMIC per-channel importance for one window's image (C, K, W).
-    For each channel c: zero it, re-predict, measure |p_full - p_ablated| on the winning class.
-    Larger drop = that channel mattered more for this decision. Returns (C,) normalized float32.
-
-    Cheap at UI cadence (a handful of channels). NOT for the per-window inference path.
-    baseline_value: substitute amplitude when ablating (0 = absent signal)."""
+    """Dynamic per-channel ablation importance. Zero channel, measure confidence drop."""
     img = np.asarray(image, dtype=np.float32)
     if img.ndim == 2:                       # (K, W) single channel
         return np.array([1.0], dtype=np.float32)
@@ -56,9 +43,7 @@ def ablation_importance(head, image, *, baseline_value=0.0) -> np.ndarray:
 
 def feature_node_importance(head, X, *, node_dim=9, k: int, n_nodes: int,
                              n_repeats=5, seed=0) -> np.ndarray:
-    """Permutation importance per NODE for an MLP/SVM feature head (9·K-per-node concat).
-    Shuffles each node's feature block, measures the prediction-probability shift. Returns (n_nodes,)
-    normalized float64. Offline. O(n_nodes·n_repeats·predict)."""
+    """Permutation importance per node for MLP/SVM feature head. O(n_nodes*n_repeats*predict)."""
     X = np.asarray(X, dtype=np.float32)
     block = node_dim * k
     rng = np.random.default_rng(seed)

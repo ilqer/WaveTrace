@@ -1,4 +1,4 @@
-"""Item 13 — the carry-position confound axis in the weapon LOGO report (diagnosis CAUSE 5E)."""
+"""Item 13: Carry-position confound axis in the weapon LOGO report (CAUSE 5E)."""
 import numpy as np
 
 from wavetrace.recognition.Train import _carry_groups, _logo_metrics
@@ -17,8 +17,7 @@ def test_carry_groups_none_for_non_weapon_ids():
     assert _carry_groups(np.array(["p0_chest_x0", "p0_chest_x1"])) is None  # not s<digit>
 
 
-def test_logo_metrics_adds_carry_axis_when_separable():
-    """With >=2 carry positions, _logo_metrics emits a 'carry' fold alongside session/subject."""
+    """With >=2 carry positions, emits a 'carry' fold."""
     rng = np.random.default_rng(0)
     n = 40
     # 27-feature IC block (variance backend keys on column 9 = the σ²-series mean); make it separable

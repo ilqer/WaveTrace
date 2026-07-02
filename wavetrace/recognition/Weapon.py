@@ -1,24 +1,13 @@
-"""Phase 7p-b/c — WeaponHead: Stage-E backends behind the same wrapper API as PresenceHead.
+"""Phase 7p-b/c: WeaponHead backends.
 
-Input contract BY BACKEND (the σ²[p] paths and the CNN consume different x_t):
-  * "variance" / "mlp" / "svm" → `X_intercarrier` (n, 27) — the InterCarrierExtractor block
-    (µ|σ²|CV × 9 stats) built from RAW magnitudes: `build_dataset(gain_lock=None, intercarrier=True)`.
-    NEVER the gain-locked presence features (the lock erases the metal signature — P6 gotcha).
-  * "cnn" → `X_image` (n, K, window); a flattened (n, K·window) row is also accepted so
-    `InferenceSession.predict_window` works unchanged (it reshapes internally).
+Input by backend:
+* 'variance', 'mlp', 'svm': X_intercarrier (built from RAW magnitudes). Do NOT use gain-locked features.
+* 'cnn': X_image.
 
 Backends:
-  * "variance" — the Yousaf BASELINE-FIRST head (plan §5 7a): one threshold on the window's mean
-    σ²[p] (column 9 = the sigma2-series mean). Physics says metal → LOWER inter-carrier variance,
-    but fit() learns threshold AND direction from data (orientation-robust). Fit O(n log n)
-    (sorted prefix scan maximizing balanced accuracy); predict O(1)/window. predict_proba = a
-    logistic in the threshold margin (scale = robust σ of the feature) — calibration-free but
-    monotone, which is all the soft vote needs.
-  * "mlp" / "svm" — the shared sklearn pipeline (`Model.sklearn_pipeline`).
-  * "cnn" — torch 2D-CNN on the CSI image (small LUMS-style net: 2×conv → adaptive pool → 2 dense;
-    ported architecture, NOT their random-KFold eval — rev-7 #1). torch is imported LAZILY
-    (optional dep: `pip install wavetrace[cnn]`); every other backend works without it.
-    Deterministic via torch.manual_seed(config.seed). Trains/infers on Pi/laptop, never the ESP32.
+* 'variance': Baseline threshold on mean variance. Physics: metal lowers variance. Fit O(n log n), predict O(1).
+* 'mlp'/'svm': Shared sklearn pipeline.
+* 'cnn': 2D-CNN on CSI image. Torch is lazy imported.
 """
 
 from dataclasses import asdict
@@ -35,7 +24,7 @@ VARIANCE_FEATURE = 9
 
 
 def _torch():
-    """Lazy torch import — only the 'cnn' backend needs it."""
+    """Lazy torch import."""
     try:
         import torch
         return torch
@@ -46,7 +35,7 @@ def _torch():
 
 
 def _build_net(torch, hidden: int, num_classes: int, in_channels: int = 1):
-    """LUMS-style small 2D-CNN; AdaptiveAvgPool makes it (K, window)-agnostic. in_channels=N nodes."""
+    """Small 2D-CNN. AdaptiveAvgPool makes it (K, window)-agnostic."""
     nn = torch.nn
     return nn.Sequential(
         nn.Conv2d(in_channels, 8, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
@@ -82,9 +71,7 @@ class WeaponHead:
 
     def fit(self, X, y, *, epochs: int = 30, lr: float = 1e-3, batch_size: int = 32,
             report=None) -> "WeaponHead":
-        """Fit on (n, 27) inter-carrier blocks (variance/mlp/svm) or (n, K, window) images (cnn).
-        epochs/lr/batch_size/report apply to the cnn backend only. Offline. Returns self.
-        report: optional callback(epoch_int, {"loss": float}) for live UI training curves."""
+        """Fit on inter-carrier blocks or images. Returns self."""
         y = np.asarray(y, dtype=np.int64)
         classes = np.unique(y)
         if classes.size < 2:
@@ -177,12 +164,12 @@ class WeaponHead:
     # ----- predict --------------------------------------------------------------------------------
 
     def predict(self, X) -> np.ndarray:
-        """(n, d)|(n, K, window) -> (n,) class ids. O(1) per row (CNN: O(K·window))."""
+        """Predict class ids."""
         proba = self.predict_proba(X)
         return self.classes_[np.argmax(proba, axis=1)]
 
     def predict_proba(self, X) -> np.ndarray:
-        """-> (n, C) probabilities, columns ordered by classes_."""
+        """Predict class probabilities."""
         self._require_fitted()
         X = np.asarray(X, dtype=np.float32)
         if self.config.backend == "variance":
@@ -199,8 +186,7 @@ class WeaponHead:
         return self._pipe.predict_proba(X)
 
     def _as_images(self, X) -> np.ndarray:
-        """Accept 4-D (n,C,K,W), 3-D (n,K,W)->unsqueeze to (n,1,K,W), or flat (n,K·W)->reshape.
-        Always returns 4-D for _fit_cnn and predict_proba (no unsqueeze at call sites)."""
+        """Format to 4-D (n,C,K,W) for cnn fit and predict_proba."""
         if X.ndim == 4:
             return np.ascontiguousarray(X)
         if X.ndim == 3:

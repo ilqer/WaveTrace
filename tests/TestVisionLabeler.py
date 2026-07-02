@@ -1,6 +1,8 @@
-"""VisionLabeler tests — the camera-supervised labeling seam, now wired. A STUB detector exercises
-the detection->Label policy (present/bbox/keypoints/weapon) with no model dependency; the real
-YoloLabeler is the same policy over an ultralytics model (not exercised here — optional dep)."""
+"""VisionLabeler tests: camera-supervised labeling.
+
+A STUB detector exercises the detection-to-label policy (presence, bbox, keypoints, weapon)
+without model dependency.
+"""
 
 import numpy as np
 import pytest
@@ -12,7 +14,7 @@ from wavetrace.groundtruth import (
     weapon_label_fn,
 )
 
-IMG = np.zeros((8, 8, 3), dtype=np.uint8)  # a dummy frame; the stub detector ignores its content
+IMG = np.zeros((8, 8, 3), dtype=np.uint8)  # Dummy frame. Stub detector ignores content.
 
 
 def _person_detector(image):
@@ -27,7 +29,7 @@ def test_person_detection_labels_present_with_bbox():
     lab = VisionLabeler(_person_detector, label_fn=presence_label_fn)
     l = lab.label(IMG, 1.0)
     assert l.class_id == 1 and l.name == "present"
-    assert list(l.bbox) == pytest.approx([0.4, 0.3, 0.2, 0.5])  # native Label stores float32
+    assert list(l.bbox) == pytest.approx([0.4, 0.3, 0.2, 0.5])  # Label stores float32.
     assert list(l.keypoints) == pytest.approx([0.5, 0.2, 0.5, 0.5])
 
 
@@ -44,7 +46,7 @@ def test_low_confidence_is_filtered_out():
 
 
 def test_weapon_class_flags_weapon():
-    # a person (0) and a knife (43) in frame; weapon_classes marks 43 as a weapon
+    # Person (0) and knife (43). weapon_classes flags 43.
     detector = lambda img: [
         Detection(0, 0.8, (0.4, 0.3, 0.2, 0.5)),
         Detection(43, 0.7, (0.45, 0.5, 0.05, 0.1)),
@@ -60,7 +62,7 @@ def test_best_person_chosen_by_confidence():
         Detection(0, 0.95, (0.4, 0.3, 0.2, 0.5)),
     ]
     lab = VisionLabeler(detector, label_fn=presence_label_fn)
-    assert list(lab.label(IMG, 0.0).bbox) == pytest.approx([0.4, 0.3, 0.2, 0.5])  # higher-conf box
+    assert list(lab.label(IMG, 0.0).bbox) == pytest.approx([0.4, 0.3, 0.2, 0.5])  # Selects higher-conf box.
 
 
 def test_label_stream_sorted_by_time():

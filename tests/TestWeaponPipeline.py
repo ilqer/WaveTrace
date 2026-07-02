@@ -1,4 +1,4 @@
-"""Independent weapon collect/serve pipeline: span-based no-weapon/weapon labeling + ic27 serving plan."""
+"""Weapon pipeline: span-based labeling + ic27 plan."""
 
 from types import SimpleNamespace
 
@@ -9,7 +9,7 @@ from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler, weapon_label_fn
 
 
 def test_spans_label_clear_vs_weapon():
-    """collect_weapon labels a whole segment via spans: [] -> class 0 (clear), [span] -> class 1."""
+    """[] -> class 0, [span] -> class 1."""
     clear = ScriptedLabeler([], label_fn=weapon_label_fn)
     armed = ScriptedLabeler([(0.0, 10.0, True)], label_fn=weapon_label_fn)
     assert clear(5.0).class_id == 0
@@ -18,7 +18,7 @@ def test_spans_label_clear_vs_weapon():
 
 
 def test_serving_plan_ic27_uses_intercarrier():
-    """ic27 head -> no gain-lock, intercarrier ON, pick selects the IC block (matches training)."""
+    """ic27 head -> no gain-lock, intercarrier ON."""
     head = SimpleNamespace(feature_mode="ic27", config=SimpleNamespace(backend="variance"))
     apply_lock, intercarrier, pick = _serving_plan("weapon", head)
     assert apply_lock is False
@@ -27,7 +27,7 @@ def test_serving_plan_ic27_uses_intercarrier():
 
 
 def test_serving_plan_fusion_concatenates():
-    """fusion head -> gain-lock + intercarrier, pick = hstack([ic, features])."""
+    """fusion head -> gain-lock + intercarrier."""
     head = SimpleNamespace(feature_mode="fusion", config=SimpleNamespace(backend="mlp"))
     apply_lock, intercarrier, pick = _serving_plan("weapon", head)
     assert apply_lock is True and intercarrier is True

@@ -1,36 +1,27 @@
-"""Runtime config for the Pi 5 GHz CSI node. Fill in the three TODO values, then run pi5_csi_node.py.
+"""Runtime config for Pi 5 GHz CSI node. Fill TODOs and run pi5_csi_node.py.
+Appears as node 5 alongside ESP32 mesh."""
 
-This node is additive: it shows up to the host as node 5 alongside the ESP32 mesh (1-4).
-"""
-
-# --- Backhaul: Pi (eth0) -> Mac. Same UDP port the ESP nodes use. ---
-# PC_IP must be the Mac's address on the wired backhaul LAN. A wrong PC_IP (or a macOS firewall
-# blocking UDP 9876) is the #1 cause of an empty mesh_verify/health that looks like a capture bug.
+# Backhaul to Mac on same UDP port as ESP. Must be LAN IP.
 PC_IP = "TODO_MAC_LAN_IP"          # e.g. "10.8.1.103"
 UDP_PORT = 9876
 
 # --- Node identity ---
 NODE_ID = 5  # unique vs ESP nodes 1-4
 
-# --- Sensing link: modem B 5 GHz BSSID, the transmitter we measure CSI from. ---
-# Must equal the -m argument passed to makecsiparams (see start_capture.sh). On the host this
-# becomes the per-link tx id: link = (last-two-octets-of-AP_BSSID -> node 5).
+# Modem B 5 GHz BSSID. Must match -m in makecsiparams.
 AP_BSSID = "TODO_MODEM_B_5G_BSSID"  # e.g. "aa:bb:cc:dd:ee:ff"
 
-# Modem B channel/width, used only by start_capture.sh's makecsiparams call. HT80 -> "36/80".
+# Channel/width for makecsiparams (e.g. "36/80").
 CHANNEL_SPEC = "36/80"
 
-# --- Local: nexmon firmware -> this host (never leaves the Pi). ---
+# Local nexmon firmware to host port.
 NEXMON_PORT = 5500
 
-# --- CSI width / wire format ---
-# HT80 on the CYW43455 reports 256 subcarriers. Off-width frames are dropped at the source.
+# CSI config. HT80 reports 256 subcarriers.
 EXPECT_S = 256
-# Wire version: 3 = int16 I/Q, keeps absolute amplitude for the weapon feature. The host accepts
-# 2 and 3; the ESP nodes still send 2. Use 3 here so both presence and weapon work.
+# Wire version 3: int16 I/Q. Keeps absolute amplitude for weapon feature.
 WIRE_VER = 3
-# int16 scale, fixed and never per-frame: Nexmon CSI is already int16-range, so 1.0 is pass-through
-# and keeps amplitude comparable across frames. Don't switch this to per-frame auto-scale for weapon.
+# Fixed int16 scale (1.0). Do not auto-scale or weapon feature fails.
 CSI_SCALE = 1.0
 
 

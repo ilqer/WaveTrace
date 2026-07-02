@@ -1,4 +1,4 @@
-"""T4/P10 — multi-node stacking: demux_by_node, iter_windows_stacked, build_dataset_stacked."""
+"""Tests for multi-node stacking: demux_by_node, iter_windows_stacked, build_dataset_stacked."""
 
 import numpy as np
 import pytest
@@ -219,7 +219,7 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     n = 40
     y = np.array([0] * 20 + [1] * 20, dtype=np.int64)
 
-    # 2-node (N=2 channels) model — P10 path.
+    # 2-node (N=2 channels) model test.
     X_2ch = rng.uniform(0, 1, size=(n, N, K_img, W)).astype(np.float32)
     head = WeaponHead(config)
     head.fit(X_2ch, y, epochs=2)
@@ -231,7 +231,7 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     head2 = WeaponHead.load(p)
     assert np.allclose(head2.predict_proba(X_2ch), proba, atol=1e-5)
 
-    # Pre-P10 blob: image_shape a 2-tuple (K_img, W), single-channel model; simulate by stripping it.
+    # Legacy blob test: image_shape is a 2-tuple (K_img, W) for single-channel model. Simulate by stripping it.
     X_1ch = rng.uniform(0, 1, size=(n, K_img, W)).astype(np.float32)
     head_1ch = WeaponHead(config)
     head_1ch.fit(X_1ch, y, epochs=2)
@@ -240,7 +240,7 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     proba_1ch = head_1ch.predict_proba(X_1ch)
 
     blob = joblib.load(p_1ch)
-    blob["image_shape"] = (K_img, W)  # 2-tuple: pre-P10 file format
+    blob["image_shape"] = (K_img, W)  # 2-tuple: legacy file format
     p_legacy = tmp_path / "wh_legacy.joblib"
     joblib.dump(blob, p_legacy)
     head3 = WeaponHead.load(p_legacy)

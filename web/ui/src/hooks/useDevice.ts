@@ -15,7 +15,7 @@ export interface SerialPort {
   likely_esp: boolean;
 }
 
-// Streams from /ws/device, independent of the inference pipeline sockets, so it stays live across run/stop.
+// Streams from /ws/device independently of inference sockets (stays live across run/stop).
 export function useDevice() {
   const [lines, setLines] = useState<DeviceLine[]>([]);
   const [ports, setPorts] = useState<SerialPort[]>([]);

@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Pi-side MJPEG camera uploader — streams the Pi Camera feed to the PC for ground-truth labeling.
-
-Run ON THE RASPBERRY PI:   python3 camera_stream.py
-The PC then reads it at:    http://<pi-ip>:8090/stream.mjpg
-
-This is a TRAINING-ONLY component: the camera supervises the CSI labels (CameraLabeler on the PC).
-The deployed detector needs no camera. Requires picamera2:  sudo apt install -y python3-picamera2
+"""Pi-side MJPEG camera uploader. Streams feed for ground-truth labeling.
+Run on Pi: python3 camera_stream.py
+Read at: http://<pi-ip>:8090/stream.mjpg
+Training only. Needs picamera2: sudo apt install -y python3-picamera2
 """
 import io
 import socketserver

@@ -1,4 +1,4 @@
-"""All-pairs link splitting: parse_batch_links buckets one batch by (tx_short, rx_node)."""
+"""Tests for all-pairs link splitting. parse_batch_links buckets batches by (tx_short, rx_node)."""
 
 import struct
 
@@ -16,7 +16,7 @@ def _rec(csi_ints, mac, local_ts):
 
 
 def _batch(rows, node_id=7, ntp_ms=5000):
-    """rows = [(csi_ints, mac, local_ts), ...] -> one binary v2 UDP batch payload (header + records)."""
+    """Converts [(csi_ints, mac, local_ts)] into a binary v2 UDP batch payload with header."""
     hdr = struct.pack("<BBBQH", 0x57, 2, node_id, ntp_ms, len(rows))
     return hdr + b"".join(_rec(*r) for r in rows)
 
@@ -27,7 +27,7 @@ def test_mac_short():
 
 
 def test_splits_two_transmitters_into_two_links():
-    """Two interleaved TX MACs to one RX -> two (tx,rx) buckets, frames routed by MAC."""
+    """Interleaved frames from two TX MACs to one RX are routed into two distinct (tx,rx) buckets."""
     a, b = "aa:aa:aa:aa:00:01", "bb:bb:bb:bb:00:02"
     S = 4
     rows = [
@@ -65,8 +65,9 @@ def test_tx_mac_filter_keeps_one_link():
 
 
 def test_per_link_width_guard():
-    """A link's first width sets its reference; off-width lines in THAT link are dropped — but a
-    different link may legitimately carry a different width (e.g. a future 5 GHz arm)."""
+    """First frame sets the expected subcarrier width for a link. 
+    Frames with mismatched widths in the same link are dropped.
+    Different links can operate on different widths (e.g. 5GHz vs 2.4GHz)."""
     a, b = "aa:aa:aa:aa:00:01", "bb:bb:bb:bb:00:02"
     rows = [
         ([1, 2, 3, 4], a, 1000),          # link a: S=2 (reference)

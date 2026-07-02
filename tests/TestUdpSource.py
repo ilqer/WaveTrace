@@ -1,4 +1,4 @@
-"""T7/P10 — UdpSource pure function tests: parse_csi_line, parse_batch."""
+"""UdpSource tests: parse_csi_line, parse_batch."""
 
 import json
 import struct
@@ -17,7 +17,7 @@ def _make_csi_line(csi_ints, mac="aa:bb:cc:dd:ee:ff", local_ts=1000):
         "CSI_DATA", "1", mac, "-60", "11", "0", "7", "0",
         "1", "0", "0", "0", "0", "0",
         "-95", "0", "6", "0", str(local_ts), "0", "100", "0",
-        # real esp-csi compact-prints the array AND wraps it in CSV double-quotes
+        # Real esp-csi compact-prints the array and wraps it in double quotes.
         str(len(csi_ints) // 2), "1", '"' + json.dumps(csi_ints, separators=(",", ":")) + '"',
     ]
     assert len(cols) == 25
@@ -32,7 +32,7 @@ def _bin_rec(csi_ints, mac="aa:bb:cc:dd:ee:ff", local_ts=1000):
 
 
 def _bin_batch(rows, node_id=0, ntp_ms=5000):
-    """rows = [(csi_ints, mac, local_ts), ...] -> one binary v2 UDP batch (header + records)."""
+    """Builds a binary v2 UDP batch payload from [(csi_ints, mac, local_ts)]."""
     hdr = struct.pack("<BBBQH", 0x57, 2, node_id, ntp_ms, len(rows))
     return hdr + b"".join(_bin_rec(*r) for r in rows)
 
@@ -63,8 +63,8 @@ def test_parse_csi_line_valid():
 
 
 def test_parse_csi_line_quoted_real_format():
-    """Regression: real esp-csi wraps the array in CSV double-quotes ("[...]"). Both quoted and
-    unquoted must parse (caught on real hardware 2026-06-15 — quoted lines were dropped)."""
+    """Regression: Real esp-csi wraps arrays in CSV double-quotes.
+    Both quoted and unquoted arrays must parse."""
     quoted = ('CSI_DATA,15562,1a:00:00:00:00:00,-25,11,1,0,1,1,1,0,0,0,0,-96,0,11,2,'
               '2361919,0,47,1,4,0,"[1,2,3,4]"')
     res = parse_csi_line(quoted)
@@ -81,7 +81,7 @@ def test_parse_csi_line_filtering():
     assert parse_csi_line(line, tx_mac="AA:BB:CC:DD:EE:FF") is not None  # case-insensitive
     # Non-matching MAC silently dropped
     assert parse_csi_line(line, tx_mac="11:22:33:44:55:66") is None
-    # Malformed line (not 25 cols, not CSI_DATA) → None, never raises
+    # Malformed line (not 25 cols, not CSI_DATA) returns None, never raises.
     assert parse_csi_line("garbage,line") is None
     assert parse_csi_line("") is None
 
@@ -89,7 +89,7 @@ def test_parse_csi_line_filtering():
 # ---- SerialReader (esp-csi over USB serial) ------------------------------------------
 
 class _FakeSerial:
-    """Minimal pyserial.Serial stand-in: readline() walks a canned list of byte lines, then ''."""
+    """Mock pyserial.Serial. readline() walks a list of byte lines, then returns ''."""
     def __init__(self, lines):
         self._lines = list(lines)
         self.closed = False
@@ -102,7 +102,7 @@ class _FakeSerial:
 
 
 def _install_fake_serial(monkeypatch, lines):
-    """Inject a fake `serial` module so SerialReader.frames() imports it instead of real pyserial."""
+    """Injects fake `serial` module for SerialReader.frames()."""
     import types
     fake = types.ModuleType("serial")
     holder = {}
@@ -123,23 +123,22 @@ def test_serial_reader_yields_node_tagged_frames(monkeypatch):
     reader = SerialReader("/dev/ttyUSB0", node_id=4, tx_mac="aa:bb:cc:dd:ee:ff", baud=921600)
 
     frames = list(reader.frames())
-    assert len(frames) == 2                       # two matching-MAC lines; garbage + foreign dropped
+    assert len(frames) == 2                       # Matching MAC lines only; garbage/foreign dropped.
     assert all(fr.node_id == 4 for fr in frames)
     assert all(fr.num_subcarriers == 3 for fr in frames)
     assert frames[0].grid[0, 0] == pytest.approx(complex(2, 1))  # [imag, real] -> complex(real, imag)
-    assert holder["obj"].closed                   # port closed on exhaustion
+    assert holder["obj"].closed                   # Port closed on exhaustion.
     assert holder["args"] == ("/dev/ttyUSB0", 921600, 5.0)
 
 
 def test_serial_reader_drops_off_format_frames(monkeypatch):
-    """Real RX mixes bandwidths: a frame with a different S must be dropped so the stream stays a
-    fixed (1, S) shape (caught on hardware 2026-06-15 — save_recording can't stack mixed shapes)."""
-    s3 = _make_csi_line([1, 2, 3, 4, 5, 6]).encode()   # S=3 (first -> sets S_ref)
-    s2 = _make_csi_line([7, 8, 9, 10]).encode()         # S=2 -> off-format, dropped
+    """Frames with differing subcarrier counts (S) must be dropped to maintain fixed (1, S) shape."""
+    s3 = _make_csi_line([1, 2, 3, 4, 5, 6]).encode()   # S=3 (sets S_ref)
+    s2 = _make_csi_line([7, 8, 9, 10]).encode()         # S=2 is dropped
     _install_fake_serial(monkeypatch, [s3, s2, s3, s2, s3])
     frames = list(SerialReader("/dev/ttyUSB0").frames())
     assert len(frames) == 3 and all(fr.num_subcarriers == 3 for fr in frames)
-    # all yielded frames share one shape -> save_recording can stack them
+    # Frames share one shape; save_recording can stack them.
     np.stack([np.asarray(fr.grid) for fr in frames])
 
 
@@ -190,16 +189,16 @@ def test_parse_batch_bad_header_and_bad_lines():
     with pytest.raises(ValueError, match="bad batch header"):
         parse_batch(b"")
 
-    # Valid header but no complete records (trailing garbage) → empty list, no error
+    # Valid header with trailing garbage returns empty list, no error.
     empty = struct.pack("<BBBQH", 0x57, 2, 0, 1000, 0) + b"\x01\x02\x03"
     assert parse_batch(empty) == []
 
-    # Valid header + mixed S records: only matching-S kept (first S sets the reference)
+    # Mixed S records: only matching-S kept (first S sets reference).
     mixed = _bin_batch([([1, 2, 3, 4, 5, 6, 7, 8], "aa:bb:cc:dd:ee:ff", 1000),   # S=4 (reference)
-                        ([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 2000)],              # S=2 → skipped
+                        ([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 2000)],              # S=2 is skipped.
                        node_id=0, ntp_ms=2000)
     frames = parse_batch(mixed)
-    assert len(frames) == 1  # only the S=4 record kept
+    assert len(frames) == 1  # Only S=4 record kept.
     assert frames[0].num_subcarriers == 4
 
 
@@ -210,20 +209,20 @@ def test_parse_batch_honors_header_count():
     def hdr(n):
         return struct.pack("<BBBQH", 0x57, 2, 0, 5000, n)
 
-    # (a) n smaller than the encoded records -> only n parsed
+    # If n < encoded records, only n parsed.
     assert len(parse_batch(hdr(1) + rec + rec + rec)) == 1
-    # (b) trailing garbage after exactly n records -> ignored, not parsed as CSI
+    # Trailing garbage after n records is ignored.
     assert len(parse_batch(hdr(2) + rec + rec + b"\xde\xad\xbe\xef")) == 2
-    # (c) n larger than the encoded records -> stops at truncation, returns what's there
+    # If n > encoded records, parsing stops at truncation.
     assert len(parse_batch(hdr(5) + rec + rec)) == 2
 
 
 def test_parse_batch_handles_uint32_ts_wrap():
-    """ts_us is the firmware's low-32-bit timer (wraps ~71.6 min); a within-batch rollover must not
-    corrupt timestamps (the masked subtraction keeps the 512 µs gap, not a ~71 min jump)."""
+    """ts_us wraps at 32 bits (~71.6 min). Roll-over within batch must not corrupt timestamps.
+    Masked subtraction preserves true delta gap."""
     ntp_ms = 5000
-    rows = [([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 0xFFFFFF00),   # just below the 2^32 wrap
-            ([5, 6, 7, 8], "aa:bb:cc:dd:ee:ff", 0x00000100)]   # wrapped: 512 µs later
+    rows = [([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 0xFFFFFF00),   # Before 32-bit wrap.
+            ([5, 6, 7, 8], "aa:bb:cc:dd:ee:ff", 0x00000100)]   # After wrap: 512 µs later.
     frames = parse_batch(_bin_batch(rows, node_id=0, ntp_ms=ntp_ms))
     assert len(frames) == 2
     assert frames[0].timestamp == pytest.approx(ntp_ms / 1000.0 - 512 / 1e6, abs=1e-9)

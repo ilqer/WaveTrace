@@ -1,10 +1,7 @@
-"""Phase 6 — Stage A presence head + multi-RX plumbing tests (6a–6f).
+"""Stage A presence head and multi-RX plumbing tests.
 
-The eval-gate test uses 4 synthetic recordings (2 subjects x 2 sessions, presence -> per-subcarrier
-turbulence, plus a fast common-amplitude wobble that confuses a scalar energy gate) and asserts the
-trained head beats BOTH no-train baselines on leave-one-session-out AND leave-one-subject-out folds.
-Synthetic separability validates the LEARNING PIPELINE only — real camera-labeled recordings are
-required before any accuracy claim (plan §2.2).
+Uses 4 synthetic recordings. Tests leave-one-session-out and leave-one-subject-out accuracy.
+Trained head must beat baselines. Validates learning pipeline logic only.
 """
 
 import json
@@ -60,8 +57,7 @@ def _calibrate():
 
 
 def _recording(sess, subj, seed, turb, duration=10.0):
-    """One presence recording: amplitude wobble (narrowband 'interference') in BOTH classes,
-    per-subcarrier turbulence only inside the presence span."""
+    """Presence recording: wobble in both classes. Per-subcarrier turbulence only during presence."""
     frames, _, truth = generatePairedRecording(
         numAntennas=NUM_ANT, numSubcarriers=NUM_SUB, sampleRateHz=FS, durationS=duration,
         cameraFps=30.0, presenceSpans=[SPAN], amplitudeHz=2.0, amplitudeDepth=0.45,
@@ -93,7 +89,7 @@ def presence_data():
 # ----- 6a: learnable synthetic + group ids --------------------------------------------------------
 
 def test_presence_turbulence_separates_features(presence_data):
-    # present windows must carry higher per-subcarrier temporal std (feature idx 1 of each 9-block)
+    # Present windows must have higher per-subcarrier temporal std (idx 1).
     X, y, K = presence_data["X"], presence_data["y"], presence_data["K"]
     stds = X.reshape(X.shape[0], K, 9)[:, :, 1].mean(axis=1)
     assert stds[y == 1].mean() > 1.5 * stds[y == 0].mean()
@@ -191,8 +187,7 @@ def test_train_presence_persists(presence_data, tmp_path):
 # ----- 6c: the LOCKED eval gate + baselines -------------------------------------------------------
 
 def test_eval_gate_head_beats_both_baselines(presence_data):
-    """The Phase-6 DoD: leave-one-session-out AND leave-one-subject-out accuracy beats the
-    majority class AND the no-train PresenceSegmenter by a clear margin (synthetic = plumbing)."""
+    """Logo accuracy must beat the majority class and PresenceSegmenter baselines."""
     d = presence_data
     report = evaluate_presence(
         d["X"], d["y"], session_ids=d["sess"], subject_ids=d["subj"], config=d["config"],
@@ -223,7 +218,7 @@ def test_segmenter_baseline_flags_turbulent_windows(presence_data):
     d = presence_data
     pred = segmenter_baseline(d["X_image"], cv_window=16, enter_cv=0.01, exit_cv=0.005)
     assert pred.shape == d["y"].shape and set(np.unique(pred)) <= {0, 1}
-    # the DSP gate is a meaningful baseline on its own: well above chance, below the trained head
+    # DSP gate baseline: above chance, below the trained head.
     assert (pred == d["y"]).mean() > 0.75
     assert pred[d["y"] == 1].mean() > pred[d["y"] == 0].mean()
 
@@ -249,7 +244,7 @@ def test_infer_predict_window_deterministic(presence_data, inference_session):
 
 
 def test_presence_mode_session(presence_data, tmp_path):
-    # 'presence' = the human-detection operating mode (independent of weapon mode, no cross-gating)
+    # 'presence' mode: independent human-detection operating mode.
     from wavetrace.recognition import mode_session
     d = presence_data
     head = PresenceHead(d["config"]).fit(d["X"], d["y"])

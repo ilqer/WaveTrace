@@ -1,8 +1,7 @@
-"""PresenceSegmenter — streaming variance-gate active-segment detector (Option-A LOF stand-in).
+"""PresenceSegmenter tests: streaming variance-gate active-segment detector.
 
-Validates: it flags the active (fluctuating) region and not the quiet ones, reports a plausible
-[start, end) for the closed segment, applies enter/exit hysteresis, and rejects bad construction.
-The active region is a high-amplitude-modulation stretch sandwiched between two still stretches.
+Validates that active (fluctuating) regions are flagged, segment bounds are correct,
+and hysteresis applies to transitions. Active region is a high-modulation stretch between quiet stretches.
 """
 
 import numpy as np
@@ -13,7 +12,7 @@ from fixtures.SyntheticCsi import generateStream
 
 
 def _energy(frame):
-    # antenna-collapsed per-subcarrier magnitude vector (what the segmenter ingests)
+    # Antenna-collapsed per-subcarrier magnitude vector.
     return np.abs(np.asarray(frame.grid)).mean(axis=0).astype(np.float32)
 
 
@@ -46,14 +45,14 @@ def test_presence_segmenter_reports_segment_bounds():
         if seg.segment_closed:
             start, end = seg.last_segment_start, seg.last_segment_end
     assert start is not None and end is not None
-    # The window lags onset/offset by < the window length; bounds should bracket the active region.
+    # Window lags true bounds by < window length. Bounds must bracket the active region.
     assert n <= start <= n + 20
     assert 2 * n <= end <= 2 * n + 20
     assert end > start
 
 
 def test_presence_segmenter_hysteresis_no_chatter():
-    # Hysteresis: a quiet tail after one active burst stays inactive, not re-triggering on ripples.
+    # Hysteresis: prevents re-triggering on ripples after an active burst.
     frames, n = _quiet_active_quiet()
     seg = PresenceSegmenter(window=20, enter_cv=0.05, exit_cv=0.02)
     transitions = 0

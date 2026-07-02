@@ -1,4 +1,4 @@
-"""T5/P10 — AlertGuard debounce+cooldown and DriftMonitor advisory."""
+"""AlertGuard debounce, cooldown, and DriftMonitor advisory tests."""
 
 import numpy as np
 import pytest

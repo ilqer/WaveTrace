@@ -1,9 +1,7 @@
-"""Phase 8 — end-to-end: capture/recording → calibrate → collect-data → train → run → publish.
+"""End-to-end pipeline tests: capture/recording -> calibrate -> collect-data -> train -> run -> publish.
 
-Same philosophy as P6/P7: the synthetic stream validates the WIRING (the five CLI modes compose and
-the served features match training), not detection accuracy on real hardware. The key invariant is
-PARITY: Cli.run's front-end (Frontend.iter_windows) must produce byte-identical features to the ones
-build_dataset trained on.
+Validates that CLI modes compose correctly and serving features match training.
+Ensures parity: serving pipeline (iter_windows) must produce byte-identical features to training (build_dataset).
 """
 
 import io
@@ -43,7 +41,7 @@ def _weapon_recording(seed=200, duration=10.0):
 
 
 def _presence_recording(seed=300, duration=10.0):
-    # turbulence only inside the presence span -> windows outside are 'absent' (both classes present)
+    # Turbulence only inside the presence span. Windows outside are 'absent'.
     frames, _, _ = generatePairedRecording(
         numAntennas=NUM_ANT, numSubcarriers=NUM_SUB, sampleRateHz=FS, durationS=duration,
         cameraFps=30.0, presenceSpans=[(3.0, 7.0)], presenceTurbulenceStd=0.20,
@@ -73,7 +71,7 @@ def test_calibration_roundtrip_rebuilds_lock(tmp_path):
     assert res.subcarriers == res2.subcarriers
     assert np.allclose(res.baseline_mag, res2.baseline_mag)
     assert gl2 is not None and gl2.locked and gl2.reference_scale == res.reference_scale
-    # the rebuilt lock applies identically to the original
+    # Rebuilt gain lock applies identically to the original.
     a = _weapon_recording(duration=0.2)[0]
     b = CsiFrame(NUM_ANT, NUM_SUB); b.timestamp = a.timestamp; b.grid[:, :] = np.asarray(a.grid)
     cal.gain_lock.apply(a); gl2.apply(b)
@@ -96,10 +94,10 @@ def test_run_features_match_build_dataset(tmp_path):
     frames = _weapon_recording(duration=4.0)
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     result, gain_lock = load_calibration(tmp_path / "cal")
-    # training arrays (gain_lock=None weapon contract: raw mags, dual block off)
+    # Training arrays: using raw mags, gain_lock=None.
     ds = build_dataset(frames, result, None, ScriptedLabeler([(2.5, 7.5, True)]),
                        window=32, hop=16, intercarrier=True)
-    # serving stream over the same frames
+    # Serving stream processes the same frames.
     feats, ics = [], []
     for _, f, _img, ic in iter_windows(frames, result.subcarriers, None, window=32, hop=16,
                                        intercarrier=True):
@@ -119,16 +117,16 @@ class _FakeHead:
 
 def test_serving_plan_table():
     f = np.arange(3.0); i = np.zeros((2, 2)); ic = np.arange(5.0)
-    # presence -> features, lock on, no ic
+    # Presence: features used, lock on, no intercarrier (ic).
     lock, inter, pick = _serving_plan("presence", _FakeHead("mlp"))
     assert (lock, inter) == (True, False) and np.array_equal(pick(f, i, ic), f)
-    # weapon variance/ic27 -> ic, no lock
+    # Weapon variance/ic27: ic used, lock off.
     lock, inter, pick = _serving_plan("weapon", _FakeHead("variance", "ic27"))
     assert (lock, inter) == (False, True) and np.array_equal(pick(f, i, ic), ic)
-    # weapon fusion -> hstack(ic, f), lock on
+    # Weapon fusion: hstack(ic, f) used, lock on.
     lock, inter, pick = _serving_plan("weapon", _FakeHead("mlp", "fusion"))
     assert (lock, inter) == (True, True) and np.array_equal(pick(f, i, ic), np.hstack([ic, f]))
-    # weapon cnn -> flattened image, no lock
+    # Weapon CNN: flattened image used, lock off.
     lock, inter, pick = _serving_plan("weapon", _FakeHead("cnn", "cnn"))
     assert (lock, inter) == (False, False) and np.array_equal(pick(f, i, ic), i.reshape(-1))
 
@@ -149,17 +147,17 @@ def test_end_to_end_weapon(tmp_path):
         results = run_inference(SyntheticSource(frames), tmp_path / "cal",
                                 tmp_path / "m" / "model.joblib", "weapon", pub)
     lines = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
-    # N windows -> N schema-valid lines (parity: serving window count == dataset sample count)
+    # N windows generates N valid lines. Serving window count must equal dataset sample count.
     assert len(lines) == len(results) == ds.y.size
     assert all(set(l) == {"t", "class", "conf", "mode", "bbox", "keypoints"} for l in lines)
-    # verdicts separate the weapon span from the empty-room windows
+    # Class verdicts must separate weapon span from empty room windows.
     inside = [l["class"] for l in lines if 2.5 <= l["t"] < 7.5]
     outside = [l["class"] for l in lines if l["t"] < 2.5 or l["t"] >= 7.5]
     assert np.mean(inside) > 0.6 and np.mean(outside) < 0.25
 
 
 def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
-    # #5: a camera label source (G×G masks) flows through collect_source; mask + tier survive to disk.
+    # Camera label source (GxG masks) flows through collect_source. Mask and tier persist to disk.
     frames = _weapon_recording(duration=4.0)
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     grid = 4

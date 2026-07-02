@@ -1,4 +1,4 @@
-"""Unit tests for the static-σ²[p] weapon litmus tool (weapon_litmus.py)."""
+"""Unit tests for weapon litmus tool (weapon_litmus.py)."""
 import os
 import sys
 
@@ -12,7 +12,7 @@ from experiments.weapon_litmus import (  # noqa: E402
 
 
 def test_sigma2_matches_numpy_ddof1():
-    """σ²[p] == sample variance (ddof=1) of the antenna-collapsed magnitude, per frame."""
+    """σ²[p] == sample variance (ddof=1) of antenna-collapsed magnitude per frame."""
     rng = np.random.default_rng(0)
     grid = (rng.standard_normal((5, 2, 16)) + 1j * rng.standard_normal((5, 2, 16))).astype(np.complex64)
     got = sigma2_per_frame(grid)
@@ -22,7 +22,7 @@ def test_sigma2_matches_numpy_ddof1():
 
 
 def test_separation_detects_lower_armed_variance():
-    """Metal physics case: weapon σ² lower than clear -> high (folded) AUC, direction flagged ok."""
+    """Weapon σ² lower than clear -> high AUC."""
     rng = np.random.default_rng(1)
     clear = rng.normal(10.0, 1.0, 400)   # high inter-subcarrier variance
     weapon = rng.normal(4.0, 1.0, 400)   # metal flattens it -> lower
@@ -33,7 +33,7 @@ def test_separation_detects_lower_armed_variance():
 
 
 def test_separation_chance_when_identical():
-    """Overlapping distributions -> AUC ~0.5 -> NO-SEPARATION verdict (the go/no-go we care about)."""
+    """Overlapping distributions -> AUC ~0.5."""
     rng = np.random.default_rng(2)
     a = rng.normal(5.0, 1.0, 500)
     b = rng.normal(5.0, 1.0, 500)
@@ -52,7 +52,7 @@ def test_node_of_parses_path():
 
 
 def test_gather_reads_both_conditions(tmp_path):
-    """gather_sigma2 globs clear/weapon grids, maps them to the right node, and concatenates."""
+    """gather_sigma2 globs grids, maps to node, concatenates."""
     rng = np.random.default_rng(3)
     for cond, sd in (("clear", 3.0), ("weapon", 1.0)):
         d = tmp_path / "weapon_rec" / "p0_chest_s0" / cond / "node2" / "link_aabb"

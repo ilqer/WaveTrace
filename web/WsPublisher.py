@@ -5,10 +5,7 @@ from typing import Any
 from wavetrace.output.Publisher import Publisher, result_to_dict
 
 class WsPublisher(Publisher):
-    """
-    WebSocket publisher.
-    Pushes inference results to an asyncio queue thread-safely.
-    """
+    """WebSocket publisher. Thread-safely pushes inference results to an asyncio queue."""
     def __init__(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue, *, mode: str = ""):
         super().__init__(mode=mode)
         self.loop = loop

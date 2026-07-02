@@ -6,7 +6,7 @@ interface SpectrogramProps {
 
 const Spectrogram: React.FC<SpectrogramProps> = ({ data }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Reused across frames; only reallocated when the spectrogram dimensions (W/K) change.
+  // Reused canvas, only reallocated on dimension changes.
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const imgDataRef = useRef<ImageData | null>(null);
 
