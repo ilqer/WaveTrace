@@ -13,13 +13,13 @@ import time
 
 import config
 from nexmon_reader import NexmonReader
-from publisher import BatchPublisher, mac_to_bytes, quantize_csi, quantize_csi_i16
+from publisher import BatchPublisher, macToBytes, quantizeCsi, quantizeCsiI16
 
 LOW_RATE_HZ = 50.0   # Warn below this (usually Mac stopped illuminating).
 LOW_RATE_HOLD = 5    # Consecutive low-rate seconds for sustained warning.
 
 
-def _ntp_synced() -> bool | None:
+def _ntpSynced() -> bool | None:
     """Check if Pi clock is NTP-disciplined. Crucial for cross-node fusion sync."""
     try:
         out = subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
@@ -31,7 +31,7 @@ def _ntp_synced() -> bool | None:
 
 def main() -> None:
     config.validate()
-    synced = _ntp_synced()
+    synced = _ntpSynced()
     if synced is False:
         # Single-node capture tolerates unsynced clock; multi-node fusion requires it. Warn.
         print("[pi5-csi] WARNING: Pi clock is not NTP-synchronized. Cross-node fusion with the ESP "
@@ -40,12 +40,12 @@ def main() -> None:
     elif synced is None:
         print("[pi5-csi] note: could not verify NTP sync (timedatectl unavailable); make sure the "
               "Pi clock is disciplined before multi-node fusion.", flush=True)
-    apMac = mac_to_bytes(config.AP_BSSID)
+    apMac = macToBytes(config.AP_BSSID)
     reader = NexmonReader(config.NEXMON_PORT, expect_s=config.EXPECT_S, ap_mac=apMac)
     pub = BatchPublisher(config.PC_IP, config.UDP_PORT, config.NODE_ID, config.AP_BSSID,
                          ver=config.WIRE_VER)
     # int16 (ver 3) keeps absolute amplitude for weapon; int8 (ver 2) is presence-only.
-    encode = quantize_csi_i16 if config.WIRE_VER == 3 else quantize_csi
+    encode = quantizeCsiI16 if config.WIRE_VER == 3 else quantizeCsi
 
     print(
         f"[pi5-csi] node={config.NODE_ID} -> {config.PC_IP}:{config.UDP_PORT} | "
@@ -59,8 +59,8 @@ def main() -> None:
     tFlush = tReport
     try:
         for _ts, _mac, csi in reader.frames():
-            ts_us = time.monotonic_ns() // 1000  # host only needs consistent per-link spacing
-            pub.add(encode(csi, config.CSI_SCALE), ts_us)
+            tsUs = time.monotonic_ns() // 1000  # host only needs consistent per-link spacing
+            pub.add(encode(csi, config.CSI_SCALE), tsUs)
             sent += 1
 
             now = time.monotonic()

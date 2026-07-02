@@ -27,7 +27,7 @@ class AlignmentResult:
 
 def align(window_timestamps, labels, tolerance: float) -> AlignmentResult:
     """Nearest-label-within-tolerance match for each window timestamp. `labels` must be sorted by
-    `.timestamp` (CameraLabeler.label_stream does this); window_timestamps ascending. O(W+L)."""
+    `.timestamp` (CameraLabeler.labelStream does this); window_timestamps ascending. O(W+L)."""
     lt = [l.timestamp for l in labels]
     n = len(lt)
     matched: list[tuple[int, Label]] = []
@@ -59,7 +59,7 @@ def align(window_timestamps, labels, tolerance: float) -> AlignmentResult:
     return AlignmentResult(matched=matched, dts=dtArr, dropped=dropped, stats=stats)
 
 
-def estimate_clock_offset(truth_times, truth_classes, labels, *, max_lag=0.2, step=0.005):
+def estimateClockOffset(truth_times, truth_classes, labels, *, max_lag=0.2, step=0.005):
     """Recover a CONSTANT clock offset of `labels` relative to a KNOWN-truth class sequence
     (truth_times/truth_classes on the CSI clock) by the lag that maximizes class agreement.
 

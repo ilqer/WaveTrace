@@ -91,6 +91,6 @@ def test_aggregator_synced_drops_stale_nodes():
     agg.submit(_frameWith(0, 10.00, 1))
     agg.submit(_frameWith(1, 10.01, 1))
     agg.submit(_frameWith(2, 10.50, 1))  # Newest.
-    in_sync = agg.synced(tolerance=0.05)
-    assert {int(f.node_id) for f in in_sync} == {2}
+    inSync = agg.synced(tolerance=0.05)
+    assert {int(f.node_id) for f in inSync} == {2}
     assert {int(f.node_id) for f in agg.synced(tolerance=1.0)} == {0, 1, 2}

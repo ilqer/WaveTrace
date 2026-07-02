@@ -7,9 +7,8 @@
 
 namespace wavetrace {
 
-// One CSI snapshot: an (antenna x subcarrier) grid of decoded complex channel gains, plus metadata.
-// Contiguous row-major buffer (grid[a*numSubcarriers + s]); reshape() keeps capacity so steady-state work is alloc-free,
-// and complex<float> maps 1:1 to NumPy complex64 for the zero-copy view in Bindings.cpp.
+// One CSI snapshot: (antenna x subcarrier) grid of complex gains + metadata, row-major, alloc-free
+// after reshape(); complex<float> maps 1:1 to NumPy complex64 for zero-copy in Bindings.cpp.
 class CsiFrame {
 public:
   using Sample = std::complex<float>;

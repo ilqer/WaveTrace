@@ -28,7 +28,7 @@ class InferenceSession:
     def head(self) -> PresenceHead:
         return self._head
 
-    def predict_proba_window(self, feature_vector) -> np.ndarray:
+    def predictProbaWindow(self, feature_vector) -> np.ndarray:
         """Predict class probabilities. Reuses row buffer. O(1)."""
         v = np.asarray(feature_vector, dtype=np.float32).ravel()
         if self._row is None or self._row.shape[1] != v.size:
@@ -36,14 +36,14 @@ class InferenceSession:
         self._row[0, :] = v
         return self._head.predict_proba(self._row)[0]
 
-    def predict_window(self, feature_vector) -> tuple[int, float]:
+    def predictWindow(self, feature_vector) -> tuple[int, float]:
         """One emitted window's feature vector (d,) -> (class_id, probability). O(1)."""
-        proba = self.predict_proba_window(feature_vector)
+        proba = self.predictProbaWindow(feature_vector)
         i = int(np.argmax(proba))
         return int(self._head.classes_[i]), float(proba[i])
 
 
-def mode_session(mode: str, model_path) -> InferenceSession:
+def modeSession(mode: str, model_path) -> InferenceSession:
     """Mode switch: 'presence' or 'weapon'. O(1)."""
     if mode == "presence":
         loader = PresenceHead.load
@@ -54,14 +54,14 @@ def mode_session(mode: str, model_path) -> InferenceSession:
     return InferenceSession(model_path, loader=loader)
 
 
-def measure_latency(session: InferenceSession, feature_vector, iters: int = 200) -> dict:
+def measureLatency(session: InferenceSession, feature_vector, iters: int = 200) -> dict:
     """Measure inference latency over iters calls. Returns ms stats."""
     for _ in range(5):
-        session.predict_window(feature_vector)
+        session.predictWindow(feature_vector)
     samples = np.empty(iters)
     for i in range(iters):
         t0 = time.perf_counter()
-        session.predict_window(feature_vector)
+        session.predictWindow(feature_vector)
         samples[i] = time.perf_counter() - t0
     return {
         "mean_ms": float(samples.mean() * 1e3),

@@ -2,7 +2,7 @@
 per-node Stage-E weapon model. Standalone from the presence/count scripts: imports only library code
 (wavetrace.*), writes to its own data/model_weapon root, and reuses the shared calibration (data/cal).
 
-Stage-E uses the INTER-CARRIER feature block (stage="weapon" -> intercarrier dataset, train_weapon
+Stage-E uses the INTER-CARRIER feature block (stage="weapon" -> intercarrier dataset, trainWeapon
 feature_mode="ic27"), NOT the amplitude features the presence head uses — the concealed-object signal
 lives in inter-subcarrier structure, not in "is a body moving". Per-(tx->rx)-LINK + TARGET_FS resample,
 pooled into each node's single head (same parity as the presence/count paths).
@@ -25,16 +25,16 @@ import socket
 import sys
 import time
 
-from wavetrace.Source import RecordingSource, save_recording, parse_batch_links, resample_uniform, bind_udp
-from wavetrace.Cli import collect_source
-from wavetrace.recognition import train_weapon
+from wavetrace.Source import RecordingSource, saveRecording, parseBatchLinks, resampleUniform, bindUdp
+from wavetrace.Cli import collectSource
+from wavetrace.recognition import trainWeapon
 
 TARGET_FS = 100.0   # resample grid; MUST match run_weapon.TARGET_FS so train and serve windows align
 WINDOW = 128        # front-end window (frames); a link shorter than this on the grid emits no window
 # Cumulative dataset pool lives at <root>/weapon_ds (one subdir tree per run), globbed at train time.
 
 
-def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
+def captureLinks(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     """Collect up to n frames PER (tx->rx) LINK in ONE pass. Returns {(tx_short, rx_node): [frames]}.
 
     Per-link so training matches per-link serving (run_weapon). Keeps the dominant subcarrier width per
@@ -51,16 +51,16 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
 
     links = collections.defaultdict(list)  # (tx_short, rx_node) -> [frames]
     want = set(node_ids)
-    sock = bind_udp(port, timeout=15.0)
+    sock = bindUdp(port, timeout=15.0)
     start = time.time()
-    last_print = start
+    lastPrint = start
     try:
         while True:
             try:
                 payload, _ = sock.recvfrom(65535)
             except socket.timeout:
                 break  # total silence
-            for key, frames in parse_batch_links(payload).items():
+            for key, frames in parseBatchLinks(payload).items():
                 buf = links[key]
                 if len(buf) < n:
                     buf.extend(frames[: n - len(buf)])
@@ -71,11 +71,11 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
                 short = [k for k, v in sorted(links.items()) if len(v) < n]
                 print(f"\n[WARN] deadline {max_capture_s:g}s hit; links short of {n}: {short}")
                 break
-            if now - last_print >= 1.0:
-                per_node = dict(sorted(collections.Counter(k[1] for k in links).items()))
+            if now - lastPrint >= 1.0:
+                perNode = dict(sorted(collections.Counter(k[1] for k in links).items()))
                 mn = min((len(v) for v in links.values()), default=0)
-                print(f"   links/node {per_node}  min {mn}/{n}...", end="\r")
-                last_print = now
+                print(f"   links/node {perNode}  min {mn}/{n}...", end="\r")
+                lastPrint = now
     finally:
         sock.close()
     print()
@@ -92,16 +92,16 @@ def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_su
     link (class 1 if `weapon` else 0). Returns the list of dataset dirs written."""
     out = []
     for key in sorted(k for k in cap if k[1] == nid):
-        fr = resample_uniform(cap.get(key, []), TARGET_FS)
+        fr = resampleUniform(cap.get(key, []), TARGET_FS)
         if len(fr) < WINDOW:
             continue
         span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
         tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
         rec = f"{root}/weapon_rec/{sess_id}/{cond}/node{nid}/link_{tag}"
         ds = f"{root}/weapon_ds/node{nid}/{sess_id}_{cond}_link{tag}"
-        save_recording(fr, rec)
+        saveRecording(fr, rec)
         # spans=[span] -> class 1 over the segment, spans=[] -> class 0; bg_subtract nulls σ²[p]'s quiet-room channel (Item 10/CAUSE 2B)
-        collect_source(RecordingSource(rec), f"{cal_root}/node{nid}", ds,
+        collectSource(RecordingSource(rec), f"{cal_root}/node{nid}", ds,
                        [span] if weapon else [],
                        stage="weapon", session_id=sess_id, subject_id=subject,
                        subtract_ic_baseline=bg_subtract)
@@ -109,13 +109,13 @@ def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_su
     return out
 
 
-def _link_tag(ds_dir):
+def _linkTag(ds_dir):
     """TX link tag from a weapon_ds dir name `<sess>_<cond>_link<tag>` (':'-free tx mac-short)."""
     base = os.path.basename(ds_dir)
     return base.split("_link")[-1] if "_link" in base else None
 
 
-def _train_and_report(ds_dirs, out_dir, label):
+def _trainAndReport(ds_dirs, out_dir, label):
     """Train one weapon head (ic27) on `ds_dirs` -> `out_dir`, print its LOGO line, return True on
     success. Shared by the per-node and per-link paths so both report identically. `label` names the
     unit in the log (e.g. 'Node 2' or 'Node 2 link4f9c')."""
@@ -123,7 +123,7 @@ def _train_and_report(ds_dirs, out_dir, label):
         print(f"   [SKIP] {label}: no datasets in pool.")
         return False
     try:
-        _, m = train_weapon(ds_dirs, out_dir=out_dir, feature_mode="ic27")
+        _, m = trainWeapon(ds_dirs, out_dir=out_dir, feature_mode="ic27")
     except ValueError as e:  # WeaponHead.fit needs BOTH classes in the pool
         print(f"   [SKIP] {label}: {e}")
         return False
@@ -158,7 +158,7 @@ def main():
                              "instead of pooling a node's directions into one head (WEAPON_NLOS_PLAN §4). "
                              "The signal is per-direction; pooling sign-flips the good NLOS link. "
                              "Bad directions are NOT dropped — run_weapon's LinkVoter zeroes a "
-                             "sub-chance link via its own LOGO weight (accuracy_weights).")
+                             "sub-chance link via its own LOGO weight (accuracyWeights).")
     parser.add_argument("--root", default="data",
                         help="Capture-profile root, e.g. data/2g4_ht40 or data/5g_ht80 (default: data)")
     parser.add_argument("--cal", default=None, help="Calibration root (default: <root>/cal)")
@@ -169,53 +169,53 @@ def main():
     if args.model is None:
         args.model = f"{args.root}/model_weapon"
 
-    cal_nodes = sorted(int(os.path.basename(d)[len("node"):])
+    calNodes = sorted(int(os.path.basename(d)[len("node"):])
                        for d in glob.glob(os.path.join(args.cal, "node*"))
                        if os.path.basename(d)[len("node"):].isdigit())
-    if not cal_nodes:
+    if not calNodes:
         print(f"\n[ERROR] no per-node calibrations in {args.cal}/node*. Run collect_baseline.py first.",
               file=sys.stderr)
         return
     if args.node is not None:
-        cal_nodes = [args.node] if args.node in cal_nodes else []
-        if not cal_nodes:
+        calNodes = [args.node] if args.node in calNodes else []
+        if not calNodes:
             print(f"\n[ERROR] node {args.node} has no calibration in {args.cal}.", file=sys.stderr)
             return
-    print(f"training nodes: {cal_nodes}  (subject={args.subject}, carry={args.carry})")
+    print(f"training nodes: {calNodes}  (subject={args.subject}, carry={args.carry})")
 
     os.makedirs(args.model, exist_ok=True)
     for i in range(args.sessions):
-        sess_id = f"{args.subject}_{args.carry}_s{i}"
-        clear = capture_links(f"session {i+1}/{args.sessions} — stand still, no weapon on you.",
-                              args.frames, args.port, cal_nodes, countdown=5)
-        armed = capture_links(f"session {i+1}/{args.sessions} — stand still, weapon concealed on you.",
-                              args.frames, args.port, cal_nodes, countdown=5)
-        for nid in cal_nodes:
-            _emit(clear, args.root, args.cal, nid, sess_id, args.subject, args.carry, "clear",
+        sessId = f"{args.subject}_{args.carry}_s{i}"
+        clear = captureLinks(f"session {i+1}/{args.sessions} — stand still, no weapon on you.",
+                              args.frames, args.port, calNodes, countdown=5)
+        armed = captureLinks(f"session {i+1}/{args.sessions} — stand still, weapon concealed on you.",
+                              args.frames, args.port, calNodes, countdown=5)
+        for nid in calNodes:
+            _emit(clear, args.root, args.cal, nid, sessId, args.subject, args.carry, "clear",
                   weapon=False, bg_subtract=args.bg_subtract)
-            _emit(armed, args.root, args.cal, nid, sess_id, args.subject, args.carry, "weapon",
+            _emit(armed, args.root, args.cal, nid, sessId, args.subject, args.carry, "weapon",
                   weapon=True, bg_subtract=args.bg_subtract)
 
     unit = "per-link (tx->rx)" if args.per_link else "per-node"
     print(f"\ntraining {unit} weapon models (ic27) on the cumulative pool...")
     trained = []
-    for nid in cal_nodes:
-        ds_dirs = sorted(glob.glob(f"{args.root}/weapon_ds/node{nid}/*"))
+    for nid in calNodes:
+        dsDirs = sorted(glob.glob(f"{args.root}/weapon_ds/node{nid}/*"))
         if not args.per_link:
-            if _train_and_report(ds_dirs, f"{args.model}/node{nid}", f"Node {nid}"):
+            if _trainAndReport(dsDirs, f"{args.model}/node{nid}", f"Node {nid}"):
                 trained.append(nid)
             continue
         # per-link: group this node's datasets by tx tag, one head per (tx->rx) direction
-        by_tag = collections.defaultdict(list)
-        for d in ds_dirs:
-            tag = _link_tag(d)
+        byTag = collections.defaultdict(list)
+        for d in dsDirs:
+            tag = _linkTag(d)
             if tag is not None:
-                by_tag[tag].append(d)
-        if not by_tag:
+                byTag[tag].append(d)
+        if not byTag:
             print(f"   [SKIP] node {nid}: no per-link datasets, re-capture with collect_weapon.")
             continue
-        for tag in sorted(by_tag):
-            if _train_and_report(by_tag[tag], f"{args.model}/node{nid}/link{tag}",
+        for tag in sorted(byTag):
+            if _trainAndReport(byTag[tag], f"{args.model}/node{nid}/link{tag}",
                                  f"Node {nid} link{tag}"):
                 trained.append((nid, tag))
 

@@ -25,7 +25,7 @@ _MAGIC = 0x57
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 try:
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)  # absorb bursts (see Source.bind_udp)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)  # absorb bursts (see Source.bindUdp)
 except OSError:
     pass
 sock.bind(("0.0.0.0", PORT))
@@ -38,7 +38,7 @@ start = lastPrint = time.time()
 print(f"listening on udp/{PORT}  (Ctrl+C to stop)")
 
 
-def count_links(payload):
+def countLinks(payload):
     """Walk one binary batch, tallying (tx_short, rx_node) per record. Skips CSI bytes (no decode)."""
     if len(payload) < _HDR.size:
         return
@@ -68,7 +68,7 @@ try:
             payload = None
         if payload:
             dgrams += 1
-            count_links(payload)
+            countLinks(payload)
         now = time.time()
         if now - lastPrint >= 1.0:
             links = " ".join(f"{tx}->{rx}:{window[(tx, rx)]}"

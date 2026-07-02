@@ -3,12 +3,12 @@
 import numpy as np
 import pytest
 
-from wavetrace.recognition.Link import LinkVoter, accuracy_weights, evaluate_link_fusion
+from wavetrace.recognition.Link import LinkVoter, accuracyWeights, evaluateLinkFusion
 
 
 def test_accuracy_weights_maps_correctly():
     """Chance (0.5) → 0, perfect (1.0) → 1.0, below chance → 0 (clamped)."""
-    w = accuracy_weights({"a": 1.0, "b": 0.5, "c": 0.3, "d": 0.75})
+    w = accuracyWeights({"a": 1.0, "b": 0.5, "c": 0.3, "d": 0.75})
     assert w["a"] == pytest.approx(1.0)   # (1.0 - 0.5) * 2
     assert w["b"] == pytest.approx(0.0)   # (0.5 - 0.5) * 2 = 0
     assert w["c"] == pytest.approx(0.0)   # max(0.3 - 0.5, 0) * 2 = 0
@@ -80,7 +80,7 @@ def test_link_fusion_beats_best_single_link():
     # link A: confident-correct except window 3; link B: confident-correct except window 0
     pa = np.array([[0.9, 0.1], [0.8, 0.2], [0.2, 0.8], [0.6, 0.4]])  # wrong on 3 -> acc 0.75
     pb = np.array([[0.4, 0.6], [0.9, 0.1], [0.3, 0.7], [0.1, 0.9]])  # wrong on 0 -> acc 0.75
-    rep = evaluate_link_fusion({24: (pa, 0.75), 5: (pb, 0.75)}, y)
+    rep = evaluateLinkFusion({24: (pa, 0.75), 5: (pb, 0.75)}, y)
     assert rep["per_link_accuracy"] == {24: pytest.approx(0.75), 5: pytest.approx(0.75)}
     assert rep["fused_accuracy"] == pytest.approx(1.0)  # complementary errors cancel
     assert rep["n"] == 4 and rep["weights"][24] == pytest.approx(0.5)
@@ -90,7 +90,7 @@ def test_link_fusion_uniform_when_all_at_chance():
     """All links at chance -> weights 0 -> falls back to a uniform blend instead of raising."""
     y = np.array([0, 1])
     p = np.array([[0.7, 0.3], [0.4, 0.6]])
-    rep = evaluate_link_fusion({0: (p, 0.5), 1: (p, 0.5)}, y)
+    rep = evaluateLinkFusion({0: (p, 0.5), 1: (p, 0.5)}, y)
     assert rep["weights"] == {0: 0.0, 1: 0.0}
     assert rep["fused_accuracy"] == pytest.approx(1.0)  # uniform blend of identical probas = p
 

@@ -45,15 +45,15 @@ class Cir:
     active_tap_count: int       # taps above the noise floor
 
     @property
-    def dominant_delay_s(self) -> float:
+    def dominantDelayS(self) -> float:
         return float(self.tap_delays_s[self.dominant_idx])
 
     @property
-    def dominant_tap(self) -> complex:
+    def dominantTap(self) -> complex:
         return complex(self.taps[self.dominant_idx])
 
 
-def delay_dictionary(freq_idx: np.ndarray, n_bins: int) -> np.ndarray:
+def delayDictionary(freq_idx: np.ndarray, n_bins: int) -> np.ndarray:
     """Sub-DFT sensing matrix Φ ∈ ℂ^{K×G}: column g is the delay atom for fine bin g, sampled at the
     MEASURED subcarrier offsets `freq_idx` (integer tone indices; supplies the band geometry / gaps).
     Δf cancels in the matrix (it only scales bin→seconds), so atoms are exp(-j2π·freq_idx·g/G).
@@ -61,29 +61,29 @@ def delay_dictionary(freq_idx: np.ndarray, n_bins: int) -> np.ndarray:
     freq_idx = np.asarray(freq_idx, dtype=np.float64).ravel()
     numSubcarriers = freq_idx.size
     if numSubcarriers == 0 or n_bins <= 0:
-        raise CirError("delay_dictionary: need >=1 subcarrier and n_bins>0")
+        raise CirError("delayDictionary: need >=1 subcarrier and n_bins>0")
     binIdx = np.arange(n_bins, dtype=np.float64)
     phase = -2.0 * np.pi * np.outer(freq_idx, binIdx) / float(n_bins)  # (K, G)
     return (np.exp(1j * phase) / np.sqrt(numSubcarriers)).astype(np.complex64)
 
 
-def _soft_threshold(z: np.ndarray, thr: float) -> np.ndarray:
+def _softThreshold(z: np.ndarray, thr: float) -> np.ndarray:
     """Complex soft-threshold: shrink each magnitude by `thr`, keep phase. The ISTA prox of λ‖·‖₁."""
     mag = np.abs(z)
     scaleVal = np.maximum(0.0, 1.0 - thr / np.maximum(mag, 1e-12))
     return (z * scaleVal).astype(z.dtype)
 
 
-def estimate_cir_taps(H: np.ndarray, phi: np.ndarray, *, lam: float = 0.05,
+def estimateCirTaps(H: np.ndarray, phi: np.ndarray, *, lam: float = 0.05,
                       n_iter: int = 40, tol: float = 1e-4) -> np.ndarray:
     """ISTA solve of `min ‖H − Φx‖₂² + λ·max|ΦᴴH|·‖x‖₁` → sparse taps x (G,).
     λ is scale-INVARIANT (relative to the matched-filter peak ‖ΦᴴH‖∞), so it transfers across
     captures/gains. Step = 1/L with L = ‖Φ‖₂² (largest singular value²). O(n_iter·K·G)."""
     H = np.asarray(H, dtype=np.complex64).ravel()
     if H.shape[0] != phi.shape[0]:
-        raise CirError(f"estimate_cir_taps: H has {H.shape[0]} subcarriers, Φ expects {phi.shape[0]}")
+        raise CirError(f"estimateCirTaps: H has {H.shape[0]} subcarriers, Φ expects {phi.shape[0]}")
     if not np.all(np.isfinite(H.view(np.float32))):
-        raise CirError("estimate_cir_taps: H contains non-finite values (sanitize first)")
+        raise CirError("estimateCirTaps: H contains non-finite values (sanitize first)")
     phiH = phi.conj().T
     matched = phiH @ H                          # ΦᴴH — the IFFT/matched-filter seed
     threshVal = float(lam) * float(np.max(np.abs(matched)))  # absolute shrink, scale-invariant in lam
@@ -92,7 +92,7 @@ def estimate_cir_taps(H: np.ndarray, phi: np.ndarray, *, lam: float = 0.05,
     tapsVec = np.zeros(phi.shape[1], dtype=np.complex64)
     for _ in range(int(n_iter)):
         grad = phiH @ (phi @ tapsVec - H)             # ∇ of the 0.5‖·‖² data term
-        tapsNew = _soft_threshold(tapsVec - step * grad, step * threshVal)
+        tapsNew = _softThreshold(tapsVec - step * grad, step * threshVal)
         if float(np.linalg.norm(tapsNew - tapsVec)) < tol:
             tapsVec = tapsNew
             break
@@ -100,7 +100,7 @@ def estimate_cir_taps(H: np.ndarray, phi: np.ndarray, *, lam: float = 0.05,
     return tapsVec
 
 
-def cir_from_csi(H: np.ndarray, *, freq_idx: np.ndarray | None = None, oversample: int = 3,
+def cirFromCsi(H: np.ndarray, *, freq_idx: np.ndarray | None = None, oversample: int = 3,
                  df_hz: float = SUBCARRIER_SPACING_HZ, lam: float = 0.05, n_iter: int = 40,
                  tol: float = 1e-4) -> Cir:
     """Recover a super-resolved CIR from one frame's complex CSI H (K,). `freq_idx` = the integer tone
@@ -109,15 +109,15 @@ def cir_from_csi(H: np.ndarray, *, freq_idx: np.ndarray | None = None, oversampl
     H = np.asarray(H, dtype=np.complex64).ravel()
     numSubcarriers = H.shape[0]
     if numSubcarriers == 0:
-        raise CirError("cir_from_csi: empty CSI")
+        raise CirError("cirFromCsi: empty CSI")
     if freq_idx is None:
         freq_idx = np.arange(numSubcarriers)
     freq_idx = np.asarray(freq_idx).ravel()
     if freq_idx.size != numSubcarriers:
-        raise CirError(f"cir_from_csi: freq_idx has {freq_idx.size} entries, H has {numSubcarriers} subcarriers")
+        raise CirError(f"cirFromCsi: freq_idx has {freq_idx.size} entries, H has {numSubcarriers} subcarriers")
     numBins = int(oversample) * numSubcarriers
-    phi = delay_dictionary(freq_idx, numBins)
-    taps = estimate_cir_taps(H, phi, lam=lam, n_iter=n_iter, tol=tol)
+    phi = delayDictionary(freq_idx, numBins)
+    taps = estimateCirTaps(H, phi, lam=lam, n_iter=n_iter, tol=tol)
     delays = np.arange(numBins, dtype=np.float64) / (numBins * df_hz)
 
     power = (taps.real.astype(np.float64) ** 2 + taps.imag.astype(np.float64) ** 2)
@@ -147,10 +147,10 @@ def cir_from_csi(H: np.ndarray, *, freq_idx: np.ndarray | None = None, oversampl
                dominant_ratio=domRatio, rms_delay_spread_s=rms, active_tap_count=active)
 
 
-def cir_features(cir: Cir) -> np.ndarray:
+def cirFeatures(cir: Cir) -> np.ndarray:
     """Compact per-frame delay-domain feature vector for a recognition head (float32, len 5):
       0 dominant_tap_ratio · 1 rms_delay_spread_s · 2 active_tap_count ·
-      3 dominant_delay_s · 4 |dominant_tap|
+      3 dominantDelayS · 4 |dominantTap|
     Metal (flat coherent reflector) → high ratio, low spread, few taps; diffuse body → the reverse."""
     return np.array([cir.dominant_ratio, cir.rms_delay_spread_s, float(cir.active_tap_count),
-                     cir.dominant_delay_s, abs(cir.dominant_tap)], dtype=np.float32)
+                     cir.dominantDelayS, abs(cir.dominantTap)], dtype=np.float32)

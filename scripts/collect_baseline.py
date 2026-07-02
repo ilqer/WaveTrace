@@ -14,11 +14,11 @@ import os
 import sys
 import time
 
-from wavetrace.Source import UdpSource, RecordingSource, save_recording
-from wavetrace.Cli import calibrate_source
+from wavetrace.Source import UdpSource, RecordingSource, saveRecording
+from wavetrace.Cli import calibrateSource
 
 
-def detect_nodes(port, timeout_s=3.0):
+def detectNodes(port, timeout_s=3.0):
     """Briefly listen to detect the active Node IDs in the live UDP stream. Returns sorted list."""
     print("listening for active nodes...")
     detected = collections.Counter()
@@ -28,7 +28,7 @@ def detect_nodes(port, timeout_s=3.0):
     return sorted(detected.keys())
 
 
-def capture_all(n, port, node_ids, timeout_s=20.0, max_capture_s=60.0):
+def captureAll(n, port, node_ids, timeout_s=20.0, max_capture_s=60.0):
     """Collect up to n frames PER node in ONE listening pass. Returns {node_id: [frames]} (dominant
     subcarrier width kept per node, since widths can differ across boards/bands).
 
@@ -75,7 +75,7 @@ def main():
 
     os.makedirs(f"{args.root}/cal", exist_ok=True)
 
-    nodes = detect_nodes(args.port)
+    nodes = detectNodes(args.port)
     if not nodes:
         print(f"\n[ERROR] no active nodes on UDP port {args.port}. "
               "Check the mesh boards are powered and flooding, or run `scripts/mesh_verify.py`.", file=sys.stderr)
@@ -93,7 +93,7 @@ def main():
         time.sleep(1)
     print("\n   [CAPTURING] keep the room still and empty...")
 
-    frames = capture_all(args.frames, args.port, nodes)
+    frames = captureAll(args.frames, args.port, nodes)
 
     calibrated = []
     for nid in nodes:
@@ -101,8 +101,8 @@ def main():
         if len(fr) < args.min_frames:
             print(f"   [SKIP] node {nid}: only {len(fr)} frames (< {args.min_frames}), not calibrated.")
             continue
-        save_recording(fr, f"{args.root}/baseline_raw/node{nid}")
-        calibrate_source(RecordingSource(f"{args.root}/baseline_raw/node{nid}"), f"{args.root}/cal/node{nid}",
+        saveRecording(fr, f"{args.root}/baseline_raw/node{nid}")
+        calibrateSource(RecordingSource(f"{args.root}/baseline_raw/node{nid}"), f"{args.root}/cal/node{nid}",
                          baseline_packets=min(2000, len(fr)))
         print(f"   [OK]   node {nid}: {len(fr)} frames, {fr[0].num_subcarriers} subcarriers "
               f"-> {args.root}/cal/node{nid}")

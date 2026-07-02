@@ -10,8 +10,8 @@ import pytest
 from wavetrace.groundtruth import (
     Detection,
     VisionLabeler,
-    presence_label_fn,
-    weapon_label_fn,
+    presenceLabelFn,
+    weaponLabelFn,
 )
 
 IMG = np.zeros((8, 8, 3), dtype=np.uint8)  # Dummy frame. Stub detector ignores content.
@@ -26,7 +26,7 @@ def _empty_detector(image):
 
 
 def test_person_detection_labels_present_with_bbox():
-    lab = VisionLabeler(_person_detector, label_fn=presence_label_fn)
+    lab = VisionLabeler(_person_detector, label_fn=presenceLabelFn)
     l = lab.label(IMG, 1.0)
     assert l.class_id == 1 and l.name == "present"
     assert list(l.bbox) == pytest.approx([0.4, 0.3, 0.2, 0.5])  # Label stores float32.
@@ -34,14 +34,14 @@ def test_person_detection_labels_present_with_bbox():
 
 
 def test_no_detection_labels_absent():
-    lab = VisionLabeler(_empty_detector, label_fn=presence_label_fn)
+    lab = VisionLabeler(_empty_detector, label_fn=presenceLabelFn)
     l = lab.label(IMG, 2.0)
     assert l.class_id == 0 and l.name == "absent" and l.bbox is None
 
 
 def test_low_confidence_is_filtered_out():
     detector = lambda img: [Detection(0, 0.10, (0.1, 0.1, 0.1, 0.1))]
-    lab = VisionLabeler(detector, conf=0.35, label_fn=presence_label_fn)
+    lab = VisionLabeler(detector, conf=0.35, label_fn=presenceLabelFn)
     assert lab.label(IMG, 0.0).class_id == 0
 
 
@@ -51,7 +51,7 @@ def test_weapon_class_flags_weapon():
         Detection(0, 0.8, (0.4, 0.3, 0.2, 0.5)),
         Detection(43, 0.7, (0.45, 0.5, 0.05, 0.1)),
     ]
-    lab = VisionLabeler(detector, weapon_classes=(43,), label_fn=weapon_label_fn)
+    lab = VisionLabeler(detector, weapon_classes=(43,), label_fn=weaponLabelFn)
     l = lab.label(IMG, 3.0)
     assert l.class_id == 1 and l.name == "weapon"
 
@@ -61,14 +61,14 @@ def test_best_person_chosen_by_confidence():
         Detection(0, 0.5, (0.1, 0.1, 0.1, 0.1)),
         Detection(0, 0.95, (0.4, 0.3, 0.2, 0.5)),
     ]
-    lab = VisionLabeler(detector, label_fn=presence_label_fn)
+    lab = VisionLabeler(detector, label_fn=presenceLabelFn)
     assert list(lab.label(IMG, 0.0).bbox) == pytest.approx([0.4, 0.3, 0.2, 0.5])  # Selects higher-conf box.
 
 
 def test_label_stream_sorted_by_time():
-    lab = VisionLabeler(_person_detector, label_fn=presence_label_fn)
+    lab = VisionLabeler(_person_detector, label_fn=presenceLabelFn)
     obs = [{"t": 2.0}, {"t": 0.5}, {"t": 1.0}]
-    out = lab.label_stream(obs)
+    out = lab.labelStream(obs)
     assert [l.timestamp for l in out] == [0.5, 1.0, 2.0]
 
 

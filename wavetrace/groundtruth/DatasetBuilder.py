@@ -25,8 +25,8 @@ from pathlib import Path
 import numpy as np
 
 from wavetrace import InterCarrierExtractor, Label
-from wavetrace.Calibration import image_baseline as _image_baseline
-from wavetrace.Frontend import demux_by_node, iter_windows, iter_windows_stacked
+from wavetrace.Calibration import imageBaseline as _image_baseline
+from wavetrace.Frontend import demuxByNode, iterWindows, iterWindowsStacked
 from wavetrace.groundtruth.Align import align
 
 
@@ -42,11 +42,11 @@ class Dataset:
     session_ids: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=object))
     subject_ids: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=object))
     # P7p-a: (n, 27) inter-carrier block (µ|σ²|CV × 9) from RAW magnitudes — the σ²[p] weapon-head
-    # input. None unless built with intercarrier=True (which requires gain_lock=None).
+    # input. None unless built with intercarrier=True (which requires gainLock=None).
     X_intercarrier: np.ndarray | None = None
 
 
-def _attach_labels(wts, label_source, tolerance):
+def _attachLabels(wts, label_source, tolerance):
     """Attach aligned or callable labels to a list of window timestamps. Returns (sel, sel_labels, stats)."""
     if callable(label_source):
         selLabels = [label_source(t) for t in wts]
@@ -61,10 +61,10 @@ def _attach_labels(wts, label_source, tolerance):
     return sel, selLabels, stats
 
 
-def build_dataset(
+def buildDataset(
     frames,
     calibration_result,
-    gain_lock,
+    gainLock,
     label_source,
     *,
     window: int = 128,
@@ -84,8 +84,8 @@ def build_dataset(
     error measured) OR a callable t->Label (scripted / location-chip — same CSI clock, evaluated at
     each window timestamp, no drop).
 
-    `gain_lock` = the locked GainLock from `calibration`, OR None to skip the per-frame amplitude
-    rescale. Pass None for material / weapon datasets (σ²[p], reflection_signature): gain lock
+    `gainLock` = the locked GainLock from `calibration`, OR None to skip the per-frame amplitude
+    rescale. Pass None for material / weapon datasets (σ²[p], reflectionSignature): gain lock
     normalizes every frame to a common mean, erasing the bulk attenuation those features measure.
     Use it only for the amplitude / presence feature path.
 
@@ -97,18 +97,18 @@ def build_dataset(
       (weapon σ²[p] background subtraction). Independent of subtract_baseline (image path)."""
     subc = np.asarray(calibration_result.subcarriers, dtype=np.intp)
     K = int(subc.size)
-    img_subc_list = getattr(calibration_result, "image_subcarriers", None) or list(calibration_result.subcarriers)
-    K_img = len(img_subc_list)
+    imgSubcList = getattr(calibration_result, "image_subcarriers", None) or list(calibration_result.subcarriers)
+    KImg = len(imgSubcList)
 
-    img_baseline_arr = None
+    imgBaselineArr = None
     if subtract_baseline:
-        img_baseline_arr = _image_baseline(calibration_result, locked=(gain_lock is not None))
-    # IC background subtraction uses the RAW baseline (the IC path is always raw, gain_lock=None for
+        imgBaselineArr = _image_baseline(calibration_result, locked=(gainLock is not None))
+    # IC background subtraction uses the RAW baseline (the IC path is always raw, gainLock=None for
     # weapon), so no locked-basis rescale — just the quiet-room mean |H| per subcarrier.
-    ic_baseline_arr = (np.asarray(calibration_result.baseline_mag, dtype=np.float32)
+    icBaselineArr = (np.asarray(calibration_result.baseline_mag, dtype=np.float32)
                        if (subtract_ic_baseline and intercarrier) else None)
 
-    # materialize once: iter_windows consumes the stream, and the fs estimate below re-indexes
+    # materialize once: iterWindows consumes the stream, and the fs estimate below re-indexes
     # frames[-1] — a bare generator would be exhausted by then (B5).
     frames = list(frames)
 
@@ -116,12 +116,12 @@ def build_dataset(
     imgs: list[np.ndarray] = []
     ics: list[np.ndarray] = []
     wts: list[float] = []
-    for t, features, image, ic in iter_windows(
-        frames, subc, gain_lock, window=window, hop=hop, intercarrier=intercarrier,
-        image_subcarriers=(img_subc_list if img_subc_list != list(calibration_result.subcarriers) else None),
+    for t, features, image, ic in iterWindows(
+        frames, subc, gainLock, window=window, hop=hop, intercarrier=intercarrier,
+        image_subcarriers=(imgSubcList if imgSubcList != list(calibration_result.subcarriers) else None),
         frame_average=frame_average,
-        image_baseline=img_baseline_arr,
-        ic_baseline=ic_baseline_arr,
+        imageBaseline=imgBaselineArr,
+        ic_baseline=icBaselineArr,
     ):
         feats.append(features.copy())
         imgs.append(image.copy())
@@ -130,16 +130,16 @@ def build_dataset(
         wts.append(t)
 
     # ----- attach labels --------------------------------------------------------------------------
-    sel, sel_labels, stats = _attach_labels(wts, label_source, tolerance)
+    sel, selLabels, stats = _attachLabels(wts, label_source, tolerance)
 
     if sel:
-        X_features = np.stack([feats[i] for i in sel]).astype(np.float32)
-        X_image = np.stack([imgs[i] for i in sel]).astype(np.float32)
+        XFeatures = np.stack([feats[i] for i in sel]).astype(np.float32)
+        XImage = np.stack([imgs[i] for i in sel]).astype(np.float32)
     else:
-        X_features = np.empty((0, 9 * K), np.float32)
-        X_image = np.empty((0, K_img, window), np.float32)
-    y = np.asarray([l.class_id for l in sel_labels], dtype=np.int64)
-    t_arr = np.asarray([wts[i] for i in sel], dtype=np.float64)
+        XFeatures = np.empty((0, 9 * K), np.float32)
+        XImage = np.empty((0, KImg, window), np.float32)
+    y = np.asarray([l.class_id for l in selLabels], dtype=np.int64)
+    tArr = np.asarray([wts[i] for i in sel], dtype=np.float64)
 
     # fs estimated live from CsiFrame timestamps (never assume packet rate, REFERENCE §4)
     fs = ((len(frames) - 1) / (frames[-1].timestamp - frames[0].timestamp)
@@ -147,14 +147,14 @@ def build_dataset(
     meta = {
         "fs": float(fs),
         "K": K,
-        "K_img": K_img,
+        "K_img": KImg,
         "subcarriers": [int(s) for s in calibration_result.subcarriers],
-        "image_subcarriers": img_subc_list,
-        "subtract_ic_baseline": bool(ic_baseline_arr is not None),
+        "image_subcarriers": imgSubcList,
+        "subtract_ic_baseline": bool(icBaselineArr is not None),
         "window": window,
         "hop": hop,
         "tolerance": tolerance,
-        "gain_locked": gain_lock is not None,
+        "gain_locked": gainLock is not None,
         "class_names": dict(class_names) if class_names else {},
         "sync_error": {"mean_dt": stats["mean_dt"], "max_abs_dt": stats["max_abs_dt"],
                        "p95_abs_dt": stats["p95_abs_dt"]},
@@ -164,20 +164,20 @@ def build_dataset(
         "frame_average": int(frame_average),
         "subtract_baseline": bool(subtract_baseline),
     }
-    X_ic = None
+    XIc = None
     if intercarrier:
-        ic_width = InterCarrierExtractor(window=window, hop=hop).output_size
-        X_ic = (np.stack([ics[i] for i in sel]).astype(np.float32) if sel
-                else np.empty((0, ic_width), np.float32))
+        icWidth = InterCarrierExtractor(window=window, hop=hop).output_size
+        XIc = (np.stack([ics[i] for i in sel]).astype(np.float32) if sel
+                else np.empty((0, icWidth), np.float32))
     return Dataset(
-        X_features=X_features, X_image=X_image, y=y, t=t_arr, labels=sel_labels, meta=meta,
+        X_features=XFeatures, X_image=XImage, y=y, t=tArr, labels=selLabels, meta=meta,
         session_ids=np.full(y.size, str(session_id), dtype=object),
         subject_ids=np.full(y.size, str(subject_id), dtype=object),
-        X_intercarrier=X_ic,
+        X_intercarrier=XIc,
     )
 
 
-def build_dataset_stacked(
+def buildDatasetStacked(
     frames,
     calibrations,
     label_source,
@@ -196,33 +196,33 @@ def build_dataset_stacked(
     """Build a labeled dataset from a multi-node CSI recording (nodes stacked as channels).
 
     calibrations: dict[node_id -> (CalibrationResult, GainLock|None)].
-    Frames from all nodes are demuxed by node_id and fed through iter_windows_stacked.
+    Frames from all nodes are demuxed by node_id and fed through iterWindowsStacked.
     Shapes: X_features (n, N·9·K), X_image (n, N, K_img, window), X_intercarrier (n, N·27).
     """
     frames = list(frames)
-    by_node = demux_by_node(frames)
+    byNode = demuxByNode(frames)
 
-    node_ids = sorted(calibrations.keys())
-    per_node_calib = {}
-    for nid in node_ids:
-        cal_result, gain_lock = calibrations[nid]
-        img_subc = getattr(cal_result, "image_subcarriers", None) or list(cal_result.subcarriers)
-        base = _image_baseline(cal_result, locked=(gain_lock is not None)) if subtract_baseline else None
-        per_node_calib[nid] = (list(cal_result.subcarriers), img_subc, gain_lock, base)
+    nodeIds = sorted(calibrations.keys())
+    perNodeCalib = {}
+    for nid in nodeIds:
+        calResult, gainLock = calibrations[nid]
+        imgSubc = getattr(calResult, "image_subcarriers", None) or list(calResult.subcarriers)
+        base = _image_baseline(calResult, locked=(gainLock is not None)) if subtract_baseline else None
+        perNodeCalib[nid] = (list(calResult.subcarriers), imgSubc, gainLock, base)
 
-    # K and K_img from lowest node id (all nodes must match — validated by iter_windows_stacked)
-    first_cal = calibrations[node_ids[0]][0]
-    K = len(first_cal.subcarriers)
-    img_subc_list = getattr(first_cal, "image_subcarriers", None) or list(first_cal.subcarriers)
-    K_img = len(img_subc_list)
-    N = len(node_ids)
+    # K and K_img from lowest node id (all nodes must match — validated by iterWindowsStacked)
+    firstCal = calibrations[nodeIds[0]][0]
+    K = len(firstCal.subcarriers)
+    imgSubcList = getattr(firstCal, "image_subcarriers", None) or list(firstCal.subcarriers)
+    KImg = len(imgSubcList)
+    N = len(nodeIds)
 
     feats: list[np.ndarray] = []
     imgs: list[np.ndarray] = []
     ics: list[np.ndarray] = []
     wts: list[float] = []
-    for t, feat, image, ic in iter_windows_stacked(
-        by_node, per_node_calib, window=window, hop=hop, intercarrier=intercarrier,
+    for t, feat, image, ic in iterWindowsStacked(
+        byNode, perNodeCalib, window=window, hop=hop, intercarrier=intercarrier,
         frame_average=frame_average, node_tolerance=node_tolerance,
     ):
         feats.append(feat.copy())
@@ -231,36 +231,36 @@ def build_dataset_stacked(
             ics.append(ic.copy())
         wts.append(t)
 
-    sel, sel_labels, stats = _attach_labels(wts, label_source, tolerance)
+    sel, selLabels, stats = _attachLabels(wts, label_source, tolerance)
 
     if sel:
-        X_features = np.stack([feats[i] for i in sel]).astype(np.float32)
-        X_image = np.stack([imgs[i] for i in sel]).astype(np.float32)
+        XFeatures = np.stack([feats[i] for i in sel]).astype(np.float32)
+        XImage = np.stack([imgs[i] for i in sel]).astype(np.float32)
     else:
-        X_features = np.empty((0, N * 9 * K), np.float32)
-        X_image = np.empty((0, N, K_img, window), np.float32)
-    y = np.asarray([l.class_id for l in sel_labels], dtype=np.int64)
-    t_arr = np.asarray([wts[i] for i in sel], dtype=np.float64)
+        XFeatures = np.empty((0, N * 9 * K), np.float32)
+        XImage = np.empty((0, N, KImg, window), np.float32)
+    y = np.asarray([l.class_id for l in selLabels], dtype=np.int64)
+    tArr = np.asarray([wts[i] for i in sel], dtype=np.float64)
 
     # fs from the lowest node id's frames
-    node0_frames = by_node.get(node_ids[0], [])
-    fs = ((len(node0_frames) - 1) / (node0_frames[-1].timestamp - node0_frames[0].timestamp)
-          if len(node0_frames) > 1 and node0_frames[-1].timestamp > node0_frames[0].timestamp
+    node0Frames = byNode.get(nodeIds[0], [])
+    fs = ((len(node0Frames) - 1) / (node0Frames[-1].timestamp - node0Frames[0].timestamp)
+          if len(node0Frames) > 1 and node0Frames[-1].timestamp > node0Frames[0].timestamp
           else 0.0)
 
     meta = {
         "fs": float(fs),
         "K": K,
-        "K_img": K_img,
-        "subcarriers": [int(s) for s in first_cal.subcarriers],
-        "image_subcarriers": img_subc_list,
+        "K_img": KImg,
+        "subcarriers": [int(s) for s in firstCal.subcarriers],
+        "image_subcarriers": imgSubcList,
         "window": window,
         "hop": hop,
         "tolerance": tolerance,
-        "node_ids": node_ids,
+        "node_ids": nodeIds,
         "num_nodes": N,
         "node_tolerance": node_tolerance,
-        "gain_locked": any(calibrations[nid][1] is not None for nid in node_ids),
+        "gain_locked": any(calibrations[nid][1] is not None for nid in nodeIds),
         "class_names": dict(class_names) if class_names else {},
         "sync_error": {"mean_dt": stats["mean_dt"], "max_abs_dt": stats["max_abs_dt"],
                        "p95_abs_dt": stats["p95_abs_dt"]},
@@ -270,20 +270,20 @@ def build_dataset_stacked(
         "frame_average": int(frame_average),
         "subtract_baseline": bool(subtract_baseline),
     }
-    X_ic = None
+    XIc = None
     if intercarrier:
-        ic_width = N * 27
-        X_ic = (np.stack([ics[i] for i in sel]).astype(np.float32) if sel
-                else np.empty((0, ic_width), np.float32))
+        icWidth = N * 27
+        XIc = (np.stack([ics[i] for i in sel]).astype(np.float32) if sel
+                else np.empty((0, icWidth), np.float32))
     return Dataset(
-        X_features=X_features, X_image=X_image, y=y, t=t_arr, labels=sel_labels, meta=meta,
+        X_features=XFeatures, X_image=XImage, y=y, t=tArr, labels=selLabels, meta=meta,
         session_ids=np.full(y.size, str(session_id), dtype=object),
         subject_ids=np.full(y.size, str(subject_id), dtype=object),
-        X_intercarrier=X_ic,
+        X_intercarrier=XIc,
     )
 
 
-def save_dataset(dataset: "Dataset", out_dir) -> Path:
+def saveDataset(dataset: "Dataset", out_dir) -> Path:
     """Serialize to JSONL manifest + .npy arrays under out_dir (created if missing). O(n)."""
     p = Path(out_dir)
     p.mkdir(parents=True, exist_ok=True)
@@ -312,13 +312,13 @@ def save_dataset(dataset: "Dataset", out_dir) -> Path:
     return p
 
 
-def load_dataset(out_dir) -> "Dataset":
+def loadDataset(out_dir) -> "Dataset":
     """Round-trip load of a saved dataset. O(n)."""
     p = Path(out_dir)
-    X_features = np.load(p / "features.npy")
-    X_image = np.load(p / "images.npy")
-    ic_path = p / "features_ic.npy"
-    X_ic = np.load(ic_path) if ic_path.exists() else None
+    XFeatures = np.load(p / "features.npy")
+    XImage = np.load(p / "images.npy")
+    icPath = p / "features_ic.npy"
+    XIc = np.load(icPath) if icPath.exists() else None
     with open(p / "meta.json") as f:
         meta = json.load(f)
     labels: list[Label] = []
@@ -347,13 +347,13 @@ def load_dataset(out_dir) -> "Dataset":
             ys.append(r["class_id"])
             ts.append(r["t"])
     return Dataset(
-        X_features=X_features,
-        X_image=X_image,
+        X_features=XFeatures,
+        X_image=XImage,
         y=np.asarray(ys, dtype=np.int64),
         t=np.asarray(ts, dtype=np.float64),
         labels=labels,
         meta=meta,
         session_ids=np.asarray(sess, dtype=object),
         subject_ids=np.asarray(subj, dtype=object),
-        X_intercarrier=X_ic,
+        X_intercarrier=XIc,
     )

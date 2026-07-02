@@ -25,10 +25,10 @@ def test_combined_channel_difference_subtracts_antenna_zero():
     rng = np.random.default_rng(7)
     A, S = 3, 6
     H = (rng.uniform(0.5, 1.5, (A, S)) * np.exp(1j * rng.uniform(-np.pi, np.pi, (A, S)))).astype(np.complex64)
-    in_frame = CsiFrame(A, S)
-    in_frame.grid[:, :] = H
+    inFrame = CsiFrame(A, S)
+    inFrame.grid[:, :] = H
     out = CsiFrame(1, 1)
-    combined_channel_difference(in_frame, out)
+    combined_channel_difference(inFrame, out)
     assert out.grid.shape == (A - 1, S)  # antenna-difference -> (A-1) x S
     expected = (H[1:, :] - H[0, :]).astype(np.complex64)
     assert np.allclose(out.grid, expected, atol=1e-5)
@@ -48,10 +48,10 @@ def test_conjugate_multiply_cross_antenna_cancels_common_offset():
     theta = 1.234  # one common-mode hardware/CFO phase added to every antenna+subcarrier
     measured = (trueH * np.exp(1j * theta)).astype(np.complex64)
 
-    in_frame = CsiFrame(A, S)
-    in_frame.grid[:, :] = measured
+    inFrame = CsiFrame(A, S)
+    inFrame.grid[:, :] = measured
     out = CsiFrame(1, 1)
-    conjugate_multiply(in_frame, out)
+    conjugate_multiply(inFrame, out)
 
     assert out.grid.shape == (A - 1, S)  # cross-antenna -> (A-1) x S
     expected = (trueH[1:, :] * np.conj(trueH[0, :])).astype(np.complex64)  # theta cancels
@@ -64,10 +64,10 @@ def test_conjugate_multiply_cross_subcarrier_cancels_common_offset():
     trueH = (rng.uniform(0.5, 1.5, S) * np.exp(1j * rng.uniform(-np.pi, np.pi, S))).astype(np.complex64)
     measured = (trueH * np.exp(1j * 0.77)).astype(np.complex64)  # common across subcarriers
 
-    in_frame = CsiFrame(1, S)
-    in_frame.grid[:, :] = measured
+    inFrame = CsiFrame(1, S)
+    inFrame.grid[:, :] = measured
     out = CsiFrame(1, 1)
-    conjugate_multiply(in_frame, out)
+    conjugate_multiply(inFrame, out)
 
     assert out.grid.shape == (1, S - 1)  # cross-subcarrier fallback
     expected = (trueH[1:] * np.conj(trueH[:-1])).astype(np.complex64)
@@ -75,9 +75,9 @@ def test_conjugate_multiply_cross_subcarrier_cancels_common_offset():
 
 
 def test_conjugate_multiply_single_subcarrier_raises():
-    in_frame = CsiFrame(1, 1)  # 1 antenna, 1 subcarrier -> nothing to pair
+    inFrame = CsiFrame(1, 1)  # 1 antenna, 1 subcarrier -> nothing to pair
     with pytest.raises(FrameError):
-        conjugate_multiply(in_frame, CsiFrame(1, 1))
+        conjugate_multiply(inFrame, CsiFrame(1, 1))
 
 
 # --- Hampel ----------------------------------------------------------------------------------
@@ -159,14 +159,14 @@ def test_preprocessor_rejects_magnitude_spike():
         frames.append(frame)
 
     reject = Preprocessor(A, S, hampel_window=7, hampel_k=5.0, normalize_alpha=0.1)
-    out_reject = np.stack([reject.process(fr).copy() for fr in frames])
+    outReject = np.stack([reject.process(fr).copy() for fr in frames])
 
     control = Preprocessor(A, S, hampel_window=7, hampel_k=1e9, normalize_alpha=0.1)  # no rejection
-    out_control = np.stack([control.process(fr).copy() for fr in frames])
+    outControl = np.stack([control.process(fr).copy() for fr in frames])
 
-    cell = out_reject[f, 0, 0]          # affected cell (antenna1 vs antenna0, subcarrier0)
+    cell = outReject[f, 0, 0]          # affected cell (antenna1 vs antenna0, subcarrier0)
     assert abs(cell) < 0.05                                  # spike held -> output stays ~0
-    assert abs(out_control[f, 0, 0]) > 10 * abs(cell) + 0.1  # without rejection it glitches
+    assert abs(outControl[f, 0, 0]) > 10 * abs(cell) + 0.1  # without rejection it glitches
 
 
 # --- Preprocessor: recovers injected motion frequency (cross-subcarrier path) ----------------

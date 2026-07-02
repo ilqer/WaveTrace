@@ -15,24 +15,24 @@ from wavetrace.Calibration import Calibration
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth import (
     ScriptedLabeler,
-    build_dataset,
-    load_dataset,
-    presence_label_fn,
-    save_dataset,
+    buildDataset,
+    loadDataset,
+    presenceLabelFn,
+    saveDataset,
 )
 from wavetrace.recognition import (
     InferenceSession,
     PresenceHead,
-    accept_format,
-    concat_datasets,
-    evaluate_presence,
-    fs_ok,
+    acceptFormat,
+    concatDatasets,
+    evaluatePresence,
+    fsOk,
     fuse,
-    leave_one_group_out,
-    measure_latency,
-    resample_uniform,
-    segmenter_baseline,
-    train_presence,
+    leaveOneGroupOut,
+    measureLatency,
+    resampleUniform,
+    segmenterBaseline,
+    trainPresence,
 )
 
 NUM_ANT = 2
@@ -53,7 +53,7 @@ def _calibrate():
     cal = Calibration(baseline_packets=50)
     for fr in baseline:
         cal.observe(fr)
-    return cal.finalize(), cal.gain_lock
+    return cal.finalize(), cal.gainLock
 
 
 def _recording(sess, subj, seed, turb, duration=10.0):
@@ -73,13 +73,13 @@ def presence_data():
     datasets = []
     for sess, subj, seed, turb in RECORDINGS:
         frames, _ = _recording(sess, subj, seed, turb)
-        labeler = ScriptedLabeler([(*SPAN, True)], label_fn=presence_label_fn)
-        datasets.append(build_dataset(frames, result, gain, labeler, window=32, hop=16,
+        labeler = ScriptedLabeler([(*SPAN, True)], label_fn=presenceLabelFn)
+        datasets.append(buildDataset(frames, result, gain, labeler, window=32, hop=16,
                                       session_id=sess, subject_id=subj))
-    X, y, sess_ids, subj_ids = concat_datasets(datasets)
+    X, y, sessIds, subjIds = concatDatasets(datasets)
     return {
         "datasets": datasets,
-        "X": X, "y": y, "sess": sess_ids, "subj": subj_ids,
+        "X": X, "y": y, "sess": sessIds, "subj": subjIds,
         "X_image": np.concatenate([d.X_image for d in datasets]),
         "K": len(result.subcarriers),
         "config": ModelConfig(stage="presence", k=len(result.subcarriers)),
@@ -113,7 +113,7 @@ def test_dataset_group_ids_roundtrip(presence_data, tmp_path):
     ds = presence_data["datasets"][0]
     n = ds.y.size
     assert list(ds.session_ids) == ["s0"] * n and list(ds.subject_ids) == ["u0"] * n
-    reloaded = load_dataset(save_dataset(ds, tmp_path / "ds"))
+    reloaded = loadDataset(saveDataset(ds, tmp_path / "ds"))
     assert list(reloaded.session_ids) == ["s0"] * n
     assert list(reloaded.subject_ids) == ["u0"] * n
 
@@ -172,8 +172,8 @@ def test_head_unfitted_raises():
 
 
 def test_train_presence_persists(presence_data, tmp_path):
-    dirs = [save_dataset(d, tmp_path / f"ds{i}") for i, d in enumerate(presence_data["datasets"][:2])]
-    head, metrics = train_presence(dirs, tmp_path / "models")
+    dirs = [saveDataset(d, tmp_path / f"ds{i}") for i, d in enumerate(presence_data["datasets"][:2])]
+    head, metrics = trainPresence(dirs, tmp_path / "models")
     assert (tmp_path / "models" / "model.joblib").exists()
     with open(tmp_path / "models" / "metrics.json") as f:
         assert json.load(f) == metrics
@@ -189,7 +189,7 @@ def test_train_presence_persists(presence_data, tmp_path):
 def test_eval_gate_head_beats_both_baselines(presence_data):
     """Logo accuracy must beat the majority class and PresenceSegmenter baselines."""
     d = presence_data
-    report = evaluate_presence(
+    report = evaluatePresence(
         d["X"], d["y"], session_ids=d["sess"], subject_ids=d["subj"], config=d["config"],
         X_image=d["X_image"],
         segmenter_kwargs={"cv_window": 16, "enter_cv": 0.01, "exit_cv": 0.005},
@@ -211,12 +211,12 @@ def test_eval_gate_head_beats_both_baselines(presence_data):
 def test_logo_requires_two_groups(presence_data):
     d = presence_data
     with pytest.raises(ValueError, match="2 distinct groups"):
-        leave_one_group_out(d["X"], d["y"], np.full(d["y"].size, "only"), lambda: None)
+        leaveOneGroupOut(d["X"], d["y"], np.full(d["y"].size, "only"), lambda: None)
 
 
 def test_segmenter_baseline_flags_turbulent_windows(presence_data):
     d = presence_data
-    pred = segmenter_baseline(d["X_image"], cv_window=16, enter_cv=0.01, exit_cv=0.005)
+    pred = segmenterBaseline(d["X_image"], cv_window=16, enter_cv=0.01, exit_cv=0.005)
     assert pred.shape == d["y"].shape and set(np.unique(pred)) <= {0, 1}
     # DSP gate baseline: above chance, below the trained head.
     assert (pred == d["y"]).mean() > 0.75
@@ -234,27 +234,27 @@ def inference_session(presence_data, tmp_path_factory):
 
 def test_infer_predict_window_deterministic(presence_data, inference_session):
     d = presence_data
-    feat_present = d["X"][d["y"] == 1][0]
-    feat_absent = d["X"][d["y"] == 0][0]
-    cls1, p1 = inference_session.predict_window(feat_present)
-    cls0, p0 = inference_session.predict_window(feat_absent)
+    featPresent = d["X"][d["y"] == 1][0]
+    featAbsent = d["X"][d["y"] == 0][0]
+    cls1, p1 = inference_session.predictWindow(featPresent)
+    cls0, p0 = inference_session.predictWindow(featAbsent)
     assert (cls1, cls0) == (1, 0)
     assert 0.5 <= p1 <= 1.0 and 0.5 <= p0 <= 1.0   # argmax probability
-    assert inference_session.predict_window(feat_present) == (cls1, p1)  # deterministic
+    assert inference_session.predictWindow(featPresent) == (cls1, p1)  # deterministic
 
 
 def test_presence_mode_session(presence_data, tmp_path):
     # 'presence' mode: independent human-detection operating mode.
-    from wavetrace.recognition import mode_session
+    from wavetrace.recognition import modeSession
     d = presence_data
     head = PresenceHead(d["config"]).fit(d["X"], d["y"])
-    session = mode_session("presence", head.save(tmp_path / "p.joblib"))
-    cls, proba = session.predict_window(d["X"][d["y"] == 1][0])
+    session = modeSession("presence", head.save(tmp_path / "p.joblib"))
+    cls, proba = session.predictWindow(d["X"][d["y"] == 1][0])
     assert cls == 1 and 0.5 <= proba <= 1.0
 
 
 def test_infer_latency_under_8ms(presence_data, inference_session):
-    stats = measure_latency(inference_session, presence_data["X"][0], iters=200)
+    stats = measureLatency(inference_session, presence_data["X"][0], iters=200)
     assert stats["mean_ms"] < 8.0
     assert stats["p95_ms"] < 8.0  # DoD: per-window inference < 8 ms
 
@@ -290,35 +290,35 @@ def test_resample_uniform_recovers_jittered_series():
     t = np.arange(n) / fs + rng.uniform(-0.2 / fs, 0.2 / fs, n)  # jittered, still increasing
     t.sort()
     vals = np.sin(2 * np.pi * 2.0 * t).astype(np.float32)
-    res, grid = resample_uniform(vals, t, fs)
+    res, grid = resampleUniform(vals, t, fs)
     assert grid[0] == t[0] and np.allclose(np.diff(grid), 1.0 / fs)
     assert np.abs(res - np.sin(2 * np.pi * 2.0 * grid)).max() < 0.02  # ≈ uniform reference
 
     multi = np.stack([vals, 2 * vals], axis=1)                # (n, k) path
-    res2, _ = resample_uniform(multi, t, fs)
+    res2, _ = resampleUniform(multi, t, fs)
     assert res2.shape == (grid.size, 2)
     assert np.allclose(res2[:, 0] * 2, res2[:, 1], atol=1e-5)
 
 
 def test_resample_uniform_validates():
     with pytest.raises(ValueError, match=">= 2"):
-        resample_uniform([1.0], [0.0], 100.0)
+        resampleUniform([1.0], [0.0], 100.0)
     with pytest.raises(ValueError, match="increasing"):
-        resample_uniform([1.0, 2.0, 3.0], [0.0, 0.02, 0.01], 100.0)
+        resampleUniform([1.0, 2.0, 3.0], [0.0, 0.02, 0.01], 100.0)
     with pytest.raises(ValueError, match="target_fs"):
-        resample_uniform([1.0, 2.0], [0.0, 0.01], 0.0)
+        resampleUniform([1.0, 2.0], [0.0, 0.01], 0.0)
 
 
 def test_fs_ok_drops_deviating_windows():
     t = np.arange(50) / 100.0
-    assert fs_ok(t, 100.0, 0.1)
-    assert fs_ok(t + np.random.default_rng(1).uniform(-1e-3, 1e-3, 50) * 0, 100.0, 0.1)
-    assert not fs_ok(t[::2], 100.0, 0.1)      # decimated -> live fs 50 Hz, out of tol
-    assert not fs_ok(t[:1], 100.0, 0.1)       # too short to estimate fs
-    assert not fs_ok(np.zeros(5), 100.0, 0.1)  # zero span
+    assert fsOk(t, 100.0, 0.1)
+    assert fsOk(t + np.random.default_rng(1).uniform(-1e-3, 1e-3, 50) * 0, 100.0, 0.1)
+    assert not fsOk(t[::2], 100.0, 0.1)      # decimated -> live fs 50 Hz, out of tol
+    assert not fsOk(t[:1], 100.0, 0.1)       # too short to estimate fs
+    assert not fsOk(np.zeros(5), 100.0, 0.1)  # zero span
 
 
 def test_accept_format_single_packet_format():
-    assert accept_format(384, 384)             # the one controlled-link format
-    assert not accept_format(128, 384)         # stray legacy frame rejected
-    assert not accept_format(0, 0)
+    assert acceptFormat(384, 384)             # the one controlled-link format
+    assert not acceptFormat(128, 384)         # stray legacy frame rejected
+    assert not acceptFormat(0, 0)

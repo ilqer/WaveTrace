@@ -6,7 +6,7 @@ Reads CSI frames from a source, runs calibration, builds labeled datasets, train
 
 | File | What it does |
 |---|---|
-| `Source.py` | CSI frame sources: live UDP (`UdpSource`), recorded file replay (`RecordingSource`), synthetic frames for tests (`SyntheticSource`). Also the binary UDP wire format parser and `parse_batch_links`. |
+| `Source.py` | CSI frame sources: live UDP (`UdpSource`), recorded file replay (`RecordingSource`), synthetic frames for tests (`SyntheticSource`). Also the binary UDP wire format parser and `parseBatchLinks`. |
 | `Frontend.py` | Shared pipeline loop — pulls from a source, preprocesses, emits windowed feature vectors or spectrograms. Used by both training and serving so the features always match. |
 | `Calibration.py` | Saves and loads per-session calibration: gain-lock scalar, quiet baseline, NBVI subcarrier mask. |
 | `Cli.py` | `wavetrace` CLI: `capture`, `calibrate`, `collect-data`, `train`, `localize`, `run` subcommands. |
@@ -22,7 +22,7 @@ All machine learning: training, evaluation, inference, voting, and fusion.
 | File | What it does |
 |---|---|
 | `Train.py` | Trains a presence or weapon head from a dataset; saves `model.joblib` |
-| `Evaluate.py` | Leave-one-session-out and leave-one-subject-out cross-validation; `tier_verdict` gate |
+| `Evaluate.py` | Leave-one-session-out and leave-one-subject-out cross-validation; `tierVerdict` gate |
 | `Infer.py` | Runs a trained model on a feature window; returns class + confidence |
 | `Model.py` | Head classes: `PresenceHead` (MLP/SVM) and `WeaponHead` (variance threshold / sklearn / CNN) |
 | `Weapon.py` | Weapon-specific features: σ²[p] inter-subcarrier variance, block-average decimation |

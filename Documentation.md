@@ -69,7 +69,7 @@ Every ESP32 burst is decoded into a `CsiFrame` by `wavetrace/Source.py`:
 - `timestamp` — float seconds
 - `node_id` — which node TX'd the burst
 
-`save_recording` writes these to disk as `grid.npy` (F, A, S), `t.npy` (F,), `node_id.npy` (F,), `meta.json`.
+`saveRecording` writes these to disk as `grid.npy` (F, A, S), `t.npy` (F,), `node_id.npy` (F,), `meta.json`.
 
 ### Calibration
 
@@ -85,7 +85,7 @@ Output goes to `output/calib/`:
 
 ### Feature window loop
 
-`Frontend.iter_windows` slides a window of `window` frames with stride `hop` across the recording. Per window it extracts three things in this order:
+`Frontend.iterWindows` slides a window of `window` frames with stride `hop` across the recording. Per window it extracts three things in this order:
 
 1. **IC features** — 27 numbers from **raw (pre-lock)** magnitudes. Structure: 3 series (µ, σ², CV) × 9 statistics = 27. This must be computed before gain lock. Gain lock removes the per-packet amplitude variance that distinguishes metal from body tissue — apply it first and σ²[p] disappears.
 2. **Presence features** — gain lock applied, then K=12 NBVI subcarriers selected, then 9 statistics per subcarrier → 9·K = 108 numbers.
@@ -93,7 +93,7 @@ Output goes to `output/calib/`:
 
 ### Dataset
 
-`build_dataset` runs the window loop with a labeler attached and collects:
+`buildDataset` runs the window loop with a labeler attached and collects:
 
 | field | shape | content |
 |---|---|---|
@@ -103,7 +103,7 @@ Output goes to `output/calib/`:
 | `y` | `(n,)` | class labels |
 | `session_ids`, `subject_ids` | `(n,)` | group IDs for LOGO cross-validation |
 
-`save_dataset` writes: `features.npy`, `images.npy`, `features_ic.npy`, `manifest.jsonl`, `meta.json`.
+`saveDataset` writes: `features.npy`, `images.npy`, `features_ic.npy`, `manifest.jsonl`, `meta.json`.
 
 ### Training
 
@@ -120,7 +120,7 @@ Each run saves `output/model/model.pkl` and `metrics.json` with LOGO accuracy.
 
 ### Serving
 
-`mode_session(mode, model_path)` loads the trained head and returns an `InferenceSession`. The session's `_serving_plan` tells the front-end what to extract:
+`modeSession(mode, model_path)` loads the trained head and returns an `InferenceSession`. The session's `_servingPlan` tells the front-end what to extract:
 
 | backend | input | gain lock? |
 |---|---|---|
@@ -475,15 +475,15 @@ For weapon mode, also do **leave-one-subject-out (LOSO)**: hold out all sessions
 | Metric | How to compute | Minimum bar |
 |---|---|---|
 | Presence accuracy | LOGO cross-validation, all sessions | Clearly above majority-class baseline |
-| Weapon TPR | `tier_verdict` in `Evaluate.py` | ≥ 90% |
-| Weapon FP rate | `tier_verdict` | ≤ 10% |
+| Weapon TPR | `tierVerdict` in `Evaluate.py` | ≥ 90% |
+| Weapon FP rate | `tierVerdict` | ≤ 10% |
 | Per-tier verdict | Run separately for each tier | Beat chance on each tier before moving to the next |
 
 ### What "works" means at each stage
 
 - **Presence**: LOGO accuracy is clearly above the majority-class baseline (e.g. 60% empty → baseline is 60%; your model should be ≥ 85%).
 - **Weapon tier 1**: σ²[p] distributions for metal vs no-metal are visually separated on held-out data.
-- **Weapon tier 2**: `tier_verdict` returns True (FP ≤ 10% ∧ TPR ≥ 90%) on held-out data.
+- **Weapon tier 2**: `tierVerdict` returns True (FP ≤ 10% ∧ TPR ≥ 90%) on held-out data.
 - **Weapon tier 3**: Same verdict gate, evaluated on moving-subject sessions from held-out subjects.
 
 Do not report accuracy from a random within-session split.
@@ -496,19 +496,18 @@ Do not report accuracy from a random within-session split.
 
 - Full C++ signal processing pipeline: frame parsing, conjugate-multiply, Hampel filter, phase unwrap, EMA detrend, gain lock, NBVI subcarrier selection, FFT, 9-feature extractor, inter-subcarrier σ²[p], spectrogram builder.
 - Full Python presence pipeline: calibration, dataset builder, MLP/SVM training, LOGO evaluation, live inference, per-node voting, multi-node fusion, result publishing.
-- Weapon pipeline: σ²[p] variance baseline, sklearn head, CNN head, `SegmentVoter`, `tier_verdict` gate.
+- Weapon pipeline: σ²[p] variance baseline, sklearn head, CNN head, `SegmentVoter`, `tierVerdict` gate.
 - Ground-truth tools: camera labeler (YOLO/SAM), segmentation labeler, scripted labeler, timestamp alignment, dataset serializer.
 - CLI: `wavetrace capture / calibrate / collect-data / train / localize / run`.
 - Web dashboard: spectrograms, node health, live predictions. (Train button returns placeholder metrics — real training runs from the terminal.)
 - Pi 5 GHz node: `firmware/pi/` is implemented and tested against `wavetrace/Source.py` via `TestPiPublisher.py`. Not yet validated on real Pi hardware.
 - All 295 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
 
-### What is blocked on hardware
+### What to Verify on Real Hardware Before Trusting Results
 
-None of the accuracy numbers from synthetic data carry over to real hardware. These must be verified on a real capture before trusting any results:
+These must be verified on a real capture before trusting any results:
 
-- **I/Q byte order** — esp-csi assumes `[imag, real]` pairs. A swap makes all phase data wrong. Verify against a known-still capture (amplitude stable; phase not spinning).
-- **Subcarrier count and pattern** — with `WT_BW_HT40 1` the expected count is ~114. Verify on the first real capture.
+- **Subcarrier count and pattern** — with `WT_BW_HT40 1` the expected count is ~114. Verify on the capture.
 - **AGC / PHY gain lock** — confirm the lock is stable across two back-to-back empty captures taken minutes apart.
 - **You can't throw away bad-gain frames on the PC.** When a node's automatic gain control (AGC) saturates, that node's σ²[p] feature goes garbage. You might think to drop those frames during weapon training — but you can't from the host. The ESP only sends `mac | timestamp | length | CSI`, so the gain value never leaves the board. If we ever want this, the firmware has to either report the gain or skip those frames itself.
 - **Actual CSI sample rate** — the firmware targets ~250 Hz per link. The pipeline estimates `fs` from timestamps; confirm it is within range of the 100 Hz resample target.
@@ -519,11 +518,9 @@ None of the accuracy numbers from synthetic data carry over to real hardware. Th
 ### What is not built and not planned
 
 - AoA localization (`Localize.py` exists but is parked — needs ≥ 2 phase-coherent antennas; the ESP32-S3 has one receive chain).
-- People counting (`collect_count.py` exists; pipeline built as presence-with-N-classes; no real-hardware accuracy yet).
 - Through-wall sensing, vitals detection (breathing/heartbeat).
 - On-device model updates — the adaptation mechanism is recalibration plus retraining on the Mac.
 - HomeKit / Matter / MQTT integrations.
-- Compressed sensing — deferred; only valid if the subcarrier pattern is incoherent. Verify on hardware first.
 
 ---
 

@@ -18,13 +18,13 @@ from wavetrace import CsiFrame, GainLock, select_subcarriers_nbvi, valid_subcarr
 class CalibrationResult:
     reference_scale: float       # GainLock reference amplitude level (NaN if gain lock disabled)
     subcarriers: list[int]       # NBVI-selected, non-consecutive subcarrier indices
-    num_baseline: int            # number of baseline frames used
+    numBaseline: int            # number of baseline frames used
     baseline_mag: np.ndarray     # mean |H| per subcarrier over the quiet baseline, shape (S,)
     baseline_diff: np.ndarray    # mean CFO-free differential channel H(k)·conj(H(k-1)), complex, (S-1,)
     image_subcarriers: list[int] = field(default_factory=list)  # ALL noise-gate-passing subcarriers, ascending — CNN image rows
 
 
-def reflection_signature(grid, result: CalibrationResult):
+def reflectionSignature(grid, result: CalibrationResult):
     """Material signature (subject vs baseline). Returns (mag_ratio, phase_delta).
 
     * mag_ratio[k]: Attenuation coefficient. Metal changes it from 1.
@@ -39,7 +39,7 @@ def reflection_signature(grid, result: CalibrationResult):
     return magRatio.astype(np.float32), phaseDelta.astype(np.float32)
 
 
-def image_baseline(result: "CalibrationResult", *, locked: bool) -> np.ndarray:
+def imageBaseline(result: "CalibrationResult", *, locked: bool) -> np.ndarray:
     """Quiet-room baseline. O(S). Rescales to gain-lock basis if locked."""
     b = np.asarray(result.baseline_mag, dtype=np.float32)
     if locked and not np.isnan(float(result.reference_scale)):
@@ -81,11 +81,11 @@ class Calibration:
         return len(self._amps) >= self._baseline_packets
 
     @property
-    def num_baseline(self) -> int:
+    def numBaseline(self) -> int:
         return len(self._amps)
 
     @property
-    def gain_lock(self) -> GainLock:
+    def gainLock(self) -> GainLock:
         """The locked GainLock — call .apply(frame) on it during deployment (amplitude path only)."""
         if self._gain is None:
             raise ValueError("Calibration: gain lock disabled (use_gain_lock=False)")
@@ -117,14 +117,14 @@ class Calibration:
             reference_scale=referenceScale,
             subcarriers=list(subc),
             image_subcarriers=list(imgSubc),
-            num_baseline=len(self._amps),
+            numBaseline=len(self._amps),
             baseline_mag=amp.mean(axis=0),
             baseline_diff=np.stack(self._diffs).mean(axis=0),
         )
 
 
-def save_calibration(result: CalibrationResult, out_dir) -> Path:
-    """Serialize a CalibrationResult to out_dir (meta.json + .npy), mirroring save_dataset. O(S)."""
+def saveCalibration(result: CalibrationResult, out_dir) -> Path:
+    """Serialize a CalibrationResult to out_dir (meta.json + .npy), mirroring saveDataset. O(S)."""
     p = Path(out_dir)
     p.mkdir(parents=True, exist_ok=True)
     np.save(p / "baseline_mag.npy", np.asarray(result.baseline_mag, dtype=np.float32))
@@ -133,15 +133,15 @@ def save_calibration(result: CalibrationResult, out_dir) -> Path:
         "reference_scale": float(result.reference_scale),  # NaN -> JSON null, handled on load
         "subcarriers": [int(s) for s in result.subcarriers],
         "image_subcarriers": [int(s) for s in result.image_subcarriers],
-        "num_baseline": int(result.num_baseline),
+        "numBaseline": int(result.numBaseline),
     }
     with open(p / "meta.json", "w") as f:
         json.dump(meta, f, indent=2)
     return p
 
 
-def load_calibration(out_dir) -> tuple[CalibrationResult, GainLock | None]:
-    """Round-trip saved calibration. Returns (result, gain_lock). O(S)."""
+def loadCalibration(out_dir) -> tuple[CalibrationResult, GainLock | None]:
+    """Round-trip saved calibration. Returns (result, gainLock). O(S)."""
     p = Path(out_dir)
     with open(p / "meta.json") as f:
         meta = json.load(f)
@@ -150,12 +150,12 @@ def load_calibration(out_dir) -> tuple[CalibrationResult, GainLock | None]:
         reference_scale=ref,
         subcarriers=[int(s) for s in meta["subcarriers"]],
         image_subcarriers=[int(s) for s in meta.get("image_subcarriers", meta["subcarriers"])],
-        num_baseline=int(meta["num_baseline"]),
+        numBaseline=int(meta["numBaseline"]),
         baseline_mag=np.load(p / "baseline_mag.npy"),
         baseline_diff=np.load(p / "baseline_diff.npy"),
     )
     gainLock = None
     if not np.isnan(ref):
-        gainLock = GainLock(result.num_baseline)
+        gainLock = GainLock(result.numBaseline)
         gainLock.lock_to(ref)
     return result, gainLock

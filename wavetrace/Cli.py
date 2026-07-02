@@ -2,7 +2,7 @@
 
 Five modes (plan §5 Phase 8): capture / calibrate / collect-data / train / run. Each mode is a thin
 argparse handler over a testable helper function; `run` is the real-time path (front-end → head →
-publish) and reuses `Frontend.iter_windows` so the served features match training exactly.
+publish) and reuses `Frontend.iterWindows` so the served features match training exactly.
 
 CSI source today = synthetic (fixtures) or a saved recording; live serial capture is a Phase-0 seam
 (see Source.py). All non-`run` modes are offline.
@@ -14,28 +14,28 @@ import warnings
 
 import numpy as np
 
-from wavetrace.Calibration import Calibration, image_baseline, load_calibration, save_calibration
+from wavetrace.Calibration import Calibration, imageBaseline, loadCalibration, saveCalibration
 from wavetrace.Config import ModelConfig
-from wavetrace.Frontend import iter_windows
-from wavetrace.Localize import Localizer, Tracker, save_localization
-from wavetrace.Source import RecordingSource, SyntheticSource, load_recording, save_recording
+from wavetrace.Frontend import iterWindows
+from wavetrace.Localize import Localizer, Tracker, saveLocalization
+from wavetrace.Source import RecordingSource, SyntheticSource, loadRecording, saveRecording
 from wavetrace.groundtruth import (
-    build_dataset,
-    presence_label_fn,
-    save_dataset,
-    weapon_label_fn,
+    buildDataset,
+    presenceLabelFn,
+    saveDataset,
+    weaponLabelFn,
 )
 from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler
 from wavetrace.output import JsonlPublisher
-from wavetrace.recognition import SegmentVoter, mode_session, train_presence, train_weapon
+from wavetrace.recognition import SegmentVoter, modeSession, trainPresence, trainWeapon
 from wavetrace import RecognitionResult
 
 
 # ----- front-end serving config: how (mode, head) maps to the inference input ----------------------
 
-def _serving_plan(mode: str, head):
+def _servingPlan(mode: str, head):
     """Return (apply_lock, intercarrier, pick) for the run loop. `pick(features, image, ic) -> x` is
-    the row fed to predict_window. Encodes the plan's (mode, backend) wiring table."""
+    the row fed to predictWindow. Encodes the plan's (mode, backend) wiring table."""
     if mode == "presence":
         return True, False, (lambda f, i, ic: f)
     # weapon: self-describing via head.feature_mode (fallback by backend for pre-P8 models)
@@ -49,16 +49,16 @@ def _serving_plan(mode: str, head):
 
 # ----- mode helpers (testable; argparse handlers below just parse + call these) --------------------
 
-def calibrate_source(source, out_dir, *, baseline_packets=300, use_gain_lock=True, nbvi_max=12):
+def calibrateSource(source, out_dir, *, baseline_packets=300, use_gain_lock=True, nbvi_max=12):
     """Run the calibration flow over a quiet-baseline source and persist the result. Offline."""
     cal = Calibration(baseline_packets=baseline_packets, nbvi_max=nbvi_max, use_gain_lock=use_gain_lock)
     for fr in source.frames():
         cal.observe(fr)
     result = cal.finalize()
-    return save_calibration(result, out_dir), result
+    return saveCalibration(result, out_dir), result
 
 
-def collect_source(source, calib_dir, out_dir, spans, *, stage="presence", window=128, hop=32,
+def collectSource(source, calib_dir, out_dir, spans, *, stage="presence", window=128, hop=32,
                    session_id="", subject_id="", frame_average=1, subtract_baseline=False,
                    subtract_ic_baseline=False, labeler=None, tier=""):
     """Build + serialize a labeled dataset from a source + a label source. weapon stage emits the
@@ -69,26 +69,26 @@ def collect_source(source, calib_dir, out_dir, spans, *, stage="presence", windo
     to collect a mask-bearing, camera-supervised dataset that feeds the heatmap head. Defaults to a
     ScriptedLabeler over `spans` (the no-camera path).
     tier: 'open' | 'wrapped' | 'concealed', stamped into meta['tier'] so a concealed collection can be
-    held out by evaluate_concealment_gap (the open→concealed transfer measurement)."""
-    result, gainLock = load_calibration(calib_dir)
+    held out by evaluateConcealmentGap (the open→concealed transfer measurement)."""
+    result, gainLock = loadCalibration(calib_dir)
     if labeler is None:
-        labelFn = weapon_label_fn if stage == "weapon" else presence_label_fn
+        labelFn = weaponLabelFn if stage == "weapon" else presenceLabelFn
         labeler = ScriptedLabeler([(s, e, True) for s, e in spans], label_fn=labelFn)
     intercarrier = stage == "weapon"
     # weapon IC/CNN paths need raw magnitudes: gain-locking cancels sigma2[p] (the metal discriminator)
     effectiveLock = None if intercarrier else gainLock
-    ds = build_dataset(list(source.frames()), result, effectiveLock, labeler, window=window, hop=hop,
+    ds = buildDataset(list(source.frames()), result, effectiveLock, labeler, window=window, hop=hop,
                        session_id=session_id, subject_id=subject_id, intercarrier=intercarrier,
                        frame_average=frame_average, subtract_baseline=subtract_baseline,
                        subtract_ic_baseline=subtract_ic_baseline)
     if tier:
         ds.meta["tier"] = tier
-    return save_dataset(ds, out_dir), ds
+    return saveDataset(ds, out_dir), ds
 
 
-def _spatial_result(t, x_m, y_m, angle_deg, range_m, confidence, located):
+def _spatialResult(t, x_m, y_m, angle_deg, range_m, confidence, located):
     """A spatial fix -> RecognitionResult on the wire schema: location rides in bbox [x, y, 0, 0]
-    (Publisher.result_to_dict emits it), azimuth + range in keypoints. class_id = 1 when this frame
+    (Publisher.resultToDict emits it), azimuth + range in keypoints. class_id = 1 when this frame
     carries a real (measured/confident) fix, 0 when it is a coasted/low-confidence estimate. nan
     range -> -1 (JSON-safe)."""
     r = RecognitionResult()
@@ -100,7 +100,7 @@ def _spatial_result(t, x_m, y_m, angle_deg, range_m, confidence, located):
     return r
 
 
-def localize_source(source, out_dir, *, num_antennas, spacing=0.5, method="music", num_sources=1,
+def localizeSource(source, out_dir, *, num_antennas, spacing=0.5, method="music", num_sources=1,
                     num_angles=181, subcarrier_spacing_hz=312.5e3, max_range_m=12.0, num_ranges=64,
                     range_enabled=True, filter_track=True, publisher=None):
     """Stream a source through the AoA Localizer: publish the per-frame track as RecognitionResults
@@ -116,33 +116,33 @@ def localize_source(source, out_dir, *, num_antennas, spacing=0.5, method="music
                     max_range_m=max_range_m, num_ranges=num_ranges, range_enabled=range_enabled)
     tracker = Tracker(range_enabled=range_enabled) if filter_track else None
     frames = list(source.frames())
-    for l in loc.locate_stream(frames):
+    for l in loc.locateStream(frames):
         if publisher is None:
             continue
         if tracker is not None:
             st = tracker.update(l)
-            publisher.publish(_spatial_result(st.timestamp, st.x_m, st.y_m, st.angle_deg, st.range_m,
+            publisher.publish(_spatialResult(st.timestamp, st.x_m, st.y_m, st.angle_deg, st.range_m,
                                                st.confidence, st.measured))
         else:
-            publisher.publish(_spatial_result(l.timestamp, l.x_m, l.y_m, l.peak_angle_deg,
+            publisher.publish(_spatialResult(l.timestamp, l.x_m, l.y_m, l.peak_angle_deg,
                                               l.peak_range_m, l.confidence, l.confidence >= 0.5))
     agg = loc.aggregate(frames)
-    return save_localization(agg, out_dir), agg
+    return saveLocalization(agg, out_dir), agg
 
 
-def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False, guard=False):
+def runInference(source, calib_dir, model_path, mode, publisher, *, vote=False, guard=False):
     """Stream a source through the front-end and publish one verdict per window (+ a final soft-vote
     verdict when vote=True). When guard=True, wires AlertGuard+DriftMonitor for debounce and drift
     advisory (O(S)/frame extra — acceptable on the Pi serving side). O(windows)."""
-    result, gainLock = load_calibration(calib_dir)
-    session = mode_session(mode, model_path)
-    applyLock, intercarrier, pick = _serving_plan(mode, session.head)
+    result, gainLock = loadCalibration(calib_dir)
+    session = modeSession(mode, model_path)
+    applyLock, intercarrier, pick = _servingPlan(mode, session.head)
     cfg = session.head.config
 
     imgSubc = getattr(result, "image_subcarriers", None)
     imgBase = None
     if cfg.subtract_baseline:
-        imgBase = image_baseline(result, locked=(applyLock and gainLock is not None))
+        imgBase = imageBaseline(result, locked=(applyLock and gainLock is not None))
     # weapon IC background subtraction (Item 10/CAUSE 2B): raw baseline, IC path only, mirrors training
     icBase = result.baseline_mag if getattr(cfg, "subtract_ic_baseline", False) else None
 
@@ -152,34 +152,34 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
         driftMon = DriftMonitor(result.baseline_mag)
         alertGuard = AlertGuard()
         # tee raw (pre-lock) per-frame mags to DriftMonitor without disrupting the frame stream
-        def _tee_drift(frames, monitor, pub):
+        def _teeDrift(frames, monitor, pub):
             import numpy as _np
             for fr in frames:
                 ev = monitor.update(float(fr.timestamp),
                                     _np.abs(_np.asarray(fr.grid)).mean(axis=0).astype(_np.float32))
                 if ev:
-                    pub.publish_event(ev)
+                    pub.publishEvent(ev)
                 yield fr
-        framesIter = _tee_drift(framesIter, driftMon, publisher)
+        framesIter = _teeDrift(framesIter, driftMon, publisher)
 
     voter = SegmentVoter() if vote else None
     out = []
-    for t, features, image, ic in iter_windows(
+    for t, features, image, ic in iterWindows(
         framesIter, result.subcarriers, gainLock if applyLock else None,
         window=cfg.window, hop=cfg.hop, intercarrier=intercarrier,
         image_subcarriers=imgSubc,
         frame_average=cfg.frame_average,
-        image_baseline=imgBase,
+        imageBaseline=imgBase,
         ic_baseline=icBase,
     ):
-        cls, conf = session.predict_window(pick(features, image, ic))
+        cls, conf = session.predictWindow(pick(features, image, ic))
         r = RecognitionResult(); r.class_id = cls; r.confidence = conf; r.timestamp = t
         publisher.publish(r)
         out.append(r)
         if guard:
             ev = alertGuard.update(t, cls)
             if ev:
-                publisher.publish_event(ev)
+                publisher.publishEvent(ev)
         if voter is not None:
             voter.add(session.head.predict_proba(np.asarray(pick(features, image, ic),
                                                             dtype=np.float32).reshape(1, -1))[0])
@@ -194,35 +194,35 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
 
 # ----- argparse layer -----------------------------------------------------------------------------
 
-def _source_from_args(args):
+def _sourceFromArgs(args):
     """Build a CsiSource from CLI args: --recording DIR (replay) or --synthetic (fixtures)."""
     if args.recording:
         return RecordingSource(args.recording)
     if args.synthetic:
         from fixtures.SyntheticRecording import generatePairedRecording
-        if _parse_spans(args.weapon) and args.weapon_depth <= 0.0:
+        if _parseSpans(args.weapon) and args.weapon_depth <= 0.0:
             # depth 0 injects no signal -> weapon windows are unlearnable (single-class); warn (B3)
             warnings.warn("synthetic --weapon spans set but --weapon-depth is 0: weapon windows will "
                           "carry no signature (pass --weapon-depth > 0)", stacklevel=2)
-        spans = _parse_spans(args.presence)
+        spans = _parseSpans(args.presence)
         frames, _, _ = generatePairedRecording(
             numAntennas=args.antennas, numSubcarriers=args.subcarriers, sampleRateHz=args.fs,
             durationS=args.duration, cameraFps=30.0, presenceSpans=spans or [(0.0, args.duration)],
-            presenceTurbulenceStd=0.10, weaponSpans=_parse_spans(args.weapon),
+            presenceTurbulenceStd=0.10, weaponSpans=_parseSpans(args.weapon),
             weaponSignatureDepth=args.weapon_depth, seed=args.seed,
         )
         return SyntheticSource(frames)
     raise SystemExit("a source is required: --recording DIR or --synthetic")
 
 
-def _parse_spans(s):
+def _parseSpans(s):
     """'a:b,c:d' -> [(a,b),(c,d)]; '' -> []."""
     if not s:
         return []
     return [tuple(float(x) for x in part.split(":")) for part in s.split(",")]
 
 
-def _add_source_args(p):
+def _addSourceArgs(p):
     p.add_argument("--recording", help="replay a saved recording directory")
     p.add_argument("--synthetic", action="store_true", help="generate frames via the fixtures")
     p.add_argument("--antennas", type=int, default=2)
@@ -240,17 +240,17 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="mode", required=True)
 
     pCap = sub.add_parser("capture", help="record CSI frames to disk")
-    _add_source_args(pCap)
+    _addSourceArgs(pCap)
     pCap.add_argument("--out", required=True)
 
     pCal = sub.add_parser("calibrate", help="quiet-baseline calibration -> calibration dir")
-    _add_source_args(pCal)
+    _addSourceArgs(pCal)
     pCal.add_argument("--out", required=True)
     pCal.add_argument("--baseline-packets", type=int, default=300, dest="baseline_packets")
     pCal.add_argument("--no-gain-lock", action="store_true", dest="no_gain_lock")
 
     pCol = sub.add_parser("collect-data", help="frames + scripted labels -> dataset dir")
-    _add_source_args(pCol)
+    _addSourceArgs(pCol)
     pCol.add_argument("--calibration", required=True)
     pCol.add_argument("--out", required=True)
     pCol.add_argument("--stage", choices=["presence", "weapon"], default="presence")
@@ -274,7 +274,7 @@ def main(argv=None) -> int:
                       choices=["ic27", "fusion", "cnn"], help="weapon stage only")
 
     pLoc = sub.add_parser("localize", help="AoA spatial heatmap (where) -> track + heatmap dir")
-    _add_source_args(pLoc)
+    _addSourceArgs(pLoc)
     pLoc.add_argument("--out", required=True)
     pLoc.add_argument("--spacing", type=float, default=0.5,
                        help="ULA element spacing in wavelengths (default 0.5 = lambda/2)")
@@ -294,7 +294,7 @@ def main(argv=None) -> int:
                        help="publish raw per-frame fixes (skip the constant-velocity Kalman tracker)")
 
     pRun = sub.add_parser("run", help="stream inference -> publish verdicts")
-    _add_source_args(pRun)
+    _addSourceArgs(pRun)
     pRun.add_argument("--calibration", required=True)
     pRun.add_argument("--model", required=True)
     pRun.add_argument("--head-mode", choices=["presence", "weapon"], default="presence",
@@ -306,16 +306,16 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     if args.mode == "capture":
-        save_recording(list(_source_from_args(args).frames()), args.out)
+        saveRecording(list(_sourceFromArgs(args).frames()), args.out)
         print(f"captured -> {args.out}", file=sys.stderr)
     elif args.mode == "calibrate":
-        path, _ = calibrate_source(_source_from_args(args), args.out,
+        path, _ = calibrateSource(_sourceFromArgs(args), args.out,
                                    baseline_packets=args.baseline_packets,
                                    use_gain_lock=not args.no_gain_lock)
         print(f"calibration -> {path}", file=sys.stderr)
     elif args.mode == "collect-data":
-        path, ds = collect_source(_source_from_args(args), args.calibration, args.out,
-                                  _parse_spans(args.label_spans), stage=args.stage,
+        path, ds = collectSource(_sourceFromArgs(args), args.calibration, args.out,
+                                  _parseSpans(args.label_spans), stage=args.stage,
                                   window=args.window, hop=args.hop,
                                   session_id=args.session_id, subject_id=args.subject_id,
                                   frame_average=args.frame_average,
@@ -323,15 +323,15 @@ def main(argv=None) -> int:
         print(f"dataset ({ds.y.size} samples) -> {path}", file=sys.stderr)
     elif args.mode == "train":
         if args.stage == "presence":
-            _, m = train_presence(args.datasets, out_dir=args.out)  # k taken from dataset meta
+            _, m = trainPresence(args.datasets, out_dir=args.out)  # k taken from dataset meta
         else:
             cfg = None
             if args.backend:
                 # config only needed to override the backend; k still comes from dataset meta
-                from wavetrace.groundtruth import load_dataset
-                k = int(load_dataset(args.datasets[0]).meta["K"])
+                from wavetrace.groundtruth import loadDataset
+                k = int(loadDataset(args.datasets[0]).meta["K"])
                 cfg = ModelConfig(stage="weapon", k=k, backend=args.backend)
-            _, m = train_weapon(args.datasets, out_dir=args.out, config=cfg,
+            _, m = trainWeapon(args.datasets, out_dir=args.out, config=cfg,
                                 feature_mode=args.feature_mode)
         print(f"model -> {args.out} ({m})", file=sys.stderr)
     elif args.mode == "localize":
@@ -339,8 +339,8 @@ def main(argv=None) -> int:
         track = args.track or str(Path(args.out) / "track.jsonl")
         Path(args.out).mkdir(parents=True, exist_ok=True)
         with JsonlPublisher(track, mode="localize") as pub:
-            path, agg = localize_source(
-                _source_from_args(args), args.out, num_antennas=args.antennas, spacing=args.spacing,
+            path, agg = localizeSource(
+                _sourceFromArgs(args), args.out, num_antennas=args.antennas, spacing=args.spacing,
                 method=args.method, num_sources=args.num_sources, num_angles=args.num_angles,
                 subcarrier_spacing_hz=args.subcarrier_hz, max_range_m=args.max_range_m,
                 num_ranges=args.num_ranges, range_enabled=not args.no_range,
@@ -353,7 +353,7 @@ def main(argv=None) -> int:
     elif args.mode == "run":
         pub = JsonlPublisher(args.out, mode=args.head_mode)
         with pub:
-            results = run_inference(_source_from_args(args), args.calibration, args.model,
+            results = runInference(_sourceFromArgs(args), args.calibration, args.model,
                                     args.head_mode, pub, vote=args.vote, guard=args.guard)
         print(f"published {len(results)} verdict(s)", file=sys.stderr)
     print('\a', end='', flush=True)

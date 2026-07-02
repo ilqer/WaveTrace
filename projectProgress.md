@@ -171,7 +171,6 @@ These are finalized. Do not revisit without strong new evidence.
 - **Single-antenna ESP32 cannot produce antenna-difference features.** All working papers key on h₁₁ − h₁₂ antenna-difference channel to cancel static multipath and expose the object's faint reflection. No DSP compensates for missing hardware.
 - **Band mismatch for primary target.** The only knife paper (Zhou) used 5 GHz, 270 subcarriers, walking pedestrians. At 2.4 GHz, λ≈12.5 cm; a knife profile (~3–4 cm) is below the λ/2 resolution limit.
 - **Within-session evaluation splits are misleading.** Sliding window hop creates heavy overlap between train/test windows. LOGO is required for honest evaluation.
-- **Phase information discarded.** Wi-Metal's best result is phase-based; amplitude-only loses a key discriminator.
 - **Variance feature (σ²[p]) fails for moving targets.** Body motion adds its own variance that overwhelms the weapon signal.
 - **Geometry tension.** Yousaf (gun detection) used N-LOS static. Zhou (knife detection) used LOS walking-pedestrian. These measure different physical phenomena.
 
@@ -181,7 +180,6 @@ These are finalized. Do not revisit without strong new evidence.
 
 ### 5.1 Platform Decisions
 
-- **IWL5300 (Halperin 2011):** 3 antennas, 30 subcarrier groups, 5 GHz, MIMO 3×3 — not viable; laptop-only, Linux driver, discontinued
 - **ESP32:** correct platform despite RF frontend limitations (single antenna, hardware phase noise)
 - **Upgrade path for 5 GHz:** Nexmon CSI on Raspberry Pi 5 (CYW43455 chipset); community patch, not in official Nexmon repo
 
@@ -194,7 +192,7 @@ These are finalized. Do not revisit without strong new evidence.
 ### 5.2 Node Configuration
 
 - **6x ESP32-S3-DevKitC-1 (v1.1):** 2.4 GHz; STATUS_LED_GPIO=38 for WS2812 data line
-- **1x Raspberry Pi 5:** 5 GHz via Nexmon on onboard CYW43455 chip; supports 5 GHz up to 80 MHz, 1x1; no external NIC needed
+- **1x Raspberry Pi 5:** 5 GHz via Nexmon on onboard CYW43455 chip; supports 5 GHz up to 80 MHz, 1x1; no external NIC needed(for weapon, not tested and used, can run the pipeline without this)
 - **Antenna:** 8 dBi RP-SMA omnidirectional whip, 160mm, dual-band 2.4/5.8 GHz — not directional. Critical difference from Yousaf 2025 hardware (1.2m dish, 25 dBi, 7° beam).
 - **Router:** old/cheap, locked to channel 6, 2.4 GHz HT40
 
@@ -231,8 +229,8 @@ These are finalized. Do not revisit without strong new evidence.
 
 **Calibration save/load:**
 - `GainLock.lockTo(scale)` (C++): bypasses observe→finalize, directly sets referenceScale. Lets Python reconstruct a locked GainLock from a persisted scalar without re-running baseline capture.
-- `save_calibration()`: writes meta.json (reference_scale, subcarriers, num_baseline), baseline_mag.npy, baseline_diff.npy
-- `load_calibration()`: reads files, calls gain_lock.lock_to(ref); returns `(CalibrationResult, GainLock | None)` — the GainLock is None when reference_scale is NaN (gain lock was disabled at calibration time)
+- `saveCalibration()`: writes meta.json (reference_scale, subcarriers, numBaseline), baseline_mag.npy, baseline_diff.npy
+- `loadCalibration()`: reads files, calls gainLock.lock_to(ref); returns `(CalibrationResult, GainLock | None)` — the GainLock is None when reference_scale is NaN (gain lock was disabled at calibration time)
 - Backward compat: meta.get("image_subcarriers", meta["subcarriers"]) — old calibrations without the key fall back to the NBVI set
 
 ### 6.2 Stage 2 — C++ Preprocessing
@@ -254,7 +252,7 @@ These are finalized. Do not revisit without strong new evidence.
 - `nineFeatures()`: mean, std, max, min, IQR, skewness, lag-1 autocorrelation, MAD, waveform length — computed over a 128-frame window per subcarrier
 - Window = 128 frames (~1.28s at 100 Hz), hop = 32 frames
 - NBVI selects top-K subcarriers by time-variance; K=12 for the presence path
-- Three parallel paths from iter_windows: 9·K feature vector (MLP/SVM), K×128 CSI image (CNN), 27 inter-carrier stats (weapon MLP)
+- Three parallel paths from iterWindows: 9·K feature vector (MLP/SVM), K×128 CSI image (CNN), 27 inter-carrier stats (weapon MLP)
 - `SegmentVoter`: soft majority voting; per-snapshot CNN accuracy 51.1% → voting over a full walk → 93.3% (Zhou 2020)
 
 ### 6.5 GainLock Analysis
@@ -310,13 +308,13 @@ The ESP32 AGC varies transmit power, which changes amplitudes in ways unrelated 
 - PresenceSegmenter baseline prevents reporting improvements that don't beat a well-tuned threshold rule
 
 **`Infer.py`:**
-- InferenceSession.predict_window(feat) → (class_id, proba)
+- InferenceSession.predictWindow(feat) → (class_id, proba)
 - Measured latency: ~0.05 ms (160x under the 8 ms DoD budget)
 
 **`Fusion.py` / `Resample.py`:**
 - Per-node feature concat: O(m), no cross-node conjugate multiplication
-- resample_uniform: linear/cubic interpolation onto a uniform time grid
-- fs_ok: drops windows where measured fs deviates beyond tolerance
+- resampleUniform: linear/cubic interpolation onto a uniform time grid
+- fsOk: drops windows where measured fs deviates beyond tolerance
 - out= buffer reuse for zero-allocation hot path
 
 **Synthetic results:**
@@ -356,26 +354,26 @@ The ESP32 AGC varies transmit power, which changes amplitudes in ways unrelated 
 
 ### 7.3 Phase 8 — Pipeline Completion
 
-- 8a: GainLock::lockTo() (C++) + save_calibration() / load_calibration() (Python)
-- 8b: Frontend.iter_windows parity fix (single emit loop shared by train and serve)
+- 8a: GainLock::lockTo() (C++) + saveCalibration() / loadCalibration() (Python)
+- 8b: Frontend.iterWindows parity fix (single emit loop shared by train and serve)
 - 8c: Publisher ABC + JsonlPublisher (zero-dep, JSONL, flush every write)
 - 8d: CsiSource / SyntheticSource / RecordingSource + serialization; SerialReader = documented Phase-0 seam
-- 8e: WeaponHead feature_mode stamped into saved head; _serving_plan reads it to determine apply_lock, intercarrier, input pick
+- 8e: WeaponHead feature_mode stamped into saved head; _servingPlan reads it to determine apply_lock, intercarrier, input pick
 - 8f: Cli.py (argparse, 6 modes: capture / calibrate / collect-data / train / localize / run)
 - 8g: TestPipeline.py (10 tests)
 
 Rebuild required after touching C++: `pip install -e . --no-build-isolation`
 
 **Parity invariant (critical engineering rule):**
-- `Frontend.iter_windows` is shared by training and serving — divergent code paths produce feature mismatch and silent model corruption
-- Per-frame order: IC extractor sees raw magnitudes BEFORE gain_lock.apply() → then gain lock applied → then NBVI-selected mags pushed to FeatureExtractor and SpectrogramBuilder
+- `Frontend.iterWindows` is shared by training and serving — divergent code paths produce feature mismatch and silent model corruption
+- Per-frame order: IC extractor sees raw magnitudes BEFORE gainLock.apply() → then gain lock applied → then NBVI-selected mags pushed to FeatureExtractor and SpectrogramBuilder
 
 **Bugs found and fixed in Phase 8:**
-- `train_presence`/`train_weapon` created ModelConfig with window=128 ignoring the dataset's actual window; fix: pull window/hop from dataset meta
-- `result_to_dict` used result.classId (wrong); correct pybind attribute is result.class_id
+- `trainPresence`/`trainWeapon` created ModelConfig with window=128 ignoring the dataset's actual window; fix: pull window/hop from dataset meta
+- `resultToDict` used result.classId (wrong); correct pybind attribute is result.class_id
 
 **Multi-node architecture:**
-- iter_windows_stacked(): lockstep-zip one iter_windows per node; yields (N·9·K features, N×K_img×window image, N·27 IC)
+- iterWindowsStacked(): lockstep-zip one iterWindows per node; yields (N·9·K features, N×K_img×window image, N·27 IC)
 - Node/channel order = sorted node IDs (deterministic)
 - Timestamp tolerance check: if max(ts) − min(ts) > node_tolerance → ValueError (Phase 0 owns time sync)
 
@@ -389,9 +387,9 @@ Rebuild required after touching C++: `pip install -e . --no-build-isolation`
 - Localize.py already builds AoA heatmap from ≥2 RX antennas on one radio (shared clock enables inter-antenna phase)
 - Independent per-node STO/CFO makes absolute ToF infeasible without per-node delay calibration (not yet implemented)
 
-**Bug fix (2026-06-26) — collect_source train/serve mismatch:**
-- collect_source() in Cli.py was passing gain_lock to build_dataset for the weapon stage, applying gain-lock normalization to ic27 features at training time, destroying the σ²[p] amplitude-flatness signal. Serving correctly used apply_lock=False.
-- Fix: `effective_lock = None if intercarrier else gain_lock`
+**Bug fix (2026-06-26) — collectSource train/serve mismatch:**
+- collectSource() in Cli.py was passing gainLock to buildDataset for the weapon stage, applying gain-lock normalization to ic27 features at training time, destroying the σ²[p] amplitude-flatness signal. Serving correctly used apply_lock=False.
+- Fix: `effective_lock = None if intercarrier else gainLock`
 
 ### 7.4 CIR Super-Resolution Module (built 2026-06-22)
 
@@ -425,7 +423,7 @@ ISTA vs OMP: OMP commits permanently on each iteration; body+object may fall in 
 | 80 MHz Pi/Nexmon | 242 | 768 | ~4 ns | ~1.2 m | 0.02 | 40 |
 
 **Cir.py module:**
-- Functions: delay_dictionary, estimate_cir_taps (ISTA), cir_from_csi, cir_features
+- Functions: delayDictionary, estimateCirTaps (ISTA), cirFromCsi, cirFeatures
 - Tap detector: local maxima + nearest-peak basin (per ADR-134 §2.9 tolerance-aware detector)
 - TestCir.py: 5 tests, all passing — two-tap recovery, sub-Nyquist separation, dictionary conditioning, gapped band, error cases
 - Verified: recovers synthetic 2-tap channel to within one delay bin, κ(Φ)≈1
@@ -800,7 +798,7 @@ Note: camera-supervised collection has never been run end-to-end. All code is de
 **Training phase:**
 - MacBook FaceTime webcam → YOLO-seg → 16×16 per-frame occupancy mask
 - Masks supervise CSI image tensor (nodes × subcarriers × window) → HeatmapHead CNN; camera not needed at runtime
-- Fallback (_occupancy_fallback): if heatmap.joblib missing → spectral amplitude blob (not learned positions)
+- Fallback (_occupancyFallback): if heatmap.joblib missing → spectral amplitude blob (not learned positions)
 
 **Critical limitation — single-person only:**
 - VisionLabeler._detect() (CameraLabeler.py:125–126): picks only the highest-confidence detected person; second person's mask is silently dropped
@@ -871,7 +869,7 @@ Note: Pi 5 Nexmon has not been set up. All of the following is designed only.
 | Model upload 422 error | Introduced ModelUploadRequest(BaseModel) with file_b64 and dest fields |
 | btoa stack overflow on large files | Chunked loop reading 8192 bytes at a time |
 | Train backend dropdown crashes | Removed invalid options; replaced with four valid backends: cnn, mlp, svm, variance |
-| Sub baseline checkbox dead | Single-node inference path was hardcoding image_baseline=None; conditional baseline construction |
+| Sub baseline checkbox dead | Single-node inference path was hardcoding imageBaseline=None; conditional baseline construction |
 | WebSocket stale closure on reconnect | connectRef = useRef updated via useEffect([connect]); exponential backoff 2s→30s |
 
 **Dead code removed:**
@@ -917,24 +915,24 @@ Note: Pi 5 Nexmon has not been set up. All of the following is designed only.
 - Controls.tsx shows read-only calibBadge (e.g. "HT40 · 128 subcarriers") instead of a manual numeric input
 
 **Cumulative weapon pool training:**
-- start_training_managed now globs dataset_path subdirs containing X_features.npy
+- startTrainingManaged now globs dataset_path subdirs containing X_features.npy
 - Dataset Path text input added to Train settings section in Controls.tsx
 
 ### 10.3 Security Audit
 
 **RCE via joblib.load() (high severity):**
 - app.py:252–256: fusion_weights(path: str) GET endpoint deserializes any path via joblib (pickle); combined with allow_origins=["*"]
-- Fix: _safe_output_path() resolves and confines to output/; rejects absolute paths and .. escapes
+- Fix: _safeOutputPath() resolves and confines to output/; rejects absolute paths and .. escapes
 
 **Arbitrary file write → chained RCE (high severity):**
 - app.py:264–270: writes base64 to any dest path, even creating dirs; chains with above (write a model then load it = RCE)
-- Fix: same _safe_output_path() applied to model_upload dest
+- Fix: same _safeOutputPath() applied to model_upload dest
 
-**app.py:~287 model_weights loads arbitrary client model path via mode_session — same RCE class; NOT YET FIXED**
+**app.py:~287 model_weights loads arbitrary client model path via modeSession — same RCE class; NOT YET FIXED**
 
 **BackgroundTasks dead handle (low severity):**
-- runner_task = background_tasks.add_task(run_blocking) returns None; stop path was dead
-- Fix: asyncio.create_task(asyncio.to_thread(run_blocking)); stored handle; joined in stop with 2s timeout
+- runner_task = background_tasks.add_task(runBlocking) returns None; stop path was dead
+- Fix: asyncio.create_task(asyncio.to_thread(runBlocking)); stored handle; joined in stop with 2s timeout
 
 **Bare except swallowing CancelledError (low severity):**
 - 5 sites in broadcast loops using bare except: — swallows CancelledError and KeyboardInterrupt
@@ -1008,8 +1006,8 @@ Weapon datasets were collected in three physically distinct environments (differ
 - Fix: mask subtraction & 0xFFFFFFFF; regression test added
 
 **Per-record mac_str on hot path:**
-- _iter_bin_records yielded a formatted 17-char MAC string per record — allocation on every record
-- Fix: yield raw 6 MAC bytes; tx_mac filter compares bytes; parse_batch_links formats only the 2-octet bucket key
+- _iterBinRecords yielded a formatted 17-char MAC string per record — allocation on every record
+- Fix: yield raw 6 MAC bytes; tx_mac filter compares bytes; parseBatchLinks formats only the 2-octet bucket key
 
 **Capture loop deadline:**
 - Capture loops could hang indefinitely if one node is quiet
@@ -1022,7 +1020,7 @@ Weapon datasets were collected in three physically distinct environments (differ
 ### 12.1 Critical (blocking next experiment)
 
 - **NLOS litmus gate not cleared.** Antennas are aimed toward center, but AUC >= 0.65 on at least one link has not been verified on new geometry data. No ML training should happen until this gate clears.
-- **app.py:~287 security hole.** model_weights loads an arbitrary client model path via mode_session — same RCE class as fusion_weights; not yet fixed.
+- **app.py:~287 security hole.** model_weights loads an arbitrary client model path via modeSession — same RCE class as fusion_weights; not yet fixed.
 
 ### 12.2 Known Bugs
 
@@ -1034,7 +1032,7 @@ Weapon datasets were collected in three physically distinct environments (differ
 ### 12.3 Designed Only (not tested)
 
 - **Pi 5 / 5 GHz HT80:** community Nexmon patch required; architecture designed (firmware/pi/config.py, illuminator via Mac ping, wire format v3), zero hardware testing done
-- **Camera-supervised heatmap:** all code exists; collect_camera.py --train has never been run end-to-end; no heatmap.joblib has ever been produced; fallback to _occupancy_fallback() is correct and works, but the trained-model path is unverified
+- **Camera-supervised heatmap:** all code exists; collect_camera.py --train has never been run end-to-end; no heatmap.joblib has ever been produced; fallback to _occupancyFallback() is correct and works, but the trained-model path is unverified
 
 ### 12.4 Missing Features
 

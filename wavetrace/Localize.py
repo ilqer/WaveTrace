@@ -37,10 +37,10 @@ class Localization:
 
     timestamp: float
     angles_deg: np.ndarray       # (G,) azimuth grid
-    angle_spectrum: np.ndarray   # (G,) AoA pseudo-spectrum, normalized to [0, 1]
+    angleSpectrum: np.ndarray   # (G,) AoA pseudo-spectrum, normalized to [0, 1]
     ranges_m: np.ndarray         # (R,) range grid (empty if range disabled)
-    range_profile: np.ndarray    # (R,) delay-domain power, normalized to [0, 1] (empty if disabled)
-    heatmap: np.ndarray          # (R, G) separable range×angle map = outer(range_profile, spectrum)
+    rangeProfile: np.ndarray    # (R,) delay-domain power, normalized to [0, 1] (empty if disabled)
+    heatmap: np.ndarray          # (R, G) separable range×angle map = outer(rangeProfile, spectrum)
     peak_angle_deg: float        # azimuth of the dominant arrival
     peak_range_m: float          # range of the dominant delay bin (nan if range disabled)
     x_m: float                   # lateral position = peak_range·sin(peak_angle) (1·sin if no range)
@@ -48,7 +48,7 @@ class Localization:
     confidence: float            # spectrum peakedness 1 - mean/max in [0, 1] (sharp peak -> ~1)
 
 
-def _grid_of(frame) -> np.ndarray:
+def _gridOf(frame) -> np.ndarray:
     """Accept a CsiFrame (has .grid) or a raw (A, S) complex array -> (A, S) complex128."""
     g = np.asarray(getattr(frame, "grid", frame))
     if g.ndim != 2:
@@ -93,10 +93,10 @@ class Localizer:
 
     # ----- AoA spectrum -------------------------------------------------------------------------
 
-    def angle_spectrum(self, grid) -> np.ndarray:
+    def angleSpectrum(self, grid) -> np.ndarray:
         """(A, S) complex CSI -> (G,) AoA pseudo-spectrum normalized to [0, 1]. Subcarriers are the
         covariance snapshots. O(A²S + A³ + A·G)."""
-        g = _grid_of(grid)
+        g = _gridOf(grid)
         if g.shape[0] != self.A:
             raise ValueError(f"Localizer: grid has {g.shape[0]} antennas, expected {self.A}")
         R = (g @ g.conj().T) / g.shape[1]  # (A, A) spatial covariance over subcarrier snapshots
@@ -114,11 +114,11 @@ class Localizer:
 
     # ----- delay-domain range profile -----------------------------------------------------------
 
-    def range_profile(self, grid) -> tuple[np.ndarray, np.ndarray]:
+    def rangeProfile(self, grid) -> tuple[np.ndarray, np.ndarray]:
         """(A, S) -> (ranges_m, profile) over the delay domain. IFFT across antenna-averaged
         subcarriers -> a power-vs-delay profile; bin r maps to range c·r/(S·Δf). Coarse (carries an
         STO offset). O(S log S)."""
-        g = _grid_of(grid)
+        g = _gridOf(grid)
         h = g.mean(axis=0)                         # (S,) antenna-averaged complex CFR
         S = h.size
         delay = np.abs(np.fft.ifft(h)) ** 2        # (S,) power vs delay bin
@@ -135,29 +135,29 @@ class Localizer:
         """Per-frame STREAMING estimate: 1-D AoA spectrum + a coarse delay range to place (x, y). The
         per-frame heatmap is the (1, G) azimuth spectrum (a single frame can't resolve a room map —
         that is `aggregate`'s joint 2-D MUSIC). O(A²S + A³ + A·G)."""
-        spec = self.angle_spectrum(frame)
-        peak_angle = float(self.angles_deg[int(np.argmax(spec))])
-        mean_over_max = float(spec.mean()) / float(spec.max()) if spec.max() > 0 else 1.0
-        conf = max(0.0, 1.0 - mean_over_max)
+        spec = self.angleSpectrum(frame)
+        peakAngle = float(self.angles_deg[int(np.argmax(spec))])
+        meanOverMax = float(spec.mean()) / float(spec.max()) if spec.max() > 0 else 1.0
+        conf = max(0.0, 1.0 - meanOverMax)
 
         if self.range_enabled:
-            ranges, prof = self.range_profile(frame)
-            peak_r = float(ranges[int(np.argmax(prof))]) if ranges.size else float("nan")
-            radius = peak_r
+            ranges, prof = self.rangeProfile(frame)
+            peakR = float(ranges[int(np.argmax(prof))]) if ranges.size else float("nan")
+            radius = peakR
         else:
-            ranges, prof, peak_r, radius = np.empty(0), np.empty(0), float("nan"), 1.0
+            ranges, prof, peakR, radius = np.empty(0), np.empty(0), float("nan"), 1.0
 
-        th = np.deg2rad(peak_angle)
+        th = np.deg2rad(peakAngle)
         return Localization(
-            timestamp=float(timestamp), angles_deg=self.angles_deg, angle_spectrum=spec,
-            ranges_m=ranges, range_profile=prof, heatmap=spec.astype(np.float32)[None, :],
-            peak_angle_deg=peak_angle, peak_range_m=peak_r,
+            timestamp=float(timestamp), angles_deg=self.angles_deg, angleSpectrum=spec,
+            ranges_m=ranges, rangeProfile=prof, heatmap=spec.astype(np.float32)[None, :],
+            peak_angle_deg=peakAngle, peak_range_m=peakR,
             x_m=radius * float(np.sin(th)), y_m=radius * float(np.cos(th)), confidence=conf,
         )
 
     # ----- joint 2-D delay-AoA MUSIC (the room map) ---------------------------------------------
 
-    def _joint_2d_music(self, grids) -> tuple[np.ndarray, np.ndarray]:
+    def _joint2dMusic(self, grids) -> tuple[np.ndarray, np.ndarray]:
         """SpotFi-style joint (range × angle) MUSIC over a window of frames. Each frame is one
         snapshot of the vectorized (A·S) channel; the steering a(θ, τ)[m, k] = e^{j2π·spacing·m·sinθ}·
         e^{-j2π·Δf·k·τ} spans antennas AND subcarriers JOINTLY (not a separable product). Forward-
@@ -195,36 +195,36 @@ class Localizer:
         ts = float(getattr(frames[-1], "timestamp", 0.0))
 
         if self.range_enabled and len(frames) > self.num_sources:
-            ranges, P2d = self._joint_2d_music([_grid_of(fr) for fr in frames])
+            ranges, P2d = self._joint2dMusic([_gridOf(fr) for fr in frames])
             ri, gi = np.unravel_index(int(np.argmax(P2d)), P2d.shape)
-            peak_angle, peak_r = float(self.angles_deg[gi]), float(ranges[ri])
-            angle_spectrum = P2d.max(axis=0)        # marginal over range
-            range_profile = P2d.max(axis=1)         # marginal over angle
+            peakAngle, peakR = float(self.angles_deg[gi]), float(ranges[ri])
+            angleSpectrum = P2d.max(axis=0)        # marginal over range
+            rangeProfile = P2d.max(axis=1)         # marginal over angle
             heatmap = P2d.astype(np.float32)
             mx = float(P2d.max())
             conf = max(0.0, 1.0 - float(P2d.mean()) / mx) if mx > 0 else 0.0
-            radius = peak_r
+            radius = peakR
         else:  # azimuth-only fallback: average the per-frame 1-D AoA spectra
-            angle_spectrum = np.zeros_like(self.angles_deg)
+            angleSpectrum = np.zeros_like(self.angles_deg)
             for fr in frames:
-                angle_spectrum += self.angle_spectrum(fr)
-            angle_spectrum /= len(frames)
-            peak_angle = float(self.angles_deg[int(np.argmax(angle_spectrum))])
-            mx = float(angle_spectrum.max())
-            conf = max(0.0, 1.0 - float(angle_spectrum.mean()) / mx) if mx > 0 else 0.0
-            ranges, range_profile = np.empty(0), np.empty(0)
-            peak_r, radius = float("nan"), 1.0
-            heatmap = angle_spectrum.astype(np.float32)[None, :]
+                angleSpectrum += self.angleSpectrum(fr)
+            angleSpectrum /= len(frames)
+            peakAngle = float(self.angles_deg[int(np.argmax(angleSpectrum))])
+            mx = float(angleSpectrum.max())
+            conf = max(0.0, 1.0 - float(angleSpectrum.mean()) / mx) if mx > 0 else 0.0
+            ranges, rangeProfile = np.empty(0), np.empty(0)
+            peakR, radius = float("nan"), 1.0
+            heatmap = angleSpectrum.astype(np.float32)[None, :]
 
-        th = np.deg2rad(peak_angle)
+        th = np.deg2rad(peakAngle)
         return Localization(
-            timestamp=ts, angles_deg=self.angles_deg, angle_spectrum=angle_spectrum, ranges_m=ranges,
-            range_profile=range_profile, heatmap=heatmap, peak_angle_deg=peak_angle,
-            peak_range_m=peak_r, x_m=radius * float(np.sin(th)), y_m=radius * float(np.cos(th)),
+            timestamp=ts, angles_deg=self.angles_deg, angleSpectrum=angleSpectrum, ranges_m=ranges,
+            rangeProfile=rangeProfile, heatmap=heatmap, peak_angle_deg=peakAngle,
+            peak_range_m=peakR, x_m=radius * float(np.sin(th)), y_m=radius * float(np.cos(th)),
             confidence=conf,
         )
 
-    def locate_stream(self, frames):
+    def locateStream(self, frames):
         """Yield one Localization per frame (frame.timestamp used when present). O(F·(A²S + A·G))."""
         for fr in frames:
             yield self.locate(fr, timestamp=float(getattr(fr, "timestamp", 0.0)))
@@ -280,34 +280,34 @@ class Tracker:
 
     def update(self, localization: Localization) -> TrackState:
         """One predict+update step from a `Localization` measurement. Returns the filtered TrackState."""
-        z_angle = float(localization.peak_angle_deg)
-        z_range = float(localization.peak_range_m)
-        has_range = self._range_enabled and not np.isnan(z_range)
+        zAngle = float(localization.peak_angle_deg)
+        zRange = float(localization.peak_range_m)
+        hasRange = self._range_enabled and not np.isnan(zRange)
         conf = float(localization.confidence)
         t = float(localization.timestamp)
 
         if self._x is None:  # initialize on the first measurement (no motion history yet)
-            self._x = np.array([z_angle, (z_range if has_range else 0.0), 0.0, 0.0])
+            self._x = np.array([zAngle, (zRange if hasRange else 0.0), 0.0, 0.0])
             self._P = np.diag([self._angle_var, self._range_var, 1e3, 1e3])
             self._t = t
-            return self._emit(t, conf, measured=True, has_range=has_range)
+            return self._emit(t, conf, measured=True, has_range=hasRange)
 
         dt = max(t - self._t, 1e-3)
         self._t = t
         # ----- predict (constant velocity; process noise = the max-acceleration motion bound) -----
         F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], float)
         self._x = F @ self._x
-        self._P = F @ self._P @ F.T + self._process_noise(dt)
+        self._P = F @ self._P @ F.T + self._processNoise(dt)
 
         # ----- update (measure angle, + range when available; R shrinks with confidence) ----------
         sf = max(conf, self._conf_floor)  # confidence factor: higher conf -> smaller R -> higher gain
-        if has_range:
+        if hasRange:
             H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], float)
-            z = np.array([z_angle, z_range])
+            z = np.array([zAngle, zRange])
             R = np.diag([self._angle_var / sf, self._range_var / sf])
         else:
             H = np.array([[1, 0, 0, 0]], float)
-            z = np.array([z_angle])
+            z = np.array([zAngle])
             R = np.array([[self._angle_var / sf]])
         y = z - H @ self._x                     # innovation (measurement - prediction)
         S = H @ self._P @ H.T + R
@@ -318,13 +318,13 @@ class Tracker:
             K = self._P @ H.T @ Sinv            # Kalman gain (the confidence-weighted blend)
             self._x = self._x + K @ y
             self._P = (np.eye(4) - K @ H) @ self._P
-        return self._emit(t, conf, measured=measured, has_range=has_range)
+        return self._emit(t, conf, measured=measured, has_range=hasRange)
 
     def run(self, localizations) -> list[TrackState]:
         """Filter a whole stream of measurements into a smoothed track. O(F)."""
         return [self.update(l) for l in localizations]
 
-    def _process_noise(self, dt):
+    def _processNoise(self, dt):
         """Discrete white-noise-acceleration Q per coordinate (couples position & its velocity)."""
         d4, d3, d2 = dt ** 4 / 4.0, dt ** 3 / 2.0, dt ** 2
         Q = np.zeros((4, 4))
@@ -344,9 +344,9 @@ class Tracker:
         )
 
 
-# ----- serialization (mirrors save_dataset / save_calibration) ----------------------------------
+# ----- serialization (mirrors saveDataset / saveCalibration) ----------------------------------
 
-def save_localization(room_map: Localization, out_dir) -> Path:
+def saveLocalization(room_map: Localization, out_dir) -> Path:
     """Persist the aggregate room map under out_dir: heatmap.npy (R×G joint pseudo-spectrum) +
     angles.npy + ranges.npy (its grids) + meta.json (the peak fix). The PER-FRAME track is published
     through the Publisher wire schema (RecognitionResult), not written here. O(R·G)."""

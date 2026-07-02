@@ -7,9 +7,8 @@
 
 namespace wavetrace {
 
-// Decodes one raw ESP32 CSI frame into a reused CsiFrame. Wire layout: interleaved int8 I/Q,
-// imaginary first, as unsigned bytes needing a two's-complement sign fixup (v -= 256 if v > 127).
-// Geometry-agnostic (1x1, 1xN, Nx1, MxN); reuses the owned CsiFrame so parsing is alloc-free.
+// Decodes a raw CSI frame into a reused CsiFrame: interleaved int8 I/Q (imag first, two's-complement
+// fixup), geometry-agnostic, alloc-free.
 class FrameParser {
 public:
   FrameParser(uint16_t numAntennas, uint16_t numSubcarriers)

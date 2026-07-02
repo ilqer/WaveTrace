@@ -1,9 +1,9 @@
-"""Tests for IC-path background subtraction in iter_windows (weapon variance feature)."""
+"""Tests for IC-path background subtraction in iterWindows (weapon variance feature)."""
 import numpy as np
 import pytest
 
 from wavetrace import CsiFrame
-from wavetrace.Frontend import iter_windows
+from wavetrace.Frontend import iterWindows
 from wavetrace.recognition.Weapon import VARIANCE_FEATURE  # column 9 = σ²-series window mean
 
 S = 32
@@ -23,7 +23,7 @@ def _frames(mags):
 
 def _ic_blocks(frames, ic_baseline):
     subc = np.arange(S, dtype=np.intp)
-    return np.stack([ic.copy() for _t, _f, _i, ic in iter_windows(
+    return np.stack([ic.copy() for _t, _f, _i, ic in iterWindows(
         frames, subc, None, window=WINDOW, hop=HOP, intercarrier=True, ic_baseline=ic_baseline)])
 
 
@@ -34,7 +34,7 @@ def test_ic_baseline_none_is_byte_identical():
     np.testing.assert_array_equal(_ic_blocks(frames, None), _ic_blocks(frames, None))
     # Explicit None equals default omitted path.
     subc = np.arange(S, dtype=np.intp)
-    default = np.stack([ic.copy() for _t, _f, _i, ic in iter_windows(
+    default = np.stack([ic.copy() for _t, _f, _i, ic in iterWindows(
         frames, subc, None, window=WINDOW, hop=HOP, intercarrier=True)])
     np.testing.assert_array_equal(_ic_blocks(frames, None), default)
 

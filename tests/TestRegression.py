@@ -1,7 +1,7 @@
 """Regression tests:
   B2: Single-class training set must raise an error.
   B3: Zero-depth synthetic weapon spans must warn.
-  B5: build_dataset must accept a generator of frames.
+  B5: buildDataset must accept a generator of frames.
 """
 
 import warnings
@@ -12,7 +12,7 @@ import pytest
 from fixtures.SyntheticRecording import generatePairedRecording
 from wavetrace.Calibration import Calibration
 from wavetrace.Config import ModelConfig
-from wavetrace.groundtruth import ScriptedLabeler, build_dataset, presence_label_fn
+from wavetrace.groundtruth import ScriptedLabeler, buildDataset, presenceLabelFn
 from wavetrace.recognition.Model import PresenceHead
 from wavetrace.recognition.Weapon import WeaponHead
 
@@ -38,17 +38,17 @@ def test_weapon_head_rejects_single_class():
 # ----- B3: zero-depth synthetic weapon warning ---------------------------------------------------
 
 def test_synthetic_weapon_zero_depth_warns():
-    from wavetrace.Cli import _source_from_args
+    from wavetrace.Cli import _sourceFromArgs
 
     args = type("Args", (), dict(
         recording=None, synthetic=True, antennas=2, subcarriers=32, fs=100.0, duration=2.0,
         presence="", weapon="0:1", weapon_depth=0.0, seed=0,
     ))()
     with pytest.warns(UserWarning, match="weapon-depth"):
-        _source_from_args(args)
+        _sourceFromArgs(args)
 
 
-# ----- B5: build_dataset accepts a generator -----------------------------------------------------
+# ----- B5: buildDataset accepts a generator -----------------------------------------------------
 
 def test_build_dataset_accepts_generator():
     frames, _, _ = generatePairedRecording(
@@ -59,7 +59,7 @@ def test_build_dataset_accepts_generator():
     for fr in frames[:50]:
         cal.observe(fr)
     result = cal.finalize()
-    labeler = ScriptedLabeler([(0.0, 4.0, True)], label_fn=presence_label_fn)
-    # Pass a generator: build_dataset must materialize it before fs estimation.
-    ds = build_dataset(iter(frames), result, cal.gain_lock, labeler, window=128, hop=32)
+    labeler = ScriptedLabeler([(0.0, 4.0, True)], label_fn=presenceLabelFn)
+    # Pass a generator: buildDataset must materialize it before fs estimation.
+    ds = buildDataset(iter(frames), result, cal.gainLock, labeler, window=128, hop=32)
     assert ds.meta["fs"] > 0.0 and ds.y.size > 0

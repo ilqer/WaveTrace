@@ -56,8 +56,8 @@ def test_alert_guard_cooldown_suppresses_second_alert():
 
     # Second burst within cooldown (5.1 - 1.0 = 4.1 < 10.0)
     guard.update(5.0, 1)
-    no_ev = guard.update(5.1, 1)  # pos_count=2 >= n_on, but in cooldown
-    assert no_ev is None
+    noEv = guard.update(5.1, 1)  # pos_count=2 >= n_on, but in cooldown
+    assert noEv is None
 
     # Past cooldown: a fresh burst fires
     guard.update(5.2, 0)        # reset pos_count to 0

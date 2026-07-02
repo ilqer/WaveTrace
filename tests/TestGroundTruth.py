@@ -17,12 +17,12 @@ from wavetrace.groundtruth import (
     ScriptedLabeler,
     ThermalLabeler,
     align,
-    build_dataset,
-    estimate_clock_offset,
-    load_dataset,
-    presence_label_fn,
-    save_dataset,
-    weapon_label_fn,
+    buildDataset,
+    estimateClockOffset,
+    loadDataset,
+    presenceLabelFn,
+    saveDataset,
+    weaponLabelFn,
 )
 
 NUM_ANT = 2
@@ -40,7 +40,7 @@ def _calibrate():
     for fr in baseline:
         cal.observe(fr)
     result = cal.finalize()
-    return result, cal.gain_lock
+    return result, cal.gainLock
 
 
 # CameraLabeler tests.
@@ -51,7 +51,7 @@ def test_replay_labeler_roundtrips_presence():
                             "keypoints": [0.5, 0.2], "weapon": False}},
         {"t": 0.20, "raw": {"present": False, "bbox": None, "keypoints": [], "weapon": False}},
     ]
-    labels = ReplayLabeler(presence_label_fn).label_stream(obs)
+    labels = ReplayLabeler(presenceLabelFn).labelStream(obs)
     assert [l.class_id for l in labels] == [1, 0]
     assert [l.name for l in labels] == ["present", "absent"]
     assert labels[0].bbox == pytest.approx([0.4, 0.3, 0.2, 0.5])
@@ -61,7 +61,7 @@ def test_replay_labeler_roundtrips_presence():
 
 def test_replay_labeler_weapon_policy():
     obs = [{"t": 0.0, "raw": {"present": True, "weapon": True, "position": [0.45, 0.55, 0.1, 0.2]}}]
-    lab = ReplayLabeler(weapon_label_fn).label(obs[0], obs[0]["t"])
+    lab = ReplayLabeler(weaponLabelFn).label(obs[0], obs[0]["t"])
     assert lab.class_id == 1 and lab.name == "weapon"
 
 
@@ -73,7 +73,7 @@ def test_scripted_labeler_spans_and_manifest(tmp_path):
 
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps({"spans": [{"start": 1.0, "end": 2.0, "present": True}]}))
-    sl2 = ScriptedLabeler.from_manifest(path)
+    sl2 = ScriptedLabeler.fromManifest(path)
     assert sl2(1.5).class_id == 1 and sl2(2.5).class_id == 0
 
 
@@ -103,23 +103,23 @@ def _window_timestamps(frames, window=32, hop=16):
 
 def test_align_bounds_sync_error_and_pairs_correct():
     # Shared host clock: Δt is bounded.
-    cam_fps = 30.0
+    camFps = 30.0
     frames, obs, _ = generatePairedRecording(
         numAntennas=NUM_ANT, numSubcarriers=NUM_SUB, sampleRateHz=FS, durationS=3.0,
-        cameraFps=cam_fps, clockOffsetS=0.0, jitterStdS=0.002,
+        cameraFps=camFps, clockOffsetS=0.0, jitterStdS=0.002,
         presenceSpans=[(1.0, 2.0)], seed=1,
     )
-    labels = ReplayLabeler(presence_label_fn).label_stream(obs)
-    win_ts = _window_timestamps(frames)
-    res = align(win_ts, labels, tolerance=0.1)
+    labels = ReplayLabeler(presenceLabelFn).labelStream(obs)
+    winTs = _window_timestamps(frames)
+    res = align(winTs, labels, tolerance=0.1)
 
     assert res.stats["dropped"] == 0
     assert abs(res.stats["mean_dt"]) < 0.01
     # Sync error bounded.
-    assert res.stats["max_abs_dt"] < (0.5 / cam_fps + 5 * 0.002)
+    assert res.stats["max_abs_dt"] < (0.5 / camFps + 5 * 0.002)
     # Interior windows labeled correctly.
     for wi, lab in res.matched:
-        wt = win_ts[wi]
+        wt = winTs[wi]
         if 1.2 <= wt <= 1.8:
             assert lab.class_id == 1
         elif wt <= 0.8 or wt >= 2.2:
@@ -133,14 +133,14 @@ def test_align_drops_windows_with_no_label_in_tolerance():
         cameraFps=30.0, clockOffsetS=0.0, jitterStdS=0.0, seed=2,
     )
     obs = [o for o in obs if not (1.0 <= o["true_t"] < 2.0)]  # 1s gap.
-    labels = ReplayLabeler(presence_label_fn).label_stream(obs)
-    win_ts = _window_timestamps(frames)
-    res = align(win_ts, labels, tolerance=0.05)
+    labels = ReplayLabeler(presenceLabelFn).labelStream(obs)
+    winTs = _window_timestamps(frames)
+    res = align(winTs, labels, tolerance=0.05)
     assert res.stats["dropped"] > 0
     assert res.stats["matched"] > 0
     assert all(abs(dt) <= 0.05 for dt in res.dts)            # Survivors within tolerance.
-    dropped_ts = [win_ts[i] for i in res.dropped]
-    assert all(1.0 - 0.05 <= t <= 2.0 + 0.05 for t in dropped_ts)  # Gap windows dropped.
+    droppedTs = [winTs[i] for i in res.dropped]
+    assert all(1.0 - 0.05 <= t <= 2.0 + 0.05 for t in droppedTs)  # Gap windows dropped.
 
 
 def test_estimate_clock_offset_recovers_injection():
@@ -151,16 +151,16 @@ def test_estimate_clock_offset_recovers_injection():
         cameraFps=30.0, clockOffsetS=offset, jitterStdS=0.001,
         presenceSpans=[(1.0, 2.0)], seed=5,
     )
-    labels = ReplayLabeler(presence_label_fn).label_stream(obs)
-    win_ts = _window_timestamps(frames)
+    labels = ReplayLabeler(presenceLabelFn).labelStream(obs)
+    winTs = _window_timestamps(frames)
     # Fine truth grid.
-    truth_t = np.arange(0.0, 3.0, 1.0 / FS)
-    truth_c = [1 if 1.0 <= t < 2.0 else 0 for t in truth_t]
+    truthT = np.arange(0.0, 3.0, 1.0 / FS)
+    truthC = [1 if 1.0 <= t < 2.0 else 0 for t in truthT]
 
     # Nearest-match Δt does not reveal offset.
-    assert abs(align(win_ts, labels, tolerance=0.1).stats["mean_dt"]) < 0.5 / 30.0
+    assert abs(align(winTs, labels, tolerance=0.1).stats["mean_dt"]) < 0.5 / 30.0
     # Content correlation reveals offset.
-    est, agree = estimate_clock_offset(truth_t, truth_c, labels, max_lag=0.2, step=0.005)
+    est, agree = estimateClockOffset(truthT, truthC, labels, max_lag=0.2, step=0.005)
     assert est == pytest.approx(offset, abs=0.02)
     assert agree > 0.95
 
@@ -175,23 +175,23 @@ def test_dataset_builder_camera_shapes_and_roundtrip(tmp_path):
         cameraFps=30.0, clockOffsetS=0.0, jitterStdS=0.001,
         presenceSpans=[(1.0, 2.0)], seed=3,
     )
-    labels = ReplayLabeler(presence_label_fn).label_stream(obs)
-    ds = build_dataset(frames, result, gain, labels, window=32, hop=16, tolerance=0.1,
+    labels = ReplayLabeler(presenceLabelFn).labelStream(obs)
+    ds = buildDataset(frames, result, gain, labels, window=32, hop=16, tolerance=0.1,
                        class_names={0: "absent", 1: "present"})
 
     n = ds.y.shape[0]
     assert n > 0
-    K_img = ds.meta["K_img"]  # Image uses all valid subcarriers.
+    KImg = ds.meta["K_img"]  # Image uses all valid subcarriers.
     assert ds.X_features.shape == (n, 9 * K)
-    assert ds.X_image.shape == (n, K_img, 32)
+    assert ds.X_image.shape == (n, KImg, 32)
     assert ds.t.shape == (n,)
     assert ds.meta["K"] == K and ds.meta["fs"] == pytest.approx(FS, rel=0.05)
     # Stored sync error is small.
     assert ds.meta["sync_error"]["max_abs_dt"] < 0.5 / 30.0 + 0.01
 
-    out = save_dataset(ds, tmp_path / "ds")
+    out = saveDataset(ds, tmp_path / "ds")
     assert (out / "manifest.jsonl").exists() and (out / "meta.json").exists()
-    reloaded = load_dataset(out)
+    reloaded = loadDataset(out)
     assert np.array_equal(reloaded.X_features, ds.X_features)
     assert np.array_equal(reloaded.X_image, ds.X_image)
     assert np.array_equal(reloaded.y, ds.y)
@@ -220,20 +220,20 @@ def test_dataset_roundtrips_heatmap_mask(tmp_path):
         session_ids=np.full(3, "s0", dtype=object),
         subject_ids=np.full(3, "p0", dtype=object),
     )
-    reloaded = load_dataset(save_dataset(ds, tmp_path / "mask_ds"))
+    reloaded = loadDataset(saveDataset(ds, tmp_path / "mask_ds"))
     assert [l.mask_grid for l in reloaded.labels] == [grid] * 3
     assert [list(l.mask) for l in reloaded.labels] == [list(l.mask) for l in labels]
 
 
 def test_dataset_builder_skips_gain_lock_when_none():
-    # gain_lock=None: no per-frame rescale.
+    # gainLock=None: no per-frame rescale.
     result, _ = _calibrate()
     frames, _, _ = generatePairedRecording(
         numAntennas=NUM_ANT, numSubcarriers=NUM_SUB, sampleRateHz=FS, durationS=3.0,
         cameraFps=30.0, weaponSpans=[(1.0, 2.0)], seed=4,
     )
-    scripted = ScriptedLabeler([(1.0, 2.0, True)], label_fn=weapon_label_fn)
-    ds = build_dataset(frames, result, None, scripted, window=32, hop=16)
+    scripted = ScriptedLabeler([(1.0, 2.0, True)], label_fn=weaponLabelFn)
+    ds = buildDataset(frames, result, None, scripted, window=32, hop=16)
 
     assert ds.meta["gain_locked"] is False
     assert ds.y.shape[0] > 0
@@ -245,8 +245,8 @@ def test_dataset_builder_scripted_callable_no_drop():
         numAntennas=NUM_ANT, numSubcarriers=NUM_SUB, sampleRateHz=FS, durationS=3.0,
         cameraFps=30.0, weaponSpans=[(1.0, 2.0)], seed=4,
     )
-    scripted = ScriptedLabeler([(1.0, 2.0, True)], label_fn=weapon_label_fn)
-    ds = build_dataset(frames, result, gain, scripted, window=32, hop=16)
+    scripted = ScriptedLabeler([(1.0, 2.0, True)], label_fn=weaponLabelFn)
+    ds = buildDataset(frames, result, gain, scripted, window=32, hop=16)
 
     assert ds.meta["n_dropped"] == 0                     # Nothing dropped.
     assert set(ds.y.tolist()) == {0, 1}                  # Both classes present.

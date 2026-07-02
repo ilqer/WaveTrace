@@ -10,10 +10,10 @@ import os
 import json
 import uvicorn
 
-from wavetrace.Cli import _source_from_args, _parse_spans
+from wavetrace.Cli import _sourceFromArgs, _parseSpans
 from web.streamer import WaveTraceRunner
 from web.foxglove import fg_server
-from web.device_ctl import DeviceHub, list_serial_ports
+from web.device_ctl import DeviceHub, listSerialPorts
 
 
 @asynccontextmanager
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 # Confine arbitrary file writes and pickle (RCE) via joblib.load to output/ dir.
 ALLOWED_ROOT = os.path.realpath("output")
 
-def _safe_output_path(path: str) -> str:
+def _safeOutputPath(path: str) -> str:
     full = os.path.realpath(path)
     if os.path.commonpath([full, ALLOWED_ROOT]) != ALLOWED_ROOT:
         raise ValueError(f"path escapes output/: {path}")
@@ -88,7 +88,7 @@ class StartRequest(BaseModel):
     mode: str = "presence"
     calibration: str = "data/2g4_ht40/ui/cal"
     model: str = "data/2g4_ht40/ui/model/model.joblib"
-    gain_lock: bool = True
+    gainLock: bool = True
     vote: bool = True
     frame_average: int = 1
     use_baseline: bool = False
@@ -183,7 +183,7 @@ async def broadcast_device():
                 clients_device.discard(client)
 
 @app.post("/api/action/start")
-async def start_inference(req: StartRequest):
+async def startInference(req: StartRequest):
     global runner, runner_task, inference_queue, stream_queue, logs_queue
     
     if runner and runner.is_running:
@@ -194,23 +194,23 @@ async def start_inference(req: StartRequest):
     runner = WaveTraceRunner(loop, inference_queue, stream_queue, logs_queue, training_queue,
                              telemetry_queue)
     
-    def run_blocking():
+    def runBlocking():
         try:
             if req.action == "run":
-                runner.start_inference_managed(req)
+                runner.startInferenceManaged(req)
             elif req.action == "calib":
-                runner.start_calibration_managed(req)
+                runner.startCalibrationManaged(req)
             elif req.action == "collect":
-                runner.start_collection_managed(req)
+                runner.startCollectionManaged(req)
             elif req.action == "train":
-                runner.start_training_managed(req)
+                runner.startTrainingManaged(req)
             elif req.action == "camera_collect":
-                runner.start_camera_collect_managed(req)
+                runner.startCameraCollectManaged(req)
         except Exception as e:
             loop.call_soon_threadsafe(logs_queue.put_nowait, f"FATAL ERROR: {str(e)}")
 
-    # run_blocking is blocking; run it in a worker thread so stop_inference can join runner_task later.
-    runner_task = asyncio.create_task(asyncio.to_thread(run_blocking))
+    # runBlocking is blocking; run it in a worker thread so stop_inference can join runner_task later.
+    runner_task = asyncio.create_task(asyncio.to_thread(runBlocking))
     return {"status": "started"}
 
 @app.get("/api/pipeline/state")
@@ -284,15 +284,15 @@ async def websocket_telemetry(websocket: WebSocket):
 @app.get("/api/model/weights")
 async def model_weights(model: str, mode: str = "weapon"):
     """Per-antenna learned CNN channel weights (L2 norms of first conv filters, normalized)."""
-    from wavetrace.recognition import mode_session
-    from wavetrace.recognition.Explain import cnn_channel_weights
+    from wavetrace.recognition import modeSession
+    from wavetrace.recognition.Explain import cnnChannelWeights
     try:
-        safe_model = _safe_output_path(model)
+        safeModel = _safeOutputPath(model)
     except ValueError:
         return {"error": "model path must be inside output/ and must not escape it"}
     try:
-        sess = mode_session(mode, safe_model)
-        w = cnn_channel_weights(sess.head)
+        sess = modeSession(mode, safeModel)
+        w = cnnChannelWeights(sess.head)
         return {"per_antenna": w.tolist() if w is not None else None}
     except Exception as e:
         return {"error": str(e)}
@@ -302,7 +302,7 @@ async def fusion_weights(path: str):
     """Learned per-band trust from a saved BandFusion model."""
     import joblib, numpy as np
     try:
-        blob = joblib.load(_safe_output_path(path))
+        blob = joblib.load(_safeOutputPath(path))
         coef = blob["combiner"].coef_.ravel()
         ex = np.exp(coef - coef.max()); w = ex / ex.sum()
         return {"bands": blob["band_order"], "weights": [round(float(x), 3) for x in w]}
@@ -319,14 +319,14 @@ async def weapon_litmus(root: str = "data", node: int | None = None, per_link: b
         if not data:
             return {"error": f"no weapon recordings under {root}/weapon_rec/*/<clear|weapon>/node*/"}
 
-        def _auc_of(key):
-            s = separation(data[key].get("clear", _np_empty()), data[key].get("weapon", _np_empty()))
+        def _aucOf(key):
+            s = separation(data[key].get("clear", _npEmpty()), data[key].get("weapon", _npEmpty()))
             return s["auc"] if s else 0.0
 
         out = []
-        for key in sorted(data, key=lambda k: (-_auc_of(k), _key_label(k))):
-            c = data[key].get("clear", _np_empty())
-            w = data[key].get("weapon", _np_empty())
+        for key in sorted(data, key=lambda k: (-_aucOf(k), _key_label(k))):
+            c = data[key].get("clear", _npEmpty())
+            w = data[key].get("weapon", _npEmpty())
             s = separation(c, w)
             label = _key_label(key)
             if s is None:
@@ -348,25 +348,25 @@ async def calib_info(path: str = "output/calib"):
     K is max(image_subcarriers)+1 (highest index from radio during calib).
     bw_label maps K to HT20/HT40/HT80."""
     import json as _json
-    meta_path = os.path.join(path, "meta.json")
-    if not os.path.exists(meta_path):
+    metaPath = os.path.join(path, "meta.json")
+    if not os.path.exists(metaPath):
         return {"error": f"no calibration at {path} (run Calib first)"}
     try:
-        with open(meta_path) as f:
+        with open(metaPath) as f:
             meta = _json.load(f)
-        img_subc = meta.get("image_subcarriers") or meta.get("subcarriers") or []
-        K = int(max(img_subc)) + 1 if img_subc else 0
+        imgSubc = meta.get("image_subcarriers") or meta.get("subcarriers") or []
+        K = int(max(imgSubc)) + 1 if imgSubc else 0
         if K <= 96:
-            bw_label = "HT20 · 2.4 GHz"
+            bwLabel = "HT20 · 2.4 GHz"
         elif K <= 200:
-            bw_label = "HT40 · 2.4 GHz"
+            bwLabel = "HT40 · 2.4 GHz"
         else:
-            bw_label = "HT80 · 5 GHz"
+            bwLabel = "HT80 · 5 GHz"
         return {
             "K": K,
-            "bw_label": bw_label,
+            "bw_label": bwLabel,
             "n_selected": len(meta.get("subcarriers") or []),
-            "n_image": len(img_subc),
+            "n_image": len(imgSubc),
             "path": path,
         }
     except Exception as e:
@@ -379,36 +379,36 @@ async def scan_paths():
     import glob as _glob
 
     def _scan():
-        cal_dirs = sorted(set(
+        calDirs = sorted(set(
             os.path.dirname(p)
             for p in _glob.glob("data/**/meta.json", recursive=True)
                        + _glob.glob("output/**/meta.json", recursive=True)
         ))
-        model_files = sorted(
+        modelFiles = sorted(
             _glob.glob("data/**/model.joblib", recursive=True)
             + _glob.glob("output/**/model.joblib", recursive=True)
         )
-        mesh_roots = sorted(set(
+        meshRoots = sorted(set(
             os.path.dirname(p)
             for p in _glob.glob("data/**/node*/model.joblib", recursive=True)
                        + _glob.glob("output/**/node*/model.joblib", recursive=True)
         ))
-        dataset_dirs = sorted(set(
+        datasetDirs = sorted(set(
             os.path.dirname(p)
             for p in _glob.glob("data/**/X_features.npy", recursive=True)
                        + _glob.glob("output/**/X_features.npy", recursive=True)
         ))
         # Parent dirs of multiple dataset subdirs (cumulative pool roots)
-        pool_dirs = sorted(set(
+        poolDirs = sorted(set(
             os.path.dirname(os.path.dirname(p))
             for p in _glob.glob("data/**/X_features.npy", recursive=True)
                        + _glob.glob("output/**/X_features.npy", recursive=True)
             if os.path.basename(os.path.dirname(p)) not in (".", "")
         ))
         return {
-            "calibrations": cal_dirs,
-            "models": model_files + [r for r in mesh_roots if r not in model_files],
-            "datasets": dataset_dirs + [d for d in pool_dirs if d not in dataset_dirs],
+            "calibrations": calDirs,
+            "models": modelFiles + [r for r in meshRoots if r not in modelFiles],
+            "datasets": datasetDirs + [d for d in poolDirs if d not in datasetDirs],
         }
 
     return await asyncio.to_thread(_scan)
@@ -421,14 +421,14 @@ async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str =
     Returns {"path": "/abs/path"} or {"path": null} on cancel."""
     import subprocess as _sp
 
-    def _open_dialog():
+    def _openDialog():
         if type == "dir":
             script = f'POSIX path of (choose folder with prompt "{prompt}")'
         else:
             if ext:
-                ext_list = "{" + ", ".join(f'"{e.strip()}"' for e in ext.split(",")) + "}"
+                extList = "{" + ", ".join(f'"{e.strip()}"' for e in ext.split(",")) + "}"
                 script = (f'POSIX path of (choose file with prompt "{prompt}" '
-                          f'of type {ext_list})')
+                          f'of type {extList})')
             else:
                 script = f'POSIX path of (choose file with prompt "{prompt}")'
 
@@ -449,10 +449,10 @@ async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str =
         except Exception as e:
             return {"path": None, "error": str(e)}
 
-    return await asyncio.to_thread(_open_dialog)
+    return await asyncio.to_thread(_openDialog)
 
 
-def _np_empty():
+def _npEmpty():
     import numpy as np
     return np.array([])
 
@@ -466,7 +466,7 @@ async def model_upload(req: ModelUploadRequest):
     """Receives base64 PC-trained model.joblib and writes to Pi."""
     import base64
     try:
-        dest = _safe_output_path(req.dest)
+        dest = _safeOutputPath(req.dest)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
             f.write(base64.b64decode(req.file_b64))
@@ -498,11 +498,11 @@ class StopMonitorRequest(BaseModel):
 
 @app.get("/api/serial/ports")
 async def serial_ports():
-    return {"ports": list_serial_ports()}
+    return {"ports": listSerialPorts()}
 
 @app.get("/api/device/state")
 async def device_state():
-    return device_hub.get_state()
+    return device_hub.getState()
 
 class SerialMonitorRequest(BaseModel):
     port: str
@@ -510,12 +510,12 @@ class SerialMonitorRequest(BaseModel):
 
 @app.post("/api/serial/monitor/start")
 async def serial_monitor_start(req: SerialMonitorRequest):
-    return device_hub.start_monitor(req.port, req.baud)
+    return device_hub.startMonitor(req.port, req.baud)
 
 @app.post("/api/serial/monitor/stop")
 async def serial_monitor_stop(req: StopMonitorRequest = None):
     p = req.port if req else None
-    return device_hub.stop_monitor(p)
+    return device_hub.stopMonitor(p)
 
 @app.post("/api/flash")
 async def flash(req: FlashRequest):
@@ -525,12 +525,12 @@ async def flash(req: FlashRequest):
 
 @app.post("/api/pi/run")
 async def pi_run(req: PiRequest):
-    asyncio.create_task(asyncio.to_thread(device_hub.run_pi, req.host, req.command))
+    asyncio.create_task(asyncio.to_thread(device_hub.runPi, req.host, req.command))
     return {"status": "running", "host": req.host}
 
 @app.post("/api/script/run")
 async def script_run(req: ScriptRequest):
-    asyncio.create_task(asyncio.to_thread(device_hub.run_script, req.script, req.args))
+    asyncio.create_task(asyncio.to_thread(device_hub.runScript, req.script, req.args))
     return {"status": "running", "script": req.script}
 
 
@@ -541,7 +541,7 @@ class StopProcRequest(BaseModel):
 @app.post("/api/device/stop")
 async def device_stop(req: StopProcRequest = None):
     p = req.proc_id if req else None
-    return device_hub.stop_proc(p)
+    return device_hub.stopProc(p)
 
 class InputRequest(BaseModel):
     proc_id: str
@@ -549,7 +549,7 @@ class InputRequest(BaseModel):
 
 @app.post("/api/device/input")
 async def device_input(req: InputRequest):
-    return device_hub.send_input(req.proc_id, req.input)
+    return device_hub.sendInput(req.proc_id, req.input)
 
 @app.websocket("/ws/device")
 async def websocket_device(websocket: WebSocket):
@@ -567,7 +567,7 @@ _yolo_cache: dict = {}
 _yolo_lock = _threading.Lock()
 
 
-def _load_yolo(weights: str = "yolov8n-seg.pt"):
+def _loadYolo(weights: str = "yolov8n-seg.pt"):
     """Thread-safely loads and caches YOLO model."""
     with _yolo_lock:
         if weights not in _yolo_cache:
@@ -580,7 +580,7 @@ def _load_yolo(weights: str = "yolov8n-seg.pt"):
     return _yolo_cache.get(weights)
 
 
-def _annotate_frame(model, frame, weapon_classes=(43,)):
+def _annotateFrame(model, frame, weapon_classes=(43,)):
     """Draws YOLO seg masks and labels on frame copy (Green = person, orange = weapon)."""
     import cv2, numpy as np
     results = model(frame, verbose=False)
@@ -589,11 +589,11 @@ def _annotate_frame(model, frame, weapon_classes=(43,)):
         boxes = r.boxes
         masks = r.masks
         for i, box in enumerate(boxes):
-            cls_id = int(box.cls[0])
+            clsId = int(box.cls[0])
             conf = float(box.conf[0])
-            is_weapon = cls_id in weapon_classes
-            color = (30, 120, 255) if is_weapon else (50, 220, 80)   # BGR: orange / green
-            label = f"{'WEAPON' if is_weapon else model.names.get(cls_id, str(cls_id))} {conf:.0%}"
+            isWeapon = clsId in weapon_classes
+            color = (30, 120, 255) if isWeapon else (50, 220, 80)   # BGR: orange / green
+            label = f"{'WEAPON' if isWeapon else model.names.get(clsId, str(clsId))} {conf:.0%}"
             if masks is not None and i < len(masks.xy):
                 pts = masks.xy[i].astype(np.int32)
                 overlay = out.copy()
@@ -615,7 +615,7 @@ import subprocess as _subprocess
 import shutil as _shutil
 
 
-def _ffmpeg_bin() -> str:
+def _ffmpegBin() -> str:
     """Return the ffmpeg executable path, or raise RuntimeError."""
     p = _shutil.which("ffmpeg")
     if p is None:
@@ -625,11 +625,11 @@ def _ffmpeg_bin() -> str:
     return p
 
 
-def _ffmpeg_grab_one(index: int) -> bytes | None:
+def _ffmpegGrabOne(index: int) -> bytes | None:
     """Captures one JPEG frame from camera `index` via ffmpeg. Returns raw bytes or None.
     macOS: ffmpeg uses AVFoundation, triggering permission dialog on first run (no Terminal grant needed)."""
     try:
-        ffmpeg = _ffmpeg_bin()
+        ffmpeg = _ffmpegBin()
     except RuntimeError:
         return None
     cmd = [
@@ -655,7 +655,7 @@ async def camera_check(cam_index: int = 0):
     """One-frame probe via ffmpeg: checks camera access and returns resolution."""
     def _probe():
         try:
-            ffmpeg = _ffmpeg_bin()
+            ffmpeg = _ffmpegBin()
         except RuntimeError as e:
             return {"ok": False, "error": str(e)}
         import json as _json
@@ -684,7 +684,7 @@ async def camera_check(cam_index: int = 0):
 _camera_active = False
 
 @app.post("/api/camera/stop")
-def camera_stop():
+def cameraStop():
     global _camera_active
     _camera_active = False
     return {"ok": True}
@@ -699,11 +699,11 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
     global _camera_active
     _camera_active = True
     
-    model = await asyncio.to_thread(_load_yolo, weights) if annotate else None
+    model = await asyncio.to_thread(_loadYolo, weights) if annotate else None
 
     async def _generate():
         try:
-            ffmpeg = _ffmpeg_bin()
+            ffmpeg = _ffmpegBin()
         except RuntimeError:
             return  # ffmpeg not found — browser <img> fires onError
 
@@ -727,7 +727,7 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
         SOI = b"\xff\xd8"
         EOI = b"\xff\xd9"
         buf = b""
-        frame_idx = 0
+        frameIdx = 0
 
         try:
             while _camera_active:
@@ -750,18 +750,18 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
                     jpg = buf[s: e + 2]
                     buf = buf[e + 2:]
                     
-                    frame_idx += 1
+                    frameIdx += 1
 
                     if model is not None:
                         # Throttle YOLO to 5fps (1 out of every 6 frames from 30fps source)
-                        if frame_idx % 6 != 0:
+                        if frameIdx % 6 != 0:
                             continue
                             
                         import cv2, numpy as np
                         arr = np.frombuffer(jpg, dtype=np.uint8)
                         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                         if frame is not None:
-                            frame = await asyncio.to_thread(_annotate_frame, model, frame)
+                            frame = await asyncio.to_thread(_annotateFrame, model, frame)
                             _, enc = cv2.imencode(".jpg", frame,
                                                   [cv2.IMWRITE_JPEG_QUALITY, 75])
                             jpg = enc.tobytes()

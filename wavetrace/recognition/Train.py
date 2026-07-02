@@ -2,7 +2,7 @@
 
 Loads datasets, concatenates, fits PresenceHead, persists model/metrics. Offline execution.
 
-Train-set accuracy is sanity check only. Headline number uses Evaluate.leave_one_group_out (session and subject).
+Train-set accuracy is sanity check only. Headline number uses Evaluate.leaveOneGroupOut (session and subject).
 """
 
 from dataclasses import replace
@@ -13,13 +13,13 @@ from pathlib import Path
 import numpy as np
 
 from wavetrace.Config import ModelConfig
-from wavetrace.groundtruth.DatasetBuilder import Dataset, load_dataset
-from wavetrace.recognition.Evaluate import leave_one_group_out
+from wavetrace.groundtruth.DatasetBuilder import Dataset, loadDataset
+from wavetrace.recognition.Evaluate import leaveOneGroupOut
 from wavetrace.recognition.Model import PresenceHead
 from wavetrace.recognition.Weapon import WeaponHead
 
 
-def _carry_groups(sess):
+def _carryGroups(sess):
     """Carry-position group per window from session ids. Folds on carry pose to detect nuisance learning."""
     carries = []
     for s in sess:
@@ -30,16 +30,16 @@ def _carry_groups(sess):
     return np.asarray(carries)
 
 
-def _logo_metrics(X, y, sess, subj, make_head) -> dict:
+def _logoMetrics(X, y, sess, subj, make_head) -> dict:
     """LOGO accuracy over sessions and subjects (and carry position). O(folds*fit)."""
     out: dict = {}
     axes = [("session", sess), ("subject", subj)]
-    carry = _carry_groups(sess)
+    carry = _carryGroups(sess)
     if carry is not None:
         axes.append(("carry", carry))  # weapon-only confound axis (diagnosis Item 13)
     for axis, groups in axes:
         if np.unique(groups).size >= 2:
-            rep = leave_one_group_out(X, y, groups, make_head)
+            rep = leaveOneGroupOut(X, y, groups, make_head)
             out[axis] = {k: rep[k] for k in ("accuracy", "majority_accuracy") if k in rep}
             out[axis].update({k: rep[k] for k in ("tpr", "fp_rate") if k in rep})
             if "confusion" in rep:
@@ -47,14 +47,14 @@ def _logo_metrics(X, y, sess, subj, make_head) -> dict:
     return out
 
 
-def concat_datasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def concatDatasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Stack multiple recordings. O(n total)."""
     ds = list(datasets)
     if not ds:
-        raise ValueError("concat_datasets: no datasets")
+        raise ValueError("concatDatasets: no datasets")
     ks = {d.X_features.shape[1] for d in ds}
     if len(ks) != 1:
-        raise ValueError(f"concat_datasets: feature dims differ across datasets: {sorted(ks)}")
+        raise ValueError(f"concatDatasets: feature dims differ across datasets: {sorted(ks)}")
     X = np.concatenate([d.X_features for d in ds]).astype(np.float32)
     y = np.concatenate([d.y for d in ds])
     sess = np.concatenate([d.session_ids for d in ds])
@@ -62,20 +62,20 @@ def concat_datasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.nd
     return X, y, sess, subj
 
 
-def concat_arrays(datasets, attr: str) -> np.ndarray:
+def concatArrays(datasets, attr: str) -> np.ndarray:
     """Stack optional array field across recordings. O(n total)."""
     arrs = []
     for i, d in enumerate(datasets):
         a = getattr(d, attr)
         if a is None:
-            raise ValueError(f"concat_arrays: dataset {i} has no {attr} (rebuild with it enabled)")
+            raise ValueError(f"concatArrays: dataset {i} has no {attr} (rebuild with it enabled)")
         arrs.append(a)
     if not arrs:
-        raise ValueError("concat_arrays: no datasets")
+        raise ValueError("concatArrays: no datasets")
     return np.concatenate(arrs)
 
 
-def train_presence(
+def trainPresence(
     dataset_dirs,
     out_dir="models/presence",
     config: ModelConfig | None = None,
@@ -83,8 +83,8 @@ def train_presence(
     """Train and persist Stage-A presence head. Returns (head, metrics)."""
     if isinstance(dataset_dirs, (str, Path)):
         dataset_dirs = [dataset_dirs]
-    loaded: list[Dataset] = [load_dataset(d) for d in dataset_dirs]
-    X, y, sess, subj = concat_datasets(loaded)
+    loaded: list[Dataset] = [loadDataset(d) for d in dataset_dirs]
+    X, y, sess, subj = concatDatasets(loaded)
 
     if config is None:
         meta = loaded[0].meta
@@ -109,7 +109,7 @@ def train_presence(
         "sessions": sorted({str(s) for s in sess}),
         "subjects": sorted({str(s) for s in subj}),
         "train_accuracy": float((head.predict(X) == y).mean()),  # sanity only — see module note
-        "logo": _logo_metrics(X, y, sess, subj, lambda: PresenceHead(config)),  # the HEADLINE number
+        "logo": _logoMetrics(X, y, sess, subj, lambda: PresenceHead(config)),  # the HEADLINE number
         "fit_seconds": round(fitS, 3),
     }
     out = Path(out_dir)
@@ -119,7 +119,7 @@ def train_presence(
     return head, metrics
 
 
-def train_weapon(
+def trainWeapon(
     dataset_dirs,
     out_dir="models/weapon",
     config: ModelConfig | None = None,
@@ -137,16 +137,16 @@ def train_weapon(
         raise ValueError(f"feature_mode must be 'ic27', 'fusion', or 'cnn', got {feature_mode!r}")
     if isinstance(dataset_dirs, (str, Path)):
         dataset_dirs = [dataset_dirs]
-    loaded: list[Dataset] = [load_dataset(d) for d in dataset_dirs]
-    XFeat, y, sess, subj = concat_datasets(loaded)
+    loaded: list[Dataset] = [loadDataset(d) for d in dataset_dirs]
+    XFeat, y, sess, subj = concatDatasets(loaded)
 
     if feature_mode == "ic27":
-        X = concat_arrays(loaded, "X_intercarrier")
+        X = concatArrays(loaded, "X_intercarrier")
     elif feature_mode == "fusion":
-        XIc = concat_arrays(loaded, "X_intercarrier")
+        XIc = concatArrays(loaded, "X_intercarrier")
         X = np.hstack([XIc, XFeat]).astype(np.float32)
     else:  # cnn
-        X = concat_arrays(loaded, "X_image")
+        X = concatArrays(loaded, "X_image")
 
     meta = loaded[0].meta
     K = int(meta["K"])
@@ -183,7 +183,7 @@ def train_weapon(
         "sessions": sorted({str(s) for s in sess}),
         "subjects": sorted({str(s) for s in subj}),
         "train_accuracy": float((head.predict(X) == y).mean()),
-        "logo": _logo_metrics(X, y, sess, subj, lambda: WeaponHead(config)),  # the HEADLINE number
+        "logo": _logoMetrics(X, y, sess, subj, lambda: WeaponHead(config)),  # the HEADLINE number
         "subtract_ic_baseline": bool(config.subtract_ic_baseline),
         "fit_seconds": round(fitS, 3),
     }

@@ -5,16 +5,16 @@ import numpy as np
 import json
 from collections import deque
 
-from wavetrace.Calibration import load_calibration, image_baseline as get_image_baseline
-from wavetrace.recognition import mode_session, SegmentVoter, train_presence, train_weapon
-from wavetrace.Frontend import iter_windows
-from wavetrace.Cli import _serving_plan, _source_from_args, calibrate_source, collect_source
+from wavetrace.Calibration import loadCalibration, imageBaseline as get_image_baseline
+from wavetrace.recognition import modeSession, SegmentVoter, trainPresence, trainWeapon
+from wavetrace.Frontend import iterWindows
+from wavetrace.Cli import _servingPlan, _sourceFromArgs, calibrateSource, collectSource
 from wavetrace import RecognitionResult
 
 _OCC_GRID = 16
 
 
-def _occupancy_fallback(image: np.ndarray, G: int = _OCC_GRID) -> np.ndarray:
+def _occupancyFallback(image: np.ndarray, G: int = _OCC_GRID) -> np.ndarray:
     """Returns per-subcarrier variance of image scaled to GxG [0,1]. Tiles if K < G² to avoid zero-padding black bars."""
     var = image.var(axis=1).astype(np.float32)  # (K,)
     g2 = G * G
@@ -30,18 +30,18 @@ def _occupancy_fallback(image: np.ndarray, G: int = _OCC_GRID) -> np.ndarray:
     return var.astype(np.float32)
 
 
-def _heatmap_grid(head, image: np.ndarray) -> np.ndarray:
+def _heatmapGrid(head, image: np.ndarray) -> np.ndarray:
     """Uses trained HeatmapHead or fallback."""
     if head is None:
-        return _occupancy_fallback(image)
+        return _occupancyFallback(image)
     try:
         x = image[np.newaxis]   # (1, K, W)
-        return head.predict_heatmap(x)[0].flatten().astype(np.float32)
+        return head.predictHeatmap(x)[0].flatten().astype(np.float32)
     except Exception:
-        return _occupancy_fallback(image)
+        return _occupancyFallback(image)
 
 
-def _class_label(mode: str, c: int) -> str:
+def _classLabel(mode: str, c: int) -> str:
     """Returns string class label for mode."""
     c = int(c)
     if mode == "presence":
@@ -95,11 +95,11 @@ class WaveTraceRunner:
         ts = time.strftime('%H:%M:%S')
         asyncio.run_coroutine_threadsafe(self.logs_queue.put(f"[{ts}] {msg}"), self.loop)
 
-    def _emit_inference(self, obj: dict) -> None:
+    def _emitInference(self, obj: dict) -> None:
         asyncio.run_coroutine_threadsafe(
             self.inference_queue.put(json.dumps(obj)), self.loop)
 
-    def _get_source(self, req):
+    def _getSource(self, req):
         self.localizer = Localizer(req.antennas, range_enabled=True) if req.antennas >= 2 else None
 
         if not req.synthetic:
@@ -118,75 +118,76 @@ class WaveTraceRunner:
             weapon="2:5,12:15,22:25,32:35,42:45,52:55", weapon_depth=0.5,
             seed=getattr(req, 'seed', 0),
         )
-        return _source_from_args(args)
+        return _sourceFromArgs(args)
 
-    def start_inference_managed(self, req):
-        source = self._get_source(req)
+    def startInferenceManaged(self, req):
+        source = self._getSource(req)
         self.log(f"Loading Calibration: {req.calibration}")
         self.log(f"Loading Model: {req.model}")
-        self.start_inference(source, req.calibration, req.model, req.mode,
-                             vote=req.vote, use_gain_lock=req.gain_lock,
+        self.startInference(source, req.calibration, req.model, req.mode,
+                             vote=req.vote, use_gain_lock=req.gainLock,
                              frame_average=req.frame_average, use_baseline=req.use_baseline,
                              port=getattr(req, "udp_port", 9876))
 
-    def start_calibration_managed(self, req):
+    def startCalibrationManaged(self, req):
         self.is_running = True
-        source = self._get_source(req)
+        source = self._getSource(req)
         if not self.is_running: return
         self.log(f"Starting Calibration -> {req.cal_out}")
-        path, _ = calibrate_source(source, req.cal_out, baseline_packets=req.baseline_packets, use_gain_lock=req.gain_lock)
+        path, _ = calibrateSource(source, req.cal_out, baseline_packets=req.baseline_packets, use_gain_lock=req.gainLock)
         self.log(f"Calibration complete: {path}")
-        self._emit_inference({"event": "pipeline_done"})
+        self._emitInference({"event": "pipeline_done"})
         self.is_running = False
 
-    def start_collection_managed(self, req):
+    def startCollectionManaged(self, req):
         self.is_running = True
-        source = self._get_source(req)
+        source = self._getSource(req)
         if not self.is_running: return
         self.log(f"Collecting {req.col_stage} dataset (window={req.col_window}, hop={req.col_hop})")
-        from wavetrace.Cli import _parse_spans
-        spans = _parse_spans(req.col_spans)
-        path, ds = collect_source(source, req.calibration, "output/dataset_ui", spans,
+        from wavetrace.Cli import _parseSpans
+        spans = _parseSpans(req.col_spans)
+        path, ds = collectSource(source, req.calibration, "output/dataset_ui", spans,
                                   stage=req.col_stage, window=req.col_window, hop=req.col_hop,
                                   subtract_ic_baseline=getattr(req, "subtract_ic_baseline", False))
         self.log(f"Dataset saved ({ds.y.size} samples) -> {path}")
-        self._emit_inference({"event": "pipeline_done"})
+        self._emitInference({"event": "pipeline_done"})
         self.is_running = False
 
-    def _emit_train(self, obj: dict) -> None:
+    def _emitTrain(self, obj: dict) -> None:
         asyncio.run_coroutine_threadsafe(
             self.training_queue.put(json.dumps(obj)), self.loop)
 
-    def start_training_managed(self, req):
+    def startTrainingManaged(self, req):
         self.is_running = True
         self.log(f"Training {req.col_stage}/{req.train_backend}...")
 
-        dataset_path = getattr(req, "train_data", "output/dataset_ui")
+        datasetPath = getattr(req, "train_data", "output/dataset_ui")
         import os, glob as _glob
-        # Support cumulative pool: if dataset_path contains saved dataset subdirs, use all of them
-        _sub = sorted(_glob.glob(os.path.join(dataset_path, "*")))
-        ds_dirs = [d for d in _sub if os.path.isdir(d) and os.path.exists(os.path.join(d, "X_features.npy"))]
-        if not ds_dirs:
-            ds_dirs = [dataset_path]
+        # Support cumulative pool: if datasetPath contains saved dataset subdirs, use all of them
+        _sub = sorted(_glob.glob(os.path.join(datasetPath, "*")))
+        dsDirs = [d for d in _sub if os.path.isdir(d) and os.path.exists(os.path.join(d, "X_features.npy"))]
+        if not dsDirs:
+            dsDirs = [datasetPath]
 
-        if not any(os.path.exists(d) for d in ds_dirs):
-            self.log(f"No dataset at {dataset_path}; run 'collect' first.")
+        if not any(os.path.exists(d) for d in dsDirs):
+            self.log(f"No dataset at {datasetPath}; run 'collect' first.")
             self.is_running = False
             return
 
+        ds = None
         try:
-            from wavetrace.groundtruth import load_dataset
-            from wavetrace.diagnostics import dataset_report
-            ds = load_dataset(ds_dirs[0])
-            rep = dataset_report(ds)
-            self._emit_train({"type": "train_init", **rep})
+            from wavetrace.groundtruth import loadDataset
+            from wavetrace.diagnostics import datasetReport
+            ds = loadDataset(dsDirs[0])
+            rep = datasetReport(ds)
+            self._emitTrain({"type": "train_init", **rep})
         except Exception as e:
             self.log(f"Dataset meta load failed: {e}")
 
         def report(epoch: int, m: dict) -> None:
             if not self.is_running:
                 raise KeyboardInterrupt("training stopped by UI")
-            self._emit_train({
+            self._emitTrain({
                 "type": "epoch",
                 "epoch": epoch,
                 "loss": float(m.get("loss", 0.0)),
@@ -197,17 +198,30 @@ class WaveTraceRunner:
 
         try:
             if req.col_stage == "presence":
-                _, m = train_presence(ds_dirs, out_dir=req.train_out)
-                self._emit_train({"type": "done", "metrics": m})
+                # PresenceHead is sklearn-only (P6 lock, wavetrace/recognition/Model.py) — cnn/variance
+                # are weapon-only backends and don't apply here.
+                backend = req.train_backend if req.train_backend in ("mlp", "svm") else "mlp"
+                if req.train_backend not in ("mlp", "svm"):
+                    self.log(f"Presence only supports mlp/svm backends; ignoring '{req.train_backend}', using mlp.")
+                cfg = None
+                if ds is not None:
+                    from wavetrace.Config import ModelConfig
+                    meta = ds.meta
+                    cfg = ModelConfig(stage="presence", k=int(meta["K"]), backend=backend,
+                                      window=int(meta["window"]), hop=int(meta["hop"]),
+                                      frame_average=int(meta.get("frame_average", 1)),
+                                      subtract_baseline=bool(meta.get("subtract_baseline", False)))
+                _, m = trainPresence(dsDirs, out_dir=req.train_out, config=cfg)
+                self._emitTrain({"type": "done", "metrics": m})
             elif req.train_backend == "heatmap":
-                m = self._train_heatmap(dataset_path, req, report)
-                self._emit_train({"type": "done", "metrics": m})
+                m = self._trainHeatmap(datasetPath, req, report)
+                self._emitTrain({"type": "done", "metrics": m})
             elif getattr(req, "per_link", False):
                 # Per-link weapon: one head per node*/link*/ dataset subdir
-                n_ok = 0
-                for _nd in sorted(_glob.glob(os.path.join(dataset_path, "node*"))):
-                    _nid_s = os.path.basename(_nd)[4:]
-                    if not _nid_s.isdigit():
+                nOk = 0
+                for _nd in sorted(_glob.glob(os.path.join(datasetPath, "node*"))):
+                    _nidS = os.path.basename(_nd)[4:]
+                    if not _nidS.isdigit():
                         continue
                     for _ld in sorted(_glob.glob(os.path.join(_nd, "link*"))):
                         _tag = os.path.basename(_ld)[4:]
@@ -217,31 +231,31 @@ class WaveTraceRunner:
                             _subs = [_ld] if os.path.exists(os.path.join(_ld, "X_features.npy")) else []
                         if not _subs:
                             continue
-                        _link_out = os.path.join(req.train_out, f"node{_nid_s}", f"link{_tag}")
+                        _linkOut = os.path.join(req.train_out, f"node{_nidS}", f"link{_tag}")
                         try:
-                            from wavetrace.groundtruth import load_dataset
+                            from wavetrace.groundtruth import loadDataset
                             from wavetrace.Config import ModelConfig
-                            _ds0 = load_dataset(_subs[0])
+                            _ds0 = loadDataset(_subs[0])
                             _k = int(_ds0.meta["K"])
                             _cfg = ModelConfig(stage="weapon", k=_k, backend="ic27")
-                            _, _m = train_weapon(_subs, out_dir=_link_out, config=_cfg,
+                            _, _m = trainWeapon(_subs, out_dir=_linkOut, config=_cfg,
                                                  feature_mode="ic27")
-                            self._emit_train({"type": "done", "metrics": _m})
-                            n_ok += 1
-                            self.log(f"[WPN] link {_tag}->node{_nid_s} -> {_link_out}")
+                            self._emitTrain({"type": "done", "metrics": _m})
+                            nOk += 1
+                            self.log(f"[WPN] link {_tag}->node{_nidS} -> {_linkOut}")
                         except Exception as _le:
-                            self.log(f"[WPN] WARN link {_tag}->node{_nid_s}: {_le}")
-                self.log(f"[WPN] Per-link training done: {n_ok} heads.")
+                            self.log(f"[WPN] WARN link {_tag}->node{_nidS}: {_le}")
+                self.log(f"[WPN] Per-link training done: {nOk} heads.")
             else:
                 from wavetrace.Config import ModelConfig
-                from wavetrace.groundtruth import load_dataset
-                k = int(load_dataset(ds_dirs[0]).meta["K"])
+                from wavetrace.groundtruth import loadDataset
+                k = int(loadDataset(dsDirs[0]).meta["K"])
                 cfg = ModelConfig(stage="weapon", k=k, backend=req.train_backend)
                 fm = "cnn" if req.train_backend == "cnn" else "ic27"
                 # report streams per-epoch curves to the dashboard (cnn only; ignored by ic27/variance)
-                _, m = train_weapon(ds_dirs, out_dir=req.train_out, config=cfg,
+                _, m = trainWeapon(dsDirs, out_dir=req.train_out, config=cfg,
                                     feature_mode=fm, report=report)
-                self._emit_train({"type": "done", "metrics": m})
+                self._emitTrain({"type": "done", "metrics": m})
             self.log(f"Training complete -> {req.train_out}")
         except KeyboardInterrupt:
             self.log("Training stopped by UI.")
@@ -252,12 +266,12 @@ class WaveTraceRunner:
         finally:
             self.is_running = False
 
-    def _train_heatmap(self, dataset_path: str, req, report) -> dict:
+    def _trainHeatmap(self, dataset_path: str, req, report) -> dict:
         """Train the camera-supervised G×G heatmap head from datasets with Label.mask."""
-        from wavetrace.groundtruth import load_dataset
+        from wavetrace.groundtruth import loadDataset
         from wavetrace.recognition.Heatmap import HeatmapHead
         from wavetrace.Config import ModelConfig
-        ds = load_dataset(dataset_path)
+        ds = loadDataset(dataset_path)
         masks = [getattr(lb, "mask", None) for lb in ds.labels]
         masks = [m for m in masks if m is not None]
         if not masks:
@@ -271,26 +285,26 @@ class WaveTraceRunner:
         head.save(os.path.join(req.train_out, "heatmap.joblib"))
         return {"grid": grid, "n": int(Y.shape[0])}
 
-    def _emit_telemetry(self, payload: dict) -> None:
+    def _emitTelemetry(self, payload: dict) -> None:
         if self.telemetry_queue is not None:
             asyncio.run_coroutine_threadsafe(
                 self.telemetry_queue.put(json.dumps(payload)), self.loop)
 
-    def start_inference(self, source, calib_dir: str, model_path: str, mode: str,
+    def startInference(self, source, calib_dir: str, model_path: str, mode: str,
                         vote: bool = False, use_gain_lock: bool = True,
                         frame_average: int = 1, use_baseline: bool = False, port: int = 9876):
         self.is_running = True
         import os
-        from wavetrace.diagnostics import NodeHealthMeter, cluster_sync
+        from wavetrace.diagnostics import NodeHealthMeter, clusterSync
         from wavetrace.output.Guard import AlertGuard, DriftMonitor
-        from wavetrace.recognition.Link import LinkVoter, accuracy_weights
+        from wavetrace.recognition.Link import LinkVoter, accuracyWeights
         
-        is_mesh = os.path.isdir(model_path) and any(os.path.isdir(os.path.join(model_path, d)) for d in os.listdir(model_path) if d.startswith("node"))
-        
+        isMesh = os.path.isdir(model_path) and any(os.path.isdir(os.path.join(model_path, d)) for d in os.listdir(model_path) if d.startswith("node"))
+
         # Determine internal mode for session loading (count uses presence head)
-        load_mode = "presence" if mode == "count" else mode
-        
-        if is_mesh:
+        loadMode = "presence" if mode == "count" else mode
+
+        if isMesh:
             self.log(f"Mesh setup detected. Loading per-node models from {model_path}...")
             import glob, json
             nodes = {}
@@ -301,17 +315,17 @@ class WaveTraceRunner:
                 cdir = os.path.join(calib_dir, base)
                 mpath = os.path.join(mdir, "model.joblib")
                 if not (os.path.isdir(cdir) and os.path.exists(mpath)): continue
-                res, glock = load_calibration(cdir)
-                sess = mode_session(load_mode, mpath)
-                alock, ic, pck = _serving_plan(load_mode, sess.head)
+                res, glock = loadCalibration(cdir)
+                sess = modeSession(loadMode, mpath)
+                alock, ic, pck = _servingPlan(loadMode, sess.head)
                 classes = [int(c) for c in sess.head.classes_]
                 # Item 10/CAUSE 2B: must serve with the same IC baseline used in training or σ²[p] mismatches.
-                ic_base = (res.baseline_mag
+                icBase = (res.baseline_mag
                            if getattr(sess.head.config, "subtract_ic_baseline", False) else None)
                 nodes[nid] = dict(
                     result=res, lock=glock if (alock and use_gain_lock) else None,
                     intercarrier=ic, pick=pck, session=sess, cfg=sess.head.config,
-                    classes=classes, ic_baseline=ic_base
+                    classes=classes, ic_baseline=icBase
                 )
                 try:
                     with open(os.path.join(mdir, "metrics.json")) as f:
@@ -325,117 +339,117 @@ class WaveTraceRunner:
                 return
 
             if mode == "count":
-                global_classes = sorted(set().union(*[set(m["classes"]) for m in nodes.values()]))
+                globalClasses = sorted(set().union(*[set(m["classes"]) for m in nodes.values()]))
                 for m in nodes.values():
-                    m["col_map"] = [global_classes.index(c) for c in m["classes"]]
-                    m["weight"] = max(m["acc"] - (1.0/len(global_classes)), 0) / max(1.0 - (1.0/len(global_classes)), 1e-9)
+                    m["col_map"] = [globalClasses.index(c) for c in m["classes"]]
+                    m["weight"] = max(m["acc"] - (1.0/len(globalClasses)), 0) / max(1.0 - (1.0/len(globalClasses)), 1e-9)
             else:
-                global_classes = list(next(iter(nodes.values()))["session"].head.classes_)
-                weights = accuracy_weights({nid: m["acc"] for nid, m in nodes.items()})
+                globalClasses = list(next(iter(nodes.values()))["session"].head.classes_)
+                weights = accuracyWeights({nid: m["acc"] for nid, m in nodes.items()})
                 for nid, m in nodes.items(): m["weight"] = weights.get(nid, 1.0)
-                
+
             cfg = next(iter(nodes.values()))["cfg"]
-            _pos_idx = global_classes.index(1) if 1 in global_classes else -1
-            _ant_weights = None
+            _posIdx = globalClasses.index(1) if 1 in globalClasses else -1
+            _antWeights = None
         else:
             self.log("Single-node setup detected.")
-            result, gain_lock = load_calibration(calib_dir)
-            session = mode_session(load_mode, model_path)
-            apply_lock, intercarrier, pick = _serving_plan(load_mode, session.head)
-            if not use_gain_lock: gain_lock = None
+            result, gainLock = loadCalibration(calib_dir)
+            session = modeSession(loadMode, model_path)
+            apply_lock, intercarrier, pick = _servingPlan(loadMode, session.head)
+            if not use_gain_lock: gainLock = None
             cfg = session.head.config
             # Item 10/CAUSE 2B: mirror training's IC background subtraction at serve time.
-            _ic_base = result.baseline_mag if getattr(cfg, "subtract_ic_baseline", False) else None
-            _img_base = get_image_baseline(result, locked=(apply_lock and gain_lock is not None)) if use_baseline else None
-            global_classes = session.head.classes_
-            _pos_idx = list(global_classes).index(1) if 1 in global_classes else -1
+            _icBase = result.baseline_mag if getattr(cfg, "subtract_ic_baseline", False) else None
+            _imgBase = get_image_baseline(result, locked=(apply_lock and gainLock is not None)) if use_baseline else None
+            globalClasses = session.head.classes_
+            _posIdx = list(globalClasses).index(1) if 1 in globalClasses else -1
             try:
-                from wavetrace.recognition.Explain import cnn_channel_weights
-                _aw = cnn_channel_weights(session.head)
-                _ant_weights = _aw.tolist() if _aw is not None else None
-            except: _ant_weights = None
-            nodes = {0: dict(result=result, lock=gain_lock, intercarrier=intercarrier, pick=pick, session=session, cfg=cfg)}
+                from wavetrace.recognition.Explain import cnnChannelWeights
+                _aw = cnnChannelWeights(session.head)
+                _antWeights = _aw.tolist() if _aw is not None else None
+            except: _antWeights = None
+            nodes = {0: dict(result=result, lock=gainLock, intercarrier=intercarrier, pick=pick, session=session, cfg=cfg)}
 
-        # ---- Gap 2: trained heatmap head (replaces _occupancy_fallback when present) ----
-        _model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
-        _hm_path = os.path.join(_model_dir, "heatmap.joblib")
-        heatmap_head = None
-        if os.path.exists(_hm_path):
+        # ---- Gap 2: trained heatmap head (replaces _occupancyFallback when present) ----
+        _modelDir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
+        _hmPath = os.path.join(_modelDir, "heatmap.joblib")
+        heatmapHead = None
+        if os.path.exists(_hmPath):
             try:
                 from wavetrace.recognition.Heatmap import HeatmapHead
-                heatmap_head = HeatmapHead.load(_hm_path)
-                self.log(f"[HM] Heatmap head loaded ({heatmap_head.grid}×{heatmap_head.grid})")
-            except Exception as _hm_e:
-                self.log(f"[HM] WARNING: heatmap load failed ({_hm_e}); using fallback")
+                heatmapHead = HeatmapHead.load(_hmPath)
+                self.log(f"[HM] Heatmap head loaded ({heatmapHead.grid}×{heatmapHead.grid})")
+            except Exception as _hmE:
+                self.log(f"[HM] WARNING: heatmap load failed ({_hmE}); using fallback")
 
         # ---- Gap 3: per-link weapon entries (auto-detected from node*/link*/ dirs) ------
-        weapon_entries = None
-        if is_mesh and mode == "weapon":
-            _node_dirs = [os.path.join(model_path, b) for b in os.listdir(model_path)
+        weaponEntries = None
+        if isMesh and mode == "weapon":
+            _nodeDirs = [os.path.join(model_path, b) for b in os.listdir(model_path)
                           if b.startswith("node") and os.path.isdir(os.path.join(model_path, b))]
-            _has_links = any(
+            _hasLinks = any(
                 any(d.startswith("link") for d in os.listdir(nd))
-                for nd in _node_dirs if os.path.isdir(nd)
+                for nd in _nodeDirs if os.path.isdir(nd)
             )
-            if _has_links:
+            if _hasLinks:
                 try:
-                    from scripts.run_weapon import load_weapon_links
-                    weapon_entries = load_weapon_links(calib_dir, model_path)
-                    for (tag, nid), e in weapon_entries.items():
+                    from scripts.run_weapon import loadWeaponLinks
+                    weaponEntries = loadWeaponLinks(calib_dir, model_path)
+                    for (tag, nid), e in weaponEntries.items():
                         if nid in nodes:
                             nodes[nid]["weight"] = max(nodes[nid].get("weight", 0.0),
                                                        e.get("weight", 1.0))
-                    self.log(f"[WEAPON] {len(weapon_entries)} per-link entries loaded")
+                    self.log(f"[WEAPON] {len(weaponEntries)} per-link entries loaded")
                 except Exception as _we:
                     self.log(f"[WEAPON] per-link load failed ({_we}), using per-node")
 
-        def _lookup_entry(key, _we=weapon_entries, _n=nodes):
+        def _lookupEntry(key, _we=weaponEntries, _n=nodes):
             if _we is not None:
                 tx = key[0].replace(":", "") if key[0] else None
                 return _we.get((tx, key[1])) or _we.get((None, key[1]))
             return _n.get(key[1])
 
-        health_meter = NodeHealthMeter()
-        alert_guard = AlertGuard()
-        _voter_trace: deque[float] = deque(maxlen=60)
-        _alert_active = False
-        _drift_ratio = 0.0
-        last_t = 0.0
-        _last_tel_t = [0.0]
+        healthMeter = NodeHealthMeter()
+        alertGuard = AlertGuard()
+        _voterTrace: deque[float] = deque(maxlen=60)
+        _alertActive = False
+        _driftRatio = 0.0
+        lastT = 0.0
+        _lastTelT = [0.0]
 
         import collections
-        from wavetrace.Source import parse_batch_links
+        from wavetrace.Source import parseBatchLinks
         buffers = collections.defaultdict(lambda: collections.deque(maxlen=300))  # ~3s at 100Hz (#17)
-        last_seen = {}
-        link_ids = {}
-        next_fuse = time.time() + 1.5
+        lastSeen = {}
+        linkIds = {}
+        nextFuse = time.time() + 1.5
 
         self.log("Stream started.")
         try:
-            if is_mesh:
+            if isMesh:
                 # per-link serving math lives once in run_weapon; presence/count/weapon all share it.
-                from scripts.run_weapon import dwell_proba_detailed, _link_health
-                # Use raw UDP ingestion for parse_batch_links instead of snooper.frames()
+                from scripts.run_weapon import dwellProbaDetailed, _linkHealth
+                # Use raw UDP ingestion for parseBatchLinks instead of snooper.frames()
                 import socket
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.settimeout(0.5)
                 sock.bind(("", port))
-                
+
                 while self.is_running:
                     now = time.time()
                     try:
                         payload, _ = sock.recvfrom(65535)
-                        for key, frames in parse_batch_links(payload).items():
-                            m = _lookup_entry(key)
+                        for key, frames in parseBatchLinks(payload).items():
+                            m = _lookupEntry(key)
                             if m is not None:
                                 buffers[key].extend(frames)
-                                last_seen[key] = now
-                                link_ids.setdefault(key, len(link_ids))
-                                for fr in frames: health_meter.observe(fr)
+                                lastSeen[key] = now
+                                linkIds.setdefault(key, len(linkIds))
+                                for fr in frames: healthMeter.observe(fr)
                     except socket.timeout: pass
 
-                    if now < next_fuse: continue
-                    next_fuse = now + 1.5
+                    if now < nextFuse: continue
+                    nextFuse = now + 1.5
 
                     for buf in buffers.values():
                         if buf:
@@ -443,43 +457,43 @@ class WaveTraceRunner:
                             while buf and buf[0].timestamp < cutoff: buf.popleft()
 
                     _sw = {}
-                    for _k, _lid in link_ids.items():
-                        _e = _lookup_entry(_k)
+                    for _k, _lid in linkIds.items():
+                        _e = _lookupEntry(_k)
                         _sw[_lid] = _e["weight"] if _e else 1.0
                     voter = LinkVoter(_sw if any(w > 0 for w in _sw.values()) else None)
-                    
-                    rep_image = None
-                    rep_features = None
-                    rep_ic = None
-                    node_power = {nid: 0.0 for nid in nodes}
-                    link_stats = []  # per (tx->rx) delivered Hz + missing-frame fraction (C9b) for the UI
+
+                    repImage = None
+                    repFeatures = None
+                    repIc = None
+                    nodePower = {nid: 0.0 for nid in nodes}
+                    linkStats = []  # per (tx->rx) delivered Hz + missing-frame fraction (C9b) for the UI
 
                     for key in sorted(buffers):
-                        if now - last_seen.get(key, 0) > 3.0 or len(buffers[key]) < 2: continue
-                        m = _lookup_entry(key)
+                        if now - lastSeen.get(key, 0) > 3.0 or len(buffers[key]) < 2: continue
+                        m = _lookupEntry(key)
                         if m is None: continue
 
                         grids = [np.abs(f.grid).mean() for f in buffers[key]]
-                        node_power[key[1]] = float(np.mean(grids))
-                        _hz, _miss = _link_health(list(buffers[key]))
-                        link_stats.append({"tx": key[0], "rx": key[1],
+                        nodePower[key[1]] = float(np.mean(grids))
+                        _hz, _miss = _linkHealth(list(buffers[key]))
+                        linkStats.append({"tx": key[0], "rx": key[1],
                                            "hz": round(_hz, 1), "miss": round(_miss, 3)})
 
                         # temporal soft vote over the buffer + last window's image/features/ic for the spectrogram
-                        last_probs, image, features, ic, _nw = dwell_proba_detailed(
+                        lastProbs, image, features, ic, _nw = dwellProbaDetailed(
                             list(buffers[key]), 100.0, m)
-                        if last_probs is None: continue
-                        rep_image, rep_features, rep_ic = image, features, ic
+                        if lastProbs is None: continue
+                        repImage, repFeatures, repIc = image, features, ic
 
                         if mode == "count":
-                            g = np.zeros(len(global_classes), dtype=np.float64)
-                            for j, col in enumerate(m["col_map"]): g[col] = last_probs[j]
-                            top = np.sort(last_probs)[::-1]
-                            qual = float(top[0] - top[1]) if last_probs.size > 1 else float(top[0])
-                            voter.add(link_ids[key], g, quality=qual)
+                            g = np.zeros(len(globalClasses), dtype=np.float64)
+                            for j, col in enumerate(m["col_map"]): g[col] = lastProbs[j]
+                            top = np.sort(lastProbs)[::-1]
+                            qual = float(top[0] - top[1]) if lastProbs.size > 1 else float(top[0])
+                            voter.add(linkIds[key], g, quality=qual)
                         else:
-                            qual = abs(last_probs[_pos_idx] - 0.5) * 2.0 if _pos_idx >= 0 else 0.0
-                            voter.add(link_ids[key], last_probs, quality=qual)
+                            qual = abs(lastProbs[_posIdx] - 0.5) * 2.0 if _posIdx >= 0 else 0.0
+                            voter.add(linkIds[key], lastProbs, quality=qual)
 
                     try:
                         vcls, blended = voter.finalize()
@@ -487,81 +501,81 @@ class WaveTraceRunner:
 
                     probs = np.asarray(blended, dtype=np.float64)
                     i = int(np.argmax(probs))
-                    cls = int(global_classes[i])
+                    cls = int(globalClasses[i])
                     conf = float(probs[i])
-                    
+
                     r = {"t": float(now), "class": cls, "conf": conf, "mode": mode}
-                    
+
                     if mode != "count":
-                        alert_ev = alert_guard.update(now, cls)
-                        if alert_ev:
-                            _alert_active = alert_ev["event"] == "weapon_alert"
-                            asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps({**r, **alert_ev})), self.loop)
-                        if _pos_idx >= 0: _voter_trace.append(float(probs[_pos_idx]))
+                        alertEv = alertGuard.update(now, cls)
+                        if alertEv:
+                            _alertActive = alertEv["event"] == "weapon_alert"
+                            asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps({**r, **alertEv})), self.loop)
+                        if _posIdx >= 0: _voterTrace.append(float(probs[_posIdx]))
 
                     asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps(r)), self.loop)
 
                     # Stream payload (use the last valid link's image for visualization)
-                    if rep_image is not None:
-                        occ_grid = _heatmap_grid(heatmap_head, rep_image)
-                        np_items = sorted(node_power.items())
-                        stream_payload = {
-                            "t": float(now), "image": rep_image.tolist(), "features": rep_features.tolist(),
-                            "ic": rep_ic.tolist(), "antennas": [p for _, p in np_items], "node_ids": [n for n, _ in np_items],
-                            "heatmap_grid": occ_grid.tolist(), "grid_size": _OCC_GRID,
+                    if repImage is not None:
+                        occGrid = _heatmapGrid(heatmapHead, repImage)
+                        npItems = sorted(nodePower.items())
+                        streamPayload = {
+                            "t": float(now), "image": repImage.tolist(), "features": repFeatures.tolist(),
+                            "ic": repIc.tolist(), "antennas": [p for _, p in npItems], "node_ids": [n for n, _ in npItems],
+                            "heatmap_grid": occGrid.tolist(), "grid_size": _OCC_GRID,
                         }
-                        asyncio.run_coroutine_threadsafe(self.stream_queue.put(json.dumps(stream_payload)), self.loop)
-                    
-                        if now - _last_tel_t[0] >= 1.0:
-                            _last_tel_t[0] = now
-                            contrib = {_class_label(mode, c): round(float(probs[j]), 3) for j, c in enumerate(global_classes)}
-                            self._emit_telemetry({
-                                "nodes": health_meter.snapshot(),
-                                "sync": cluster_sync(health_meter),
-                                "heatmap": occ_grid.tolist(),
+                        asyncio.run_coroutine_threadsafe(self.stream_queue.put(json.dumps(streamPayload)), self.loop)
+
+                        if now - _lastTelT[0] >= 1.0:
+                            _lastTelT[0] = now
+                            contrib = {_classLabel(mode, c): round(float(probs[j]), 3) for j, c in enumerate(globalClasses)}
+                            self._emitTelemetry({
+                                "nodes": healthMeter.snapshot(),
+                                "sync": clusterSync(healthMeter),
+                                "heatmap": occGrid.tolist(),
                                 "grid": _OCC_GRID,
-                                "antenna_weights": _ant_weights,
-                                "alert_active": _alert_active,
-                                "drift_ratio": _drift_ratio,
-                                "voter_trace": list(_voter_trace),
+                                "antenna_weights": _antWeights,
+                                "alert_active": _alertActive,
+                                "drift_ratio": _driftRatio,
+                                "voter_trace": list(_voterTrace),
                                 "contribution": contrib,
-                                "links": link_stats,
+                                "links": linkStats,
                             })
 
                 sock.close()
 
             else:
-                snooper = FrameSnooper(source, health_meter=health_meter)
-                for t, features, image, ic in iter_windows(
-                    snooper.frames(), result.subcarriers, gain_lock if apply_lock else None,
+                snooper = FrameSnooper(source, health_meter=healthMeter)
+                for t, features, image, ic in iterWindows(
+                    snooper.frames(), result.subcarriers, gainLock if apply_lock else None,
                     window=cfg.window, hop=cfg.hop, intercarrier=True,
                     image_subcarriers=result.image_subcarriers,
-                    frame_average=frame_average, image_baseline=_img_base, ic_baseline=_ic_base
+                    frame_average=frame_average, imageBaseline=_imgBase, ic_baseline=_icBase
                 ):
                     if not self.is_running: break
 
-                    if last_t > 0:
-                        dt = t - last_t
+                    if lastT > 0:
+                        dt = t - lastT
                         if dt > 0: time.sleep(dt)
-                    last_t = t
+                    lastT = t
 
-                    probs = session.predict_proba_window(pick(features, image, ic))
+                    probs = session.predictProbaWindow(pick(features, image, ic))
                     i = int(np.argmax(probs))
-                    cls = int(global_classes[i])
+                    cls = int(globalClasses[i])
                     conf = float(probs[i])
                     r = {"t": float(t), "class": cls, "conf": conf, "mode": mode}
 
                     if mode != "count":
-                        alert_ev = alert_guard.update(t, cls)
-                        if alert_ev:
-                            _alert_active = alert_ev["event"] == "weapon_alert"
-                            asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps({**r, **alert_ev})), self.loop)
-                        if _pos_idx >= 0: _voter_trace.append(float(probs[_pos_idx]))
+                        alertEv = alertGuard.update(t, cls)
+                        if alertEv:
+                            _alertActive = alertEv["event"] == "weapon_alert"
+                            asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps({**r, **alertEv})), self.loop)
+                        if _posIdx >= 0: _voterTrace.append(float(probs[_posIdx]))
 
-                    spatial_data = None
+                    spatialData = None
                     if self.localizer and snooper.latest_frame is not None:
                         loc = self.localizer.locate(snooper.latest_frame, timestamp=t)
-                        spatial_data = {
+                        spatialData = {
                             "x": float(loc.x_m), "y": float(loc.y_m), "conf": float(loc.confidence),
                             "heatmap": loc.heatmap.flatten().tolist()
                         }
@@ -569,29 +583,29 @@ class WaveTraceRunner:
 
                     asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps(r)), self.loop)
 
-                    node_items = sorted(snooper.node_power.items())
-                    occ_grid = _heatmap_grid(heatmap_head, image)
-                    stream_payload = {
+                    nodeItems = sorted(snooper.node_power.items())
+                    occGrid = _heatmapGrid(heatmapHead, image)
+                    streamPayload = {
                         "t": float(t), "image": image.tolist(), "features": features.tolist(),
-                        "ic": ic.tolist(), "antennas": [p for _, p in node_items], "node_ids": [int(nid) for nid, _ in node_items],
-                        "heatmap_grid": occ_grid.tolist(), "grid_size": _OCC_GRID,
+                        "ic": ic.tolist(), "antennas": [p for _, p in nodeItems], "node_ids": [int(nid) for nid, _ in nodeItems],
+                        "heatmap_grid": occGrid.tolist(), "grid_size": _OCC_GRID,
                     }
-                    if spatial_data: stream_payload["spatial"] = spatial_data
+                    if spatialData: streamPayload["spatial"] = spatialData
 
-                    asyncio.run_coroutine_threadsafe(self.stream_queue.put(json.dumps(stream_payload)), self.loop)
+                    asyncio.run_coroutine_threadsafe(self.stream_queue.put(json.dumps(streamPayload)), self.loop)
 
-                    if t - _last_tel_t[0] >= 1.0:
-                        _last_tel_t[0] = t
-                        contrib = {_class_label(mode, c): round(float(probs[j]), 3) for j, c in enumerate(global_classes)}
-                        self._emit_telemetry({
-                            "nodes": health_meter.snapshot(),
-                            "sync": cluster_sync(health_meter),
-                            "heatmap": occ_grid.tolist(),
+                    if t - _lastTelT[0] >= 1.0:
+                        _lastTelT[0] = t
+                        contrib = {_classLabel(mode, c): round(float(probs[j]), 3) for j, c in enumerate(globalClasses)}
+                        self._emitTelemetry({
+                            "nodes": healthMeter.snapshot(),
+                            "sync": clusterSync(healthMeter),
+                            "heatmap": occGrid.tolist(),
                             "grid": _OCC_GRID,
-                            "antenna_weights": _ant_weights,
-                            "alert_active": _alert_active,
-                            "drift_ratio": _drift_ratio,
-                            "voter_trace": list(_voter_trace),
+                            "antenna_weights": _antWeights,
+                            "alert_active": _alertActive,
+                            "drift_ratio": _driftRatio,
+                            "voter_trace": list(_voterTrace),
                             "contribution": contrib,
                         })
 
@@ -601,34 +615,34 @@ class WaveTraceRunner:
             for line in traceback.format_exc().splitlines():
                 self.log(f"  {line}")
         finally:
-            self._emit_inference({"event": "pipeline_done"})
+            self._emitInference({"event": "pipeline_done"})
             self.is_running = False
 
-    def start_camera_collect_managed(self, req):
+    def startCameraCollectManaged(self, req):
         """Camera collection: concurrent webcam YOLO and mesh CSI. Builds per-node, stacked heatmap, and optionally per-link weapon datasets."""
         self.is_running = True
         import os, glob as _g, socket as _sock, threading, time as _t, collections as _col
 
         try:
             from wavetrace.groundtruth.CameraLabeler import (YoloSegLabeler,
-                                                              presence_label_fn, weapon_label_fn)
-            from wavetrace.groundtruth.Webcam import (WebcamCapture, record_labels_online,
+                                                              presenceLabelFn, weaponLabelFn)
+            from wavetrace.groundtruth.Webcam import (WebcamCapture, recordLabelsOnline,
                                                        COCO_WEAPON_CLASSES)
-            from wavetrace.groundtruth.DatasetBuilder import build_dataset_stacked, save_dataset
-            from wavetrace.Source import (parse_batch_links, resample_uniform, bind_udp,
-                                          save_recording, RecordingSource)
-            from wavetrace.Calibration import load_calibration
-            from wavetrace.Cli import collect_source as _collect_source
+            from wavetrace.groundtruth.DatasetBuilder import buildDatasetStacked, saveDataset
+            from wavetrace.Source import (parseBatchLinks, resampleUniform, bindUdp,
+                                          saveRecording, RecordingSource)
+            from wavetrace.Calibration import loadCalibration
+            from wavetrace.Cli import collectSource as _collect_source
         except ImportError as _ie:
             self.log(f"ERROR: missing dependency: {_ie}")
-            self._emit_inference({"event": "pipeline_done"})
+            self._emitInference({"event": "pipeline_done"})
             self.is_running = False
             return
 
         WINDOW, TARGET_FS = 128, 100.0
-        cam_index = int(getattr(req, "cam_index", 0))
+        camIndex = int(getattr(req, "cam_index", 0))
         duration = float(getattr(req, "duration", 30.0))
-        per_link = bool(getattr(req, "per_link", False))
+        perLink = bool(getattr(req, "per_link", False))
         root = getattr(req, "train_data", "data/2g4_ht40")
 
         # ── Load calibrations ──────────────────────────────────────────────
@@ -637,150 +651,150 @@ class WaveTraceRunner:
         for d in sorted(_g.glob(f"{req.calibration}/node*")):
             base = os.path.basename(d)
             if base[4:].isdigit():
-                calibs[int(base[4:])] = load_calibration(d)
+                calibs[int(base[4:])] = loadCalibration(d)
         if not calibs:
             # Flat calibration dir (single-node or unified calib) — treat as node 0
-            flat_meta = os.path.join(req.calibration, "meta.json")
-            if os.path.exists(flat_meta):
-                calibs[0] = load_calibration(req.calibration)
+            flatMeta = os.path.join(req.calibration, "meta.json")
+            if os.path.exists(flatMeta):
+                calibs[0] = loadCalibration(req.calibration)
         if not calibs:
             self.log(f"ERROR: no calibration found at '{req.calibration}' — run Calib first")
-            self._emit_inference({"event": "pipeline_done"})
+            self._emitInference({"event": "pipeline_done"})
             self.is_running = False
             return
-        cal_nodes = sorted(calibs)
-        self.log(f"[CAM] Nodes: {cal_nodes}. Loading YOLO-seg model...")
+        calNodes = sorted(calibs)
+        self.log(f"[CAM] Nodes: {calNodes}. Loading YOLO-seg model...")
 
-        label_fn = weapon_label_fn if req.col_stage == "weapon" else presence_label_fn
-        yolo_weights = getattr(req, "yolo_weights", "yolov8n-seg.pt") or "yolov8n-seg.pt"
+        labelFn = weaponLabelFn if req.col_stage == "weapon" else presenceLabelFn
+        yoloWeights = getattr(req, "yolo_weights", "yolov8n-seg.pt") or "yolov8n-seg.pt"
         try:
-            labeler = YoloSegLabeler(yolo_weights, weapon_classes=COCO_WEAPON_CLASSES,
-                                     conf=0.35, label_fn=label_fn)
+            labeler = YoloSegLabeler(yoloWeights, weapon_classes=COCO_WEAPON_CLASSES,
+                                     conf=0.35, label_fn=labelFn)
         except Exception as _ye:
             self.log(f"ERROR: YOLO init failed: {_ye}")
-            self._emit_inference({"event": "pipeline_done"})
+            self._emitInference({"event": "pipeline_done"})
             self.is_running = False
             return
 
-        self.log(f"[CAM] Capturing {duration:g}s  stage={req.col_stage}  cam={cam_index}  port={req.udp_port}")
+        self.log(f"[CAM] Capturing {duration:g}s  stage={req.col_stage}  cam={camIndex}  port={req.udp_port}")
         # 5fps is plenty since labels change slowly relative to the 1.28s CSI window; cuts CPU load 3x vs 15fps.
         CAM_FPS = 5.0
 
-        per_node = _col.defaultdict(list)
-        per_link_csi = _col.defaultdict(list)
+        perNode = _col.defaultdict(list)
+        perLinkCsi = _col.defaultdict(list)
         box: dict = {}
-        cam_stop = threading.Event()  # set this to stop the camera worker early
+        camStop = threading.Event()  # set this to stop the camera worker early
 
-        def _cam_worker():
+        def _camWorker():
             try:
-                with WebcamCapture(index=cam_index) as cap:
+                with WebcamCapture(index=camIndex) as cap:
                     _cnt = {"n": 0}
-                    def _on_label(lb):
+                    def _onLabel(lb):
                         _cnt["n"] += 1
                         if _cnt["n"] % 30 == 0:
                             self.log(f"[CAM] {_cnt['n']} frames labeled (class={lb.class_id})")
-                    box["labels"] = record_labels_online(
+                    box["labels"] = recordLabelsOnline(
                         cap.read, labeler, duration,
-                        fps=CAM_FPS, stop=cam_stop, on_label=_on_label,
+                        fps=CAM_FPS, stop=camStop, onLabel=_onLabel,
                     )
             except Exception as _ce:
                 box["error"] = str(_ce)
 
-        th = threading.Thread(target=_cam_worker, daemon=True)
+        th = threading.Thread(target=_camWorker, daemon=True)
         th.start()
 
         port = int(getattr(req, "udp_port", 9876))
         try:
-            s = bind_udp(port, timeout=1.0)
-            t_end = _t.monotonic() + duration
-            while _t.monotonic() < t_end and self.is_running:
+            s = bindUdp(port, timeout=1.0)
+            tEnd = _t.monotonic() + duration
+            while _t.monotonic() < tEnd and self.is_running:
                 try:
                     payload, _ = s.recvfrom(65535)
                 except _sock.timeout:
                     continue
-                for (tx, rx), frames in parse_batch_links(payload).items():
-                    if rx in cal_nodes or (not cal_nodes and rx == 0):
-                        per_node[rx].extend(frames)
-                        per_link_csi[(tx, rx)].extend(frames)
+                for (tx, rx), frames in parseBatchLinks(payload).items():
+                    if rx in calNodes or (not calNodes and rx == 0):
+                        perNode[rx].extend(frames)
+                        perLinkCsi[(tx, rx)].extend(frames)
         finally:
             s.close()
-            cam_stop.set()  # signal the camera thread to stop even if duration not elapsed
+            camStop.set()  # signal the camera thread to stop even if duration not elapsed
 
         th.join(timeout=max(5.0, duration * 0.1))
         if th.is_alive():
             self.log("[CAM] Camera worker still running after stop — terminating")
         if "error" in box:
             self.log(f"ERROR webcam: {box['error']}")
-            self._emit_inference({"event": "pipeline_done"})
+            self._emitInference({"event": "pipeline_done"})
             self.is_running = False
             return
 
         labels = box.get("labels", [])
         if not labels:
             self.log("ERROR: no webcam frames — check camera permission or cam_index")
-            self._emit_inference({"event": "pipeline_done"})
+            self._emitInference({"event": "pipeline_done"})
             self.is_running = False
             return
 
-        n_pos = sum(lb.class_id == 1 for lb in labels)
-        self.log(f"[CAM] {n_pos}/{len(labels)} frames positive ({req.col_stage})")
+        nPos = sum(lb.class_id == 1 for lb in labels)
+        self.log(f"[CAM] {nPos}/{len(labels)} frames positive ({req.col_stage})")
 
         sess = "cam_s0"
         res = {}
-        for nid, frs in per_node.items():
-            rf = resample_uniform(frs, TARGET_FS)
+        for nid, frs in perNode.items():
+            rf = resampleUniform(frs, TARGET_FS)
             for f in rf:
                 f.node_id = nid
             res[nid] = rf
 
         # 1) Per-node presence/weapon datasets
-        pres_built = []
-        for nid in cal_nodes:
+        presBuilt = []
+        for nid in calNodes:
             frs = res.get(nid, [])
             if len(frs) < WINDOW:
                 self.log(f"[CAM] SKIP node {nid}: only {len(frs)} frames")
                 continue
             rec = f"{root}/cam_rec/{sess}/node{nid}"
             ds = f"{root}/cam_ds/{req.col_stage}/node{nid}/{sess}"
-            save_recording(frs, rec)
+            saveRecording(frs, rec)
             _collect_source(RecordingSource(rec), f"{req.calibration}/node{nid}", ds, [],
                             stage=req.col_stage, labeler=labels,
                             session_id=sess, subject_id="cam",
                             subtract_ic_baseline=(req.col_stage == "weapon"))
-            pres_built.append(nid)
+            presBuilt.append(nid)
             self.log(f"[CAM] node {nid} -> {ds}")
 
         # 2) Stacked heatmap dataset (all nodes as channels + occupancy mask)
-        merged = [f for nid in cal_nodes for f in res.get(nid, [])]
+        merged = [f for nid in calNodes for f in res.get(nid, [])]
         if merged:
-            hm_dir = f"{root}/cam_ds/heatmap/{sess}"
-            hm_ds = build_dataset_stacked(merged, calibs, labels, window=WINDOW, hop=32,
+            hmDir = f"{root}/cam_ds/heatmap/{sess}"
+            hmDs = buildDatasetStacked(merged, calibs, labels, window=WINDOW, hop=32,
                                           session_id=sess, subject_id="cam")
-            save_dataset(hm_ds, hm_dir)
-            n_mask = sum(1 for lb in hm_ds.labels if getattr(lb, "mask", None) is not None)
-            self.log(f"[CAM] heatmap stacked -> {hm_dir} "
-                     f"({hm_ds.X_image.shape[0]} windows, {n_mask} masks)")
+            saveDataset(hmDs, hmDir)
+            nMask = sum(1 for lb in hmDs.labels if getattr(lb, "mask", None) is not None)
+            self.log(f"[CAM] heatmap stacked -> {hmDir} "
+                     f"({hmDs.X_image.shape[0]} windows, {nMask} masks)")
 
         # 3) Per-link weapon datasets (requires per_link=True and stage=weapon)
-        if req.col_stage == "weapon" and per_link:
-            for (tx, rx), frs in per_link_csi.items():
-                if rx not in cal_nodes:
+        if req.col_stage == "weapon" and perLink:
+            for (tx, rx), frs in perLinkCsi.items():
+                if rx not in calNodes:
                     continue
-                rf = resample_uniform(frs, TARGET_FS)
+                rf = resampleUniform(frs, TARGET_FS)
                 if len(rf) < WINDOW:
                     continue
                 tag = tx.replace(":", "") if tx else "xx"
                 ld = f"{root}/cam_ds/weapon/node{rx}/link{tag}/{sess}"
                 lr = f"{root}/cam_rec/{sess}/link{tag}_node{rx}"
-                save_recording(rf, lr)
+                saveRecording(rf, lr)
                 _collect_source(RecordingSource(lr), f"{req.calibration}/node{rx}", ld, [],
                                 stage="weapon", labeler=labels,
                                 session_id=sess, subject_id="cam",
                                 subtract_ic_baseline=True)
                 self.log(f"[CAM] per-link weapon {tx}->{rx} -> {ld}")
 
-        self.log(f"[CAM] Done. per-node nodes: {pres_built}")
-        self._emit_inference({"event": "pipeline_done"})
+        self.log(f"[CAM] Done. per-node nodes: {presBuilt}")
+        self._emitInference({"event": "pipeline_done"})
         self.is_running = False
 
     def stop(self):

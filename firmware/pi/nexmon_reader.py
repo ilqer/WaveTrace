@@ -18,7 +18,7 @@ _HDR_LEN = _HDR.size
 _MAC_OFF = 4
 
 
-def parse_nexmon_csi(payload: bytes) -> Optional[Tuple[bytes, np.ndarray]]:
+def parseNexmonCsi(payload: bytes) -> Optional[Tuple[bytes, np.ndarray]]:
     """Parse UDP payload to (mac, csi) or None."""
     if len(payload) <= _HDR_LEN or (len(payload) - _HDR_LEN) % 4 != 0:
         return None
@@ -44,7 +44,7 @@ class NexmonReader:
         try:
             while True:
                 payload, _ = sock.recvfrom(4096)
-                parsed = parse_nexmon_csi(payload)
+                parsed = parseNexmonCsi(payload)
                 if parsed is None:
                     continue
                 mac, csi = parsed

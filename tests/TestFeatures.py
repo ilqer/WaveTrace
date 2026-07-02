@@ -37,8 +37,8 @@ def test_reconstruct_complex_csi_removes_linear_ramp_keeps_material():
     assert np.allclose(np.abs(out), mag, atol=1e-4)
     # Linear component removed. Residual is phase minus LS line.
     coeffs = np.polyfit(idx, phase, 1)
-    expected_resid = phase - np.polyval(coeffs, idx)
-    assert np.allclose(np.angle(out), expected_resid, atol=1e-3)
+    expectedResid = phase - np.polyval(coeffs, idx)
+    assert np.allclose(np.angle(out), expectedResid, atol=1e-3)
 
 
 def test_reconstruct_complex_csi_pure_ramp_becomes_real():
@@ -150,9 +150,9 @@ def test_inter_carrier_stats_metal_lower_variance():
     rng = np.random.default_rng(8)
     flat = (np.full(52, 5.0) + rng.standard_normal(52) * 0.05).astype(np.float32)     # metal-like
     diffuse = (5.0 + rng.standard_normal(52) * 2.0).astype(np.float32)                # body-like
-    _, var_flat = inter_carrier_stats(flat)
-    _, var_diffuse = inter_carrier_stats(diffuse)
-    assert var_flat < var_diffuse
+    _, varFlat = inter_carrier_stats(flat)
+    _, varDiffuse = inter_carrier_stats(diffuse)
+    assert varFlat < varDiffuse
 
 
 def test_inter_carrier_stats_edge_cases():
@@ -167,12 +167,12 @@ def test_inter_carrier_stats_edge_cases():
 def test_inter_carrier_phase_stats_recovers_slope():
     # Linear phase ramp (pure group delay) -> fit recovers slope, residual ~0.
     k = 52
-    slope_true = 0.2  # rad/subcarrier
-    phase = (slope_true * np.arange(k) + 1.3).astype(np.float32)  # ramp + constant offset
+    slopeTrue = 0.2  # rad/subcarrier
+    phase = (slopeTrue * np.arange(k) + 1.3).astype(np.float32)  # ramp + constant offset
     # Wrap to [-pi, pi] to exercise unwrap path.
     wrapped = np.angle(np.exp(1j * phase)).astype(np.float32)
     slope, resid = inter_carrier_phase_stats(wrapped)
-    assert slope == pytest.approx(slope_true, abs=1e-3)
+    assert slope == pytest.approx(slopeTrue, abs=1e-3)
     assert resid == pytest.approx(0.0, abs=1e-3)
 
 
@@ -183,9 +183,9 @@ def test_inter_carrier_phase_stats_coherent_vs_diffuse():
     ramp = 0.15 * np.arange(k)
     coherent = np.angle(np.exp(1j * (ramp + rng.standard_normal(k) * 0.02))).astype(np.float32)
     diffuse = np.angle(np.exp(1j * (ramp + rng.standard_normal(k) * 1.5))).astype(np.float32)
-    _, resid_coherent = inter_carrier_phase_stats(coherent)
-    _, resid_diffuse = inter_carrier_phase_stats(diffuse)
-    assert resid_coherent < resid_diffuse
+    _, residCoherent = inter_carrier_phase_stats(coherent)
+    _, residDiffuse = inter_carrier_phase_stats(diffuse)
+    assert residCoherent < residDiffuse
 
 
 def test_inter_carrier_phase_stats_edge_cases():
@@ -223,9 +223,9 @@ def test_inter_carrier_extractor_matches_nine_features():
         cv.append(np.sqrt(v) / m if m > 1e-12 else 0.0)
     assert emitted
     got = ice.features.reshape(3, 9)
-    for series_idx, series in enumerate((mu, sig2, cv)):
+    for seriesIdx, series in enumerate((mu, sig2, cv)):
         ref = nine_features(np.asarray(series, dtype=np.float32))
-        assert np.allclose(got[series_idx], ref, rtol=1e-4, atol=1e-5)
+        assert np.allclose(got[seriesIdx], ref, rtol=1e-4, atol=1e-5)
 
 
 # PSD + Doppler recover injected motion freq.
@@ -255,8 +255,8 @@ def test_power_spectrum_recovers_motion_frequency():
 
 def test_doppler_recovers_motion_frequency():
     series, fs, fTrue = _phaseSeries()
-    max_shift, spread = doppler_features(series, fs=fs, f_hi=2.0, nfft=4096)
-    assert max_shift == pytest.approx(fTrue, abs=0.05)  # peak Doppler = injected motion freq
+    maxShift, spread = doppler_features(series, fs=fs, f_hi=2.0, nfft=4096)
+    assert maxShift == pytest.approx(fTrue, abs=0.05)  # peak Doppler = injected motion freq
     assert spread >= 0.0
 
 

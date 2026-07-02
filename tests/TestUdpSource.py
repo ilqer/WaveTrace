@@ -1,4 +1,4 @@
-"""UdpSource tests: parse_csi_line, parse_batch."""
+"""UdpSource tests: parseCsiLine, parseBatch."""
 
 import json
 import struct
@@ -7,7 +7,7 @@ import sys
 import numpy as np
 import pytest
 
-from wavetrace.Source import SerialReader, parse_csi_line, parse_batch
+from wavetrace.Source import SerialReader, parseCsiLine, parseBatch
 
 
 def _make_csi_line(csi_ints, mac="aa:bb:cc:dd:ee:ff", local_ts=1000):
@@ -44,14 +44,14 @@ def _make_batch_payload(frames_ints, node_id=0, ntp_ms=5000):
     return _bin_batch(rows, node_id=node_id, ntp_ms=ntp_ms)
 
 
-# ---- T7d.1: parse_csi_line -----------------------------------------------------------
+# ---- T7d.1: parseCsiLine -----------------------------------------------------------
 
 def test_parse_csi_line_valid():
-    """parse_csi_line returns (csi, local_ts_us, mac) with correct I/Q pairing."""
+    """parseCsiLine returns (csi, local_ts_us, mac) with correct I/Q pairing."""
     # esp-csi stores [imag0, real0, imag1, real1, ...]; csi[k] = complex(real=data[2k+1], imag=data[2k])
     csi_ints = [10, 20, 30, 40, 50, 60, 70, 80]  # 4 subcarriers
     line = _make_csi_line(csi_ints, mac="aa:bb:cc:dd:ee:ff", local_ts=12345)
-    result = parse_csi_line(line)
+    result = parseCsiLine(line)
     assert result is not None
     csi, ts, mac = result
     assert csi.shape == (4,)
@@ -67,7 +67,7 @@ def test_parse_csi_line_quoted_real_format():
     Both quoted and unquoted arrays must parse."""
     quoted = ('CSI_DATA,15562,1a:00:00:00:00:00,-25,11,1,0,1,1,1,0,0,0,0,-96,0,11,2,'
               '2361919,0,47,1,4,0,"[1,2,3,4]"')
-    res = parse_csi_line(quoted)
+    res = parseCsiLine(quoted)
     assert res is not None and res[0].shape == (2,)
     assert res[0][0] == pytest.approx(complex(2, 1))  # [imag,real] -> complex(real=2, imag=1)
     assert res[1] == 2361919
@@ -78,12 +78,12 @@ def test_parse_csi_line_filtering():
     csi_ints = [1, 2, 3, 4]
     line = _make_csi_line(csi_ints, mac="aa:bb:cc:dd:ee:ff")
     # Matching MAC passes
-    assert parse_csi_line(line, tx_mac="AA:BB:CC:DD:EE:FF") is not None  # case-insensitive
+    assert parseCsiLine(line, tx_mac="AA:BB:CC:DD:EE:FF") is not None  # case-insensitive
     # Non-matching MAC silently dropped
-    assert parse_csi_line(line, tx_mac="11:22:33:44:55:66") is None
+    assert parseCsiLine(line, tx_mac="11:22:33:44:55:66") is None
     # Malformed line (not 25 cols, not CSI_DATA) returns None, never raises.
-    assert parse_csi_line("garbage,line") is None
-    assert parse_csi_line("") is None
+    assert parseCsiLine("garbage,line") is None
+    assert parseCsiLine("") is None
 
 
 # ---- SerialReader (esp-csi over USB serial) ------------------------------------------
@@ -138,7 +138,7 @@ def test_serial_reader_drops_off_format_frames(monkeypatch):
     _install_fake_serial(monkeypatch, [s3, s2, s3, s2, s3])
     frames = list(SerialReader("/dev/ttyUSB0").frames())
     assert len(frames) == 3 and all(fr.num_subcarriers == 3 for fr in frames)
-    # Frames share one shape; save_recording can stack them.
+    # Frames share one shape; saveRecording can stack them.
     np.stack([np.asarray(fr.grid) for fr in frames])
 
 
@@ -154,50 +154,50 @@ def test_serial_reader_needs_pyserial(monkeypatch):
         list(SerialReader("/dev/ttyUSB0").frames())
 
 
-# ---- T7d.2: parse_batch valid --------------------------------------------------------
+# ---- T7d.2: parseBatch valid --------------------------------------------------------
 
 def test_parse_batch_valid():
-    """parse_batch returns CsiFrames with node_id from header and correct NTP timestamps."""
+    """parseBatch returns CsiFrames with node_id from header and correct NTP timestamps."""
     S = 4
-    csi_ints_per_frame = [[i * 2, i * 2 + 1] * S for i in range(3)]  # 3 frames, 4 subcarriers
-    ntp_ms = 5000
-    payload = _make_batch_payload(csi_ints_per_frame, node_id=7, ntp_ms=ntp_ms)
+    csiIntsPerFrame = [[i * 2, i * 2 + 1] * S for i in range(3)]  # 3 frames, 4 subcarriers
+    ntpMs = 5000
+    payload = _make_batch_payload(csiIntsPerFrame, node_id=7, ntp_ms=ntpMs)
 
-    result = parse_batch(payload)
+    result = parseBatch(payload)
     assert len(result) == 3
     for fr in result:
         assert fr.node_id == 7
         assert fr.num_subcarriers == S
 
     # Timestamp: t_i = ntp_ms/1000 - (last_us - local_ts_i) / 1e6
-    local_ts_list = [1000 + i * 10_000 for i in range(3)]
-    last_us = local_ts_list[-1]
-    for fr, local_ts in zip(result, local_ts_list):
-        expected_t = ntp_ms / 1000.0 - (last_us - local_ts) / 1e6
-        assert fr.timestamp == pytest.approx(expected_t, abs=1e-9)
+    localTsList = [1000 + i * 10_000 for i in range(3)]
+    lastUs = localTsList[-1]
+    for fr, localTs in zip(result, localTsList):
+        expectedT = ntpMs / 1000.0 - (lastUs - localTs) / 1e6
+        assert fr.timestamp == pytest.approx(expectedT, abs=1e-9)
 
 
-# ---- T7d.3: parse_batch error paths --------------------------------------------------
+# ---- T7d.3: parseBatch error paths --------------------------------------------------
 
 def test_parse_batch_bad_header_and_bad_lines():
     """Bad header raises ValueError; truncated/mixed-width records within a valid batch are skipped."""
     # Bad header: wrong magic (not a v2 binary header)
     with pytest.raises(ValueError, match="bad batch header"):
-        parse_batch(b"not_json\nsome,csv,line")
+        parseBatch(b"not_json\nsome,csv,line")
 
     # Empty payload (shorter than the 13-byte header)
     with pytest.raises(ValueError, match="bad batch header"):
-        parse_batch(b"")
+        parseBatch(b"")
 
     # Valid header with trailing garbage returns empty list, no error.
     empty = struct.pack("<BBBQH", 0x57, 2, 0, 1000, 0) + b"\x01\x02\x03"
-    assert parse_batch(empty) == []
+    assert parseBatch(empty) == []
 
     # Mixed S records: only matching-S kept (first S sets reference).
     mixed = _bin_batch([([1, 2, 3, 4, 5, 6, 7, 8], "aa:bb:cc:dd:ee:ff", 1000),   # S=4 (reference)
                         ([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 2000)],              # S=2 is skipped.
                        node_id=0, ntp_ms=2000)
-    frames = parse_batch(mixed)
+    frames = parseBatch(mixed)
     assert len(frames) == 1  # Only S=4 record kept.
     assert frames[0].num_subcarriers == 4
 
@@ -210,20 +210,20 @@ def test_parse_batch_honors_header_count():
         return struct.pack("<BBBQH", 0x57, 2, 0, 5000, n)
 
     # If n < encoded records, only n parsed.
-    assert len(parse_batch(hdr(1) + rec + rec + rec)) == 1
+    assert len(parseBatch(hdr(1) + rec + rec + rec)) == 1
     # Trailing garbage after n records is ignored.
-    assert len(parse_batch(hdr(2) + rec + rec + b"\xde\xad\xbe\xef")) == 2
+    assert len(parseBatch(hdr(2) + rec + rec + b"\xde\xad\xbe\xef")) == 2
     # If n > encoded records, parsing stops at truncation.
-    assert len(parse_batch(hdr(5) + rec + rec)) == 2
+    assert len(parseBatch(hdr(5) + rec + rec)) == 2
 
 
 def test_parse_batch_handles_uint32_ts_wrap():
     """ts_us wraps at 32 bits (~71.6 min). Roll-over within batch must not corrupt timestamps.
     Masked subtraction preserves true delta gap."""
-    ntp_ms = 5000
+    ntpMs = 5000
     rows = [([1, 2, 3, 4], "aa:bb:cc:dd:ee:ff", 0xFFFFFF00),   # Before 32-bit wrap.
             ([5, 6, 7, 8], "aa:bb:cc:dd:ee:ff", 0x00000100)]   # After wrap: 512 µs later.
-    frames = parse_batch(_bin_batch(rows, node_id=0, ntp_ms=ntp_ms))
+    frames = parseBatch(_bin_batch(rows, node_id=0, ntp_ms=ntpMs))
     assert len(frames) == 2
-    assert frames[0].timestamp == pytest.approx(ntp_ms / 1000.0 - 512 / 1e6, abs=1e-9)
-    assert frames[1].timestamp == pytest.approx(ntp_ms / 1000.0, abs=1e-9)
+    assert frames[0].timestamp == pytest.approx(ntpMs / 1000.0 - 512 / 1e6, abs=1e-9)
+    assert frames[1].timestamp == pytest.approx(ntpMs / 1000.0, abs=1e-9)

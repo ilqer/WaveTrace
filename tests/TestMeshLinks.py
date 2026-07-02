@@ -1,11 +1,11 @@
-"""Tests for all-pairs link splitting. parse_batch_links buckets batches by (tx_short, rx_node)."""
+"""Tests for all-pairs link splitting. parseBatchLinks buckets batches by (tx_short, rx_node)."""
 
 import struct
 
 import numpy as np
 import pytest
 
-from wavetrace.Source import parse_batch_links, mac_short
+from wavetrace.Source import parseBatchLinks, macShort
 
 
 def _rec(csi_ints, mac, local_ts):
@@ -22,8 +22,8 @@ def _batch(rows, node_id=7, ntp_ms=5000):
 
 
 def test_mac_short():
-    assert mac_short("aa:bb:cc:dd:ee:ff") == "ee:ff"
-    assert mac_short("no_colons") == "no_colons"
+    assert macShort("aa:bb:cc:dd:ee:ff") == "ee:ff"
+    assert macShort("no_colons") == "no_colons"
 
 
 def test_splits_two_transmitters_into_two_links():
@@ -37,7 +37,7 @@ def test_splits_two_transmitters_into_two_links():
         ([7, 8] * S, b, 2010),
         ([9, 9] * S, a, 3000),
     ]
-    links = parse_batch_links(_batch(rows, node_id=7))
+    links = parseBatchLinks(_batch(rows, node_id=7))
     assert set(links) == {("00:01", 7), ("00:02", 7)}
     assert len(links[("00:01", 7)]) == 3
     assert len(links[("00:02", 7)]) == 2
@@ -48,19 +48,19 @@ def test_splits_two_transmitters_into_two_links():
 def test_timestamps_match_parse_batch_scheme():
     """Per-frame t = ntp_ms/1000 - (last_us - local_ts)/1e6, last_us = last parsed line overall."""
     a = "aa:aa:aa:aa:00:01"
-    ntp_ms = 5000
+    ntpMs = 5000
     rows = [([1, 2, 3, 4], a, 1000), ([5, 6, 7, 8], a, 1010), ([9, 9, 9, 9], a, 1020)]
-    links = parse_batch_links(_batch(rows, node_id=3, ntp_ms=ntp_ms))
+    links = parseBatchLinks(_batch(rows, node_id=3, ntp_ms=ntpMs))
     frames = links[("00:01", 3)]
-    last_us = 1020
+    lastUs = 1020
     for fr, ts in zip(frames, [1000, 1010, 1020]):
-        assert fr.timestamp == pytest.approx(ntp_ms / 1000.0 - (last_us - ts) / 1e6, abs=1e-9)
+        assert fr.timestamp == pytest.approx(ntpMs / 1000.0 - (lastUs - ts) / 1e6, abs=1e-9)
 
 
 def test_tx_mac_filter_keeps_one_link():
     a, b = "aa:aa:aa:aa:00:01", "bb:bb:bb:bb:00:02"
     rows = [([1, 2, 3, 4], a, 1000), ([5, 6, 7, 8], b, 1010)]
-    links = parse_batch_links(_batch(rows), tx_mac=a)
+    links = parseBatchLinks(_batch(rows), tx_mac=a)
     assert set(links) == {("00:01", 7)}
 
 
@@ -74,16 +74,16 @@ def test_per_link_width_guard():
         ([1, 2, 3, 4, 5, 6], a, 1010),    # link a: S=3 -> dropped
         ([1, 2, 3, 4, 5, 6], b, 1020),    # link b: S=3 (its own reference) -> kept
     ]
-    links = parse_batch_links(_batch(rows))
+    links = parseBatchLinks(_batch(rows))
     assert len(links[("00:01", 7)]) == 1 and links[("00:01", 7)][0].num_subcarriers == 2
     assert len(links[("00:02", 7)]) == 1 and links[("00:02", 7)][0].num_subcarriers == 3
 
 
 def test_bad_header_raises_empty_returns_dict():
     with pytest.raises(ValueError, match="bad batch header"):
-        parse_batch_links(b"not_json\nfoo")
+        parseBatchLinks(b"not_json\nfoo")
     with pytest.raises(ValueError, match="bad batch header"):
-        parse_batch_links(b"")
+        parseBatchLinks(b"")
     # Valid header, no complete records (trailing garbage) -> empty dict, no error
-    good_hdr = struct.pack("<BBBQH", 0x57, 2, 0, 1000, 0)
-    assert parse_batch_links(good_hdr + b"\x01\x02bad") == {}
+    goodHdr = struct.pack("<BBBQH", 0x57, 2, 0, 1000, 0)
+    assert parseBatchLinks(goodHdr + b"\x01\x02bad") == {}

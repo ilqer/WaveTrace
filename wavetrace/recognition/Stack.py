@@ -20,7 +20,7 @@ class BandFusion:
         self._combiner: LogisticRegression | None = None
         self._classes: np.ndarray | None = None
 
-    def _stack_probs(self, X_by_band: dict) -> np.ndarray:
+    def _stackProbs(self, X_by_band: dict) -> np.ndarray:
         """Concatenate each band's positive-class probability into (n, n_bands)."""
         cols = []
         for b in self.band_order:
@@ -30,14 +30,14 @@ class BandFusion:
 
     def fit(self, X_by_band_val: dict, y_val) -> "BandFusion":
         """Fit combiner on validation split."""
-        Z = self._stack_probs(X_by_band_val)
+        Z = self._stackProbs(X_by_band_val)
         y = np.asarray(y_val, dtype=np.int64)
         self._combiner = LogisticRegression(max_iter=1000).fit(Z, y)
         self._classes = self._combiner.classes_
         return self
 
     def predict_proba(self, X_by_band: dict) -> np.ndarray:
-        Z = self._stack_probs(X_by_band)
+        Z = self._stackProbs(X_by_band)
         return self._combiner.predict_proba(Z)
 
     def predict(self, X_by_band: dict) -> np.ndarray:
@@ -59,7 +59,7 @@ class BandFusion:
         single = {b: (X_by_band[b][:1] if np.asarray(X_by_band[b]).ndim > 1
                       else np.asarray(X_by_band[b]).reshape(1, -1))
                   for b in self.band_order}
-        Z = self._stack_probs(single)[0]
+        Z = self._stackProbs(single)[0]
         fused = float(self.predict_proba(single)[0][1])
         return {**{b: round(float(Z[i]), 3) for i, b in enumerate(self.band_order)},
                 "fused": round(fused, 3), "weights": self.weights_}

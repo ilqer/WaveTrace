@@ -30,7 +30,7 @@ def _torch():
         raise ImportError("HeatmapHead needs PyTorch: pip install 'wavetrace[cnn]'") from e
 
 
-def _build_unet(torch, in_channels: int, grid: int):
+def _buildUnet(torch, in_channels: int, grid: int):
     """Small CSI->heatmap CNN. AdaptiveAvgPool resolves any (K, W) -> (G, G). Pi-friendly."""
     nn = torch.nn
     return nn.Sequential(
@@ -58,13 +58,13 @@ class HeatmapHead:
         """X: (n, C, K, W) images. Y: (n, G, G) or (n, G*G) occupancy in [0,1].
         report: optional callback(epoch, {"loss": float}) for live UI metrics."""
         torch = _torch()
-        X = self._as_images(np.asarray(X, dtype=np.float32))
+        X = self._asImages(np.asarray(X, dtype=np.float32))
         self._image_shape = X.shape[1:]
         Y = np.asarray(Y, dtype=np.float32).reshape(X.shape[0], self.grid, self.grid)
         mean, std = float(X.mean()), float(X.std()) or 1.0
         self._norm = (mean, std)
         torch.manual_seed(self.config.seed)
-        net = _build_unet(torch, X.shape[1], self.grid)
+        net = _buildUnet(torch, X.shape[1], self.grid)
         xt = torch.from_numpy((X - mean) / std)
         yt = torch.from_numpy(Y).unsqueeze(1)       # (n, 1, G, G)
         opt = torch.optim.Adam(net.parameters(), lr=lr)
@@ -88,21 +88,21 @@ class HeatmapHead:
         net.eval(); self._net = net
         return self
 
-    def predict_heatmap(self, X) -> np.ndarray:
+    def predictHeatmap(self, X) -> np.ndarray:
         """(n, C, K, W) or one (C, K, W) -> (n, G, G) per-cell probability."""
         torch = _torch()
-        X = self._as_images(np.asarray(X, dtype=np.float32))
+        X = self._asImages(np.asarray(X, dtype=np.float32))
         Xn = (X - self._norm[0]) / self._norm[1]
         with torch.no_grad():
             p = torch.sigmoid(self._net(torch.from_numpy(Xn)))  # (n, 1, G, G)
         return p.squeeze(1).numpy()
 
-    def predict_exists(self, X, thr=0.5) -> np.ndarray:
+    def predictExists(self, X, thr=0.5) -> np.ndarray:
         """Binary 'is target present' from the heatmap (max cell > thr)."""
-        hm = self.predict_heatmap(X)
+        hm = self.predictHeatmap(X)
         return (hm.reshape(hm.shape[0], -1).max(axis=1) > thr).astype(int)
 
-    def _as_images(self, X: np.ndarray) -> np.ndarray:
+    def _asImages(self, X: np.ndarray) -> np.ndarray:
         if X.ndim == 4:
             return np.ascontiguousarray(X)
         if X.ndim == 3:
@@ -129,7 +129,7 @@ class HeatmapHead:
         head = cls(ModelConfig(**blob["config"]), grid=blob["grid"])
         head._norm = blob["norm"]
         head._image_shape = tuple(blob["image_shape"])
-        net = _build_unet(torch, head._image_shape[0], head.grid)
+        net = _buildUnet(torch, head._image_shape[0], head.grid)
         net.load_state_dict({k: torch.from_numpy(v) for k, v in blob["state"].items()})
         net.eval(); head._net = net
         return head

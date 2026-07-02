@@ -22,17 +22,17 @@ import socket
 import sys
 import time
 
-from wavetrace.Source import (UdpSource, RecordingSource, save_recording,
-                              parse_batch_links, resample_uniform, bind_udp)
-from wavetrace.Cli import collect_source
-from wavetrace.recognition import train_presence
+from wavetrace.Source import (UdpSource, RecordingSource, saveRecording,
+                              parseBatchLinks, resampleUniform, bindUdp)
+from wavetrace.Cli import collectSource
+from wavetrace.recognition import trainPresence
 
 SUBJECT = "u0"
 TARGET_FS = 100.0   # resample grid; MUST match run_live_mesh.TARGET_FS so train and serve windows align
 WINDOW = 128        # front-end window (frames); a link segment shorter than this emits no window
 
 
-def detect_nodes(port, timeout_s=3.0):
+def detectNodes(port, timeout_s=3.0):
     """Briefly listen to detect the active Node IDs in the live UDP stream. Returns sorted list."""
     print("listening for active nodes...")
     detected = collections.Counter()
@@ -42,7 +42,7 @@ def detect_nodes(port, timeout_s=3.0):
     return sorted(detected.keys())
 
 
-def capture_all(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
+def captureAll(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     """Collect up to n frames PER (tx->rx) LINK in ONE pass. Returns {(tx_short, rx_node): [frames]}.
 
     Per-LINK (not per-node) so training matches the per-link serving path (run_live_mesh): each directed
@@ -61,7 +61,7 @@ def capture_all(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
 
     links = collections.defaultdict(list)  # (tx_short, rx_node) -> [frames]
     want = set(node_ids)
-    sock = bind_udp(port, timeout=15.0)
+    sock = bindUdp(port, timeout=15.0)
     start = time.time()
     lastPrint = start
     try:
@@ -70,7 +70,7 @@ def capture_all(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
                 payload, _ = sock.recvfrom(65535)
             except socket.timeout:
                 break  # total silence
-            for key, frames in parse_batch_links(payload).items():
+            for key, frames in parseBatchLinks(payload).items():
                 buf = links[key]
                 if len(buf) < n:
                     buf.extend(frames[: n - len(buf)])
@@ -129,9 +129,9 @@ def main():
     dsDirs = {nid: [] for nid in calNodes}
 
     for i in range(args.sessions):
-        empty = capture_all(f"session {i+1}/{args.sessions} — part A: keep the zone empty and still.",
+        empty = captureAll(f"session {i+1}/{args.sessions} — part A: keep the zone empty and still.",
                             args.frames, args.port, calNodes, countdown=5)
-        present = capture_all(f"session {i+1}/{args.sessions} — part B: stand and move in the zone.",
+        present = captureAll(f"session {i+1}/{args.sessions} — part B: stand and move in the zone.",
                               args.frames, args.port, calNodes)
         for nid in calNodes:
             # every (tx->rx) link on this node, windowed on its own grid, pooled into one head (same session_id)
@@ -139,15 +139,15 @@ def main():
             used = 0
             for key in keys:
                 # resample separately: a single resample across both would interpolate fake frames across the gap
-                e = resample_uniform(empty.get(key, []), TARGET_FS)
-                p = resample_uniform(present.get(key, []), TARGET_FS)
+                e = resampleUniform(empty.get(key, []), TARGET_FS)
+                p = resampleUniform(present.get(key, []), TARGET_FS)
                 if len(e) < WINDOW or len(p) < WINDOW:
                     continue  # too short on this grid to emit a window in each class
                 span = (p[0].timestamp, p[-1].timestamp + 1.0)
                 tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
                 rec, ds = f"{args.root}/sess_{i}/node{nid}/link_{tag}", f"{args.root}/ds_{i}/node{nid}/link_{tag}"
-                save_recording(e + p, rec)
-                collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
+                saveRecording(e + p, rec)
+                collectSource(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
                                stage="presence", session_id=f"sess{i}", subject_id=SUBJECT)
                 dsDirs[nid].append(ds)
                 used += 1
@@ -160,7 +160,7 @@ def main():
         if not dsDirs[nid]:
             print(f"   [SKIP] node {nid}: no usable sessions.")
             continue
-        _, m = train_presence(dsDirs[nid], out_dir=f"{args.root}/model/node{nid}")
+        _, m = trainPresence(dsDirs[nid], out_dir=f"{args.root}/model/node{nid}")
         logo = m.get("logo", {}).get("session")
         line = (f"   [OK]   node {nid}: samples={m['n_samples']} class_counts={m['class_counts']} "
                 f"train_acc={m['train_accuracy']:.3f}")

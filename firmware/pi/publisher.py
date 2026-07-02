@@ -18,7 +18,7 @@ _REC_HDR = struct.Struct("<6sIH")
 _DEFAULT_MTU = 1450  # Keep datagram under Ethernet MTU.
 
 
-def mac_to_bytes(mac: str) -> bytes:
+def macToBytes(mac: str) -> bytes:
     """Convert MAC string to 6 bytes."""
     parts = mac.split(":")
     if len(parts) != 6:
@@ -26,7 +26,7 @@ def mac_to_bytes(mac: str) -> bytes:
     return bytes(int(p, 16) for p in parts)
 
 
-def quantize_csi(csi: np.ndarray, scale=None) -> bytes:
+def quantizeCsi(csi: np.ndarray, scale=None) -> bytes:
     """Convert to 2*S int8 bytes (ver 2), [imag, real, ...] interleaved.
     scale=None auto-scales frame to 127 peak.
     Warning: auto-scale erases amplitude. Fine for presence, but breaks weapon feature. O(S)."""
@@ -42,7 +42,7 @@ def quantize_csi(csi: np.ndarray, scale=None) -> bytes:
     return out.astype(np.int8).tobytes()
 
 
-def quantize_csi_i16(csi: np.ndarray, scale: float = 1.0) -> bytes:
+def quantizeCsiI16(csi: np.ndarray, scale: float = 1.0) -> bytes:
     """Convert to 4*S int16 bytes (ver 3), [imag, real, ...] LE.
     Uses fixed scale to keep absolute amplitude comparable across frames.
     Preserves amplitude/variance for weapon σ² feature. O(S)."""
@@ -61,7 +61,7 @@ class BatchPublisher:
                  mtu: int = _DEFAULT_MTU):
         self._addr = (pc_ip, port)
         self._node = node_id
-        self._mac = mac_to_bytes(ap_mac)
+        self._mac = macToBytes(ap_mac)
         self._ver = ver          # 2 = int8 payload, 3 = int16 payload (must match the quantizer used)
         self._mtu = mtu
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -82,8 +82,8 @@ class BatchPublisher:
         """Send queued records as datagram."""
         if not self._records:
             return
-        ntp_ms = int(time.time() * 1000)
-        hdr = _BIN_HDR.pack(_BIN_MAGIC, self._ver, self._node, ntp_ms, len(self._records))
+        ntpMs = int(time.time() * 1000)
+        hdr = _BIN_HDR.pack(_BIN_MAGIC, self._ver, self._node, ntpMs, len(self._records))
         self._sock.sendto(hdr + b"".join(self._records), self._addr)
         self._records.clear()
         self._size = _BIN_HDR.size

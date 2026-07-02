@@ -15,7 +15,7 @@ import time
 NTP_EPOCH = 2208988800  # seconds from 1900-01-01 (NTP epoch) to 1970-01-01 (Unix epoch)
 
 
-def _ntp_ts(t: float):
+def _ntpTs(t: float):
     """Unix seconds to NTP 32-bit pair."""
     sec = int(t) + NTP_EPOCH
     frac = int((t - int(t)) * (1 << 32)) & 0xFFFFFFFF
@@ -46,9 +46,9 @@ def main():
             print(f"  short packet ({len(data)} bytes), ignoring")
             continue
         origin = data[40:48]  # Client's transmit timestamp (echoed).
-        refS, refF = _ntp_ts(recvT - 1.0)
-        recS, recF = _ntp_ts(recvT)
-        txS, txF = _ntp_ts(time.time())
+        refS, refF = _ntpTs(recvT - 1.0)
+        recS, recF = _ntpTs(recvT)
+        txS, txF = _ntpTs(time.time())
         pkt = struct.pack("!B B b b", (0 << 6) | (4 << 3) | 4, 1, 4, -20)  # LI=0,VN=4,Mode=4 server
         pkt += struct.pack("!I", 0) + struct.pack("!I", 0) + b"LOCL"        # root delay/disp, refid
         pkt += struct.pack("!II", refS, refF)                            # reference timestamp

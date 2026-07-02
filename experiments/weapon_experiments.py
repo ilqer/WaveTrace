@@ -7,7 +7,7 @@ Reports leave-one-SESSION-out (LOGO) for three families:
      so one CNN sees the whole mesh at once (NOT feature vectors glued side by side).
 
 Only SESSION-LOGO is meaningful here: there is 1 subject and 1 carry pose, so subject/carry folds
-degenerate and are skipped by _logo_metrics. Static-subject capture -> the per-link channels are
+degenerate and are skipped by _logoMetrics. Static-subject capture -> the per-link channels are
 stationary, so the combined stack aligns the 12 links index-wise per (session,condition) (identical
 100 Hz grid + hop); a 1-2 window phase slip is immaterial for a stationary signal.
 
@@ -23,9 +23,9 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 
 from wavetrace.Config import ModelConfig
-from wavetrace.groundtruth import load_dataset
+from wavetrace.groundtruth import loadDataset
 from wavetrace.recognition.Weapon import WeaponHead
-from wavetrace.recognition.Train import _logo_metrics, train_weapon
+from wavetrace.recognition.Train import _logoMetrics, trainWeapon
 
 WINDOW, HOP, FS = 128, 32, 100.0
 
@@ -35,8 +35,8 @@ def _cfg(backend, k, **kw):
 
 
 def _session_logo(X, y, sess, subj, make_head):
-    """Run _logo_metrics and return only the session fold (the valid one) or None."""
-    m = _logo_metrics(np.asarray(X), np.asarray(y), np.asarray(sess), np.asarray(subj), make_head)
+    """Run _logoMetrics and return only the session fold (the valid one) or None."""
+    m = _logoMetrics(np.asarray(X), np.asarray(y), np.asarray(sess), np.asarray(subj), make_head)
     return m.get("session")
 
 
@@ -48,7 +48,7 @@ def _fmt(tag, n, s):
             f"{'BEATS' if s['accuracy'] > s['majority_accuracy'] + 1e-9 else 'below'} majority")
 
 
-def _link_tag(d):
+def _linkTag(d):
     b = os.path.basename(d)
     return b.split("_link")[-1] if "_link" in b else None
 
@@ -60,7 +60,7 @@ def discover(root):
         nid = int(os.path.basename(nd)[4:])
         bytag = collections.defaultdict(list)
         for d in sorted(glob.glob(f"{nd}/*")):
-            t = _link_tag(d)
+            t = _linkTag(d)
             if t:
                 bytag[t].append(d)
         if bytag:
@@ -75,7 +75,7 @@ def exp_per_node(nodes, root):
     deploy = {}
     for nid in sorted(nodes):
         dirs = [d for t in nodes[nid] for d in nodes[nid][t]]
-        dss = [load_dataset(d) for d in dirs]
+        dss = [loadDataset(d) for d in dirs]
         X_ic = np.concatenate([d.X_intercarrier for d in dss]).astype(np.float32)
         X_im = np.concatenate([d.X_image for d in dss]).astype(np.float32)
         y = np.concatenate([d.y for d in dss])
@@ -99,7 +99,7 @@ def exp_per_link(nodes):
     rows = []
     for nid in sorted(nodes):
         for tag in sorted(nodes[nid]):
-            dss = [load_dataset(d) for d in nodes[nid][tag]]
+            dss = [loadDataset(d) for d in nodes[nid][tag]]
             X_ic = np.concatenate([d.X_intercarrier for d in dss]).astype(np.float32)
             y = np.concatenate([d.y for d in dss])
             sess = np.concatenate([d.session_ids for d in dss])
@@ -135,7 +135,7 @@ def build_aligned(nodes, links, field):
                 hit = [d for d in nodes[nid][tag]
                        if f"_metal_{s}_{cond}_link{tag}" in os.path.basename(d)]
                 if hit:
-                    blocks[ci] = getattr(load_dataset(hit[0]), field).astype(np.float32)
+                    blocks[ci] = getattr(loadDataset(hit[0]), field).astype(np.float32)
             if len(blocks) != len(links):                  # skip unless all channels present
                 print(f"   [skip] {s}/{cond}: only {len(blocks)}/{len(links)} links")
                 continue
@@ -389,7 +389,7 @@ def main():
     # canonical deployable: retrain the per-node ic27/variance heads run_weapon serves
     print("\n=== Retraining canonical per-node ic27 heads -> model_weapon/node* (deployable) ===")
     for nid in sorted(deploy):
-        _, m = train_weapon(deploy[nid], out_dir=f"{args.root}/model_weapon/node{nid}",
+        _, m = trainWeapon(deploy[nid], out_dir=f"{args.root}/model_weapon/node{nid}",
                             feature_mode="ic27")
         lg = (m.get("logo") or {}).get("session", {})
         print(f"   node{nid}: LOGO={lg.get('accuracy', float('nan')):.3f} "

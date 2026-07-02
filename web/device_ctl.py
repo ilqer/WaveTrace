@@ -17,17 +17,17 @@ IDF_EXPORT = os.path.expanduser(os.environ.get("IDF_EXPORT", "~/esp/esp-idf/expo
 FIRMWARE_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "firmware"))
 
 
-def list_serial_ports() -> list[dict]:
+def listSerialPorts() -> list[dict]:
     """Returns serial devices, prioritizing USB ESPs."""
     ports = []
     for p in list_ports.comports():
         dev = p.device
-        is_usb = ("usb" in dev.lower()) or ("USB" in (p.hwid or ""))
+        isUsb = ("usb" in dev.lower()) or ("USB" in (p.hwid or ""))
         ports.append({
             "device": dev,
             "description": p.description or "",
             "hwid": p.hwid or "",
-            "likely_esp": is_usb,
+            "likely_esp": isUsb,
         })
     ports.sort(key=lambda x: (not x["likely_esp"], x["device"]))
     return ports
@@ -42,7 +42,7 @@ class DeviceHub:
         self._monitors: dict[str, tuple[threading.Thread, threading.Event]] = {}
         self._procs: dict[str, subprocess.Popen] = {}
 
-    def get_state(self) -> dict:
+    def getState(self) -> dict:
         return {
             "monitoring": list(self._monitors.keys()),
             "runningScripts": [k.split(":", 1)[1] for k in self._procs.keys() if k.startswith("script:")],
@@ -56,16 +56,16 @@ class DeviceHub:
         asyncio.run_coroutine_threadsafe(self.queue.put(payload), self.loop)
 
     # ---- serial monitor -------------------------------------------------------------
-    def start_monitor(self, port: str, baud: int = 115200) -> dict:
+    def startMonitor(self, port: str, baud: int = 115200) -> dict:
         if port in self._monitors:
             return {"status": "monitoring", "port": port, "baud": baud}
-        stop_ev = threading.Event()
-        t = threading.Thread(target=self._monitor_loop, args=(port, baud, stop_ev), daemon=True)
-        self._monitors[port] = (t, stop_ev)
+        stopEv = threading.Event()
+        t = threading.Thread(target=self._monitorLoop, args=(port, baud, stopEv), daemon=True)
+        self._monitors[port] = (t, stopEv)
         t.start()
         return {"status": "monitoring", "port": port, "baud": baud}
 
-    def _monitor_loop(self, port: str, baud: int, stop_ev: threading.Event) -> None:
+    def _monitorLoop(self, port: str, baud: int, stop_ev: threading.Event) -> None:
         src = f"tty:{os.path.basename(port)}"
         try:
             ser = serial.Serial(port, baud, timeout=0.5)
@@ -86,7 +86,7 @@ class DeviceHub:
             ser.close()
             self._publish(src, f"closed {port}", level="system")
 
-    def stop_monitor(self, port: str | None = None) -> dict:
+    def stopMonitor(self, port: str | None = None) -> dict:
         if port is None:
             for p, (t, ev) in list(self._monitors.items()):
                 ev.set()
@@ -100,7 +100,7 @@ class DeviceHub:
             t.join(timeout=2.0)
         return {"status": "stopped", "port": port}
 
-    def send_input(self, proc_id: str, data: str) -> dict:
+    def sendInput(self, proc_id: str, data: str) -> dict:
         """Sends input to process stdin."""
         if proc_id in self._procs:
             proc = self._procs[proc_id]
@@ -136,7 +136,7 @@ class DeviceHub:
         """Flashes board via firmware/flash.sh with NO_MONITOR."""
         if port in self._monitors:
             self._publish("flash", f"stopping monitor on {port} first", level="system")
-            self.stop_monitor(port)
+            self.stopMonitor(port)
         if not os.path.exists(IDF_EXPORT):
             self._publish("flash", f"IDF export.sh not found at {IDF_EXPORT}; "
                           f"set IDF_EXPORT env var", level="error")
@@ -150,14 +150,14 @@ class DeviceHub:
                 return
             fcmd = f"./flash.sh {role} {int(node_id)} {shlex.quote(port)}"
         # NO_MONITOR skips the blocking monitor step; CLEAN=1 wipes sdkconfig+build for a full rebuild.
-        clean_env = "CLEAN=1 " if clean else ""
-        inner = f"source {shlex.quote(IDF_EXPORT)} && {clean_env}NO_MONITOR=1 {fcmd}"
+        cleanEnv = "CLEAN=1 " if clean else ""
+        inner = f"source {shlex.quote(IDF_EXPORT)} && {cleanEnv}NO_MONITOR=1 {fcmd}"
         if clean:
             self._publish("flash", "clean rebuild: wiping sdkconfig + build (full recompile)", level="system")
         self._publish("flash", f"$ {fcmd}", level="system")
         self._stream("flash", "flash", ["bash", "-lc", inner], cwd=FIRMWARE_DIR)
 
-    def run_pi(self, host: str, command: str) -> None:
+    def runPi(self, host: str, command: str) -> None:
         """Runs SSH command on Pi and streams output."""
         if not host:
             self._publish("pi", "no Pi host configured", level="error")
@@ -166,21 +166,21 @@ class DeviceHub:
         # -tt forces a pty so long-running capture scripts flush their output live
         self._stream("pi", "pi", ["ssh", "-tt", host, command])
 
-    def run_script(self, script_name: str, args: str = "") -> None:
+    def runScript(self, script_name: str, args: str = "") -> None:
         """Runs local python script from root dir and streams output."""
         if not script_name.endswith(".py"):
             self._publish("script", "Invalid script name", level="error")
             return
-        root_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+        rootDir = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
         cmd = ["python", "-u", script_name]
         if args:
             cmd.extend(shlex.split(args))
         self._publish(f"script:{script_name}", f"Running: {' '.join(cmd)}", level="system")
-        self._stream(f"script:{script_name}", f"script:{script_name}", cmd, cwd=root_dir)
+        self._stream(f"script:{script_name}", f"script:{script_name}", cmd, cwd=rootDir)
 
 
 
-    def stop_proc(self, proc_id: str | None = None) -> dict:
+    def stopProc(self, proc_id: str | None = None) -> dict:
         if proc_id is None:
             for pid in ["flash", "pi"]:
                 if pid in self._procs and self._procs[pid].poll() is None:

@@ -8,7 +8,7 @@ Machine learning for WaveTrace. Takes feature vectors or spectrograms from the p
 |---|---|
 | `Train.py` | Trains a presence or weapon head from a `.npy` dataset; saves `model.joblib` |
 | `Evaluate.py` | LOGO cross-validation (leave-one-session-out, leave-one-subject-out); reports confusion matrix and per-tier verdicts |
-| `Infer.py` | Runs `predict_window()` on a feature window; target latency < 8 ms |
+| `Infer.py` | Runs `predictWindow()` on a feature window; target latency < 8 ms |
 | `Model.py` | Head classes: `PresenceHead` (MLP default / SVM selectable) and `WeaponHead` (variance threshold / sklearn / CNN) |
 | `Weapon.py` | Weapon-specific features: σ²[p] inter-subcarrier variance, `reconstruct_complex_csi`, block-average decimation |
 | `Vote.py` | `SegmentVoter` — accumulates per-window predictions over one motion segment and emits a single stable verdict |

@@ -16,53 +16,53 @@ from wavetrace.Config import ModelConfig
 from wavetrace.recognition.Model import PresenceHead
 
 
-def leave_one_group_out(X, y, groups, make_head) -> dict:
+def leaveOneGroupOut(X, y, groups, make_head) -> dict:
     """Hold out one group per fold; fit a fresh head on the rest. Returns metrics dict."""
     X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y, dtype=np.int64)
     groups = np.asarray(groups)
     if np.unique(groups).size < 2:
-        raise ValueError("leave_one_group_out: need >= 2 distinct groups")
+        raise ValueError("leaveOneGroupOut: need >= 2 distinct groups")
 
     folds = []
-    true_all: list[np.ndarray] = []
-    pred_all: list[np.ndarray] = []
-    maj_all: list[np.ndarray] = []
+    trueAll: list[np.ndarray] = []
+    predAll: list[np.ndarray] = []
+    majAll: list[np.ndarray] = []
     for tr, te in LeaveOneGroupOut().split(X, y, groups):
         head = make_head().fit(X[tr], y[tr])
         pred = head.predict(X[te])
         majority = int(np.bincount(y[tr]).argmax())
-        maj_pred = np.full(te.size, majority, dtype=np.int64)
+        majPred = np.full(te.size, majority, dtype=np.int64)
         folds.append({
             "group": str(groups[te[0]]),
             "n": int(te.size),
             "accuracy": float((pred == y[te]).mean()),
-            "majority_accuracy": float((maj_pred == y[te]).mean()),
+            "majority_accuracy": float((majPred == y[te]).mean()),
         })
-        true_all.append(y[te])
-        pred_all.append(pred)
-        maj_all.append(maj_pred)
+        trueAll.append(y[te])
+        predAll.append(pred)
+        majAll.append(majPred)
 
-    y_true = np.concatenate(true_all)
-    y_pred = np.concatenate(pred_all)
-    y_maj = np.concatenate(maj_all)
-    cm = confusion_matrix(y_true, y_pred, labels=np.unique(y))
+    yTrue = np.concatenate(trueAll)
+    yPred = np.concatenate(predAll)
+    yMaj = np.concatenate(majAll)
+    cm = confusion_matrix(yTrue, yPred, labels=np.unique(y))
     report = {
         "folds": folds,
-        "accuracy": float((y_pred == y_true).mean()),
-        "majority_accuracy": float((y_maj == y_true).mean()),
+        "accuracy": float((yPred == yTrue).mean()),
+        "majority_accuracy": float((yMaj == yTrue).mean()),
         "confusion": cm,
     }
     if cm.shape == (2, 2):  # binary stage -> the P7 tier gate quantities ride along
-        report.update(binary_rates(cm))
+        report.update(binaryRates(cm))
     return report
 
 
-def binary_rates(confusion) -> dict:
+def binaryRates(confusion) -> dict:
     """{tpr, fp_rate} from 2x2 confusion matrix. O(1)."""
     cm = np.asarray(confusion, dtype=np.float64)
     if cm.shape != (2, 2):
-        raise ValueError(f"binary_rates expects a 2x2 confusion matrix, got {cm.shape}")
+        raise ValueError(f"binaryRates expects a 2x2 confusion matrix, got {cm.shape}")
     pos = cm[1].sum()
     neg = cm[0].sum()
     return {
@@ -71,41 +71,41 @@ def binary_rates(confusion) -> dict:
     }
 
 
-def tier_verdict(reports, *, fp_max: float = 0.10, tpr_min: float = 0.90) -> dict:
+def tierVerdict(reports, *, fp_max: float = 0.10, tpr_min: float = 0.90) -> dict:
     """Phase-7 tier gate: PASS iff EVERY report meets FP <= fp_max AND TPR >= tpr_min."""
-    worst_tpr = min(r["tpr"] for r in reports.values())
-    worst_fp = max(r["fp_rate"] for r in reports.values())
+    worstTpr = min(r["tpr"] for r in reports.values())
+    worstFp = max(r["fp_rate"] for r in reports.values())
     reasons = []
-    if worst_fp > fp_max:
-        reasons.append(f"fp_rate {worst_fp:.3f} > {fp_max}")
-    if worst_tpr < tpr_min:
-        reasons.append(f"tpr {worst_tpr:.3f} < {tpr_min}")
+    if worstFp > fp_max:
+        reasons.append(f"fp_rate {worstFp:.3f} > {fp_max}")
+    if worstTpr < tpr_min:
+        reasons.append(f"tpr {worstTpr:.3f} < {tpr_min}")
     return {
         "verdict": "PASS" if not reasons else "FAIL",
-        "tpr": worst_tpr,
-        "fp_rate": worst_fp,
+        "tpr": worstTpr,
+        "fp_rate": worstFp,
         "fp_max": fp_max,
         "tpr_min": tpr_min,
         "reasons": reasons,
     }
 
 
-def evaluate_weapon(
+def evaluateWeapon(
     X, y, *, session_ids, subject_ids, make_head,
     fp_max: float = 0.10, tpr_min: float = 0.90,
 ) -> dict:
     """Stage-E tier report: LOGO over session and subject + verdict. make_head returns unfitted WeaponHead."""
     reports = {
-        "session": leave_one_group_out(X, y, session_ids, make_head),
-        "subject": leave_one_group_out(X, y, subject_ids, make_head),
+        "session": leaveOneGroupOut(X, y, session_ids, make_head),
+        "subject": leaveOneGroupOut(X, y, subject_ids, make_head),
     }
-    reports["verdict"] = tier_verdict(
+    reports["verdict"] = tierVerdict(
         {k: reports[k] for k in ("session", "subject")}, fp_max=fp_max, tpr_min=tpr_min,
     )
     return reports
 
 
-def evaluate_concealment_gap(
+def evaluateConcealmentGap(
     X, y, is_concealed, groups, make_head, *,
     fp_max: float = 0.10, tpr_min: float = 0.90,
 ) -> dict:
@@ -118,19 +118,19 @@ def evaluate_concealment_gap(
     y = np.asarray(y, dtype=np.int64)
     mask = np.asarray(is_concealed, dtype=bool)
     if not mask.any() or mask.all():
-        raise ValueError("evaluate_concealment_gap: need both visible and concealed samples")
+        raise ValueError("evaluateConcealmentGap: need both visible and concealed samples")
 
     Xv, yv, gv = X[~mask], y[~mask], np.asarray(groups)[~mask]
     Xc, yc = X[mask], y[mask]
 
     # concealed: fit on ALL visible, predict the held-out concealed set (honest transfer number)
     head = make_head().fit(Xv, yv)
-    pred_c = head.predict(Xc)
-    cm_c = confusion_matrix(yc, pred_c, labels=[0, 1])
-    concealed = {"n": int(mask.sum()), "accuracy": float((pred_c == yc).mean()), **binary_rates(cm_c)}
+    predC = head.predict(Xc)
+    cmC = confusion_matrix(yc, predC, labels=[0, 1])
+    concealed = {"n": int(mask.sum()), "accuracy": float((predC == yc).mean()), **binaryRates(cmC)}
 
     # visible reference: within-condition LOGO (same head recipe) — the "seen condition" ceiling
-    visible = leave_one_group_out(Xv, yv, gv, make_head)
+    visible = leaveOneGroupOut(Xv, yv, gv, make_head)
 
     reasons = []
     if concealed["fp_rate"] > fp_max:
@@ -146,13 +146,13 @@ def evaluate_concealment_gap(
     }
 
 
-def segmenter_baseline(
+def segmenterBaseline(
     X_image, *, cv_window: int = 32, enter_cv: float = 0.08, exit_cv: float = 0.04
 ) -> np.ndarray:
     """No-train DSP baseline: per-window present/absent from PresenceSegmenter. O(n * window * cv_window)."""
     X_image = np.asarray(X_image, dtype=np.float32)
     if X_image.ndim != 3:
-        raise ValueError(f"segmenter_baseline expects (n, K, window), got {X_image.shape}")
+        raise ValueError(f"segmenterBaseline expects (n, K, window), got {X_image.shape}")
     n, _, win = X_image.shape
     if cv_window > win:
         raise ValueError("cv_window must be <= the front-end window length")
@@ -167,17 +167,17 @@ def segmenter_baseline(
     return pred
 
 
-def evaluate_presence(
+def evaluatePresence(
     X_features, y, *, session_ids, subject_ids, config: ModelConfig, X_image=None,
     segmenter_kwargs: dict | None = None,
 ) -> dict:
     """Phase-6 DoD report: LOGO over sessions and subjects + baselines."""
     make_head = lambda: PresenceHead(config)
     report = {
-        "session": leave_one_group_out(X_features, y, session_ids, make_head),
-        "subject": leave_one_group_out(X_features, y, subject_ids, make_head),
+        "session": leaveOneGroupOut(X_features, y, session_ids, make_head),
+        "subject": leaveOneGroupOut(X_features, y, subject_ids, make_head),
     }
     if X_image is not None:
-        seg_pred = segmenter_baseline(X_image, **(segmenter_kwargs or {}))
-        report["segmenter_accuracy"] = float((seg_pred == np.asarray(y)).mean())
+        segPred = segmenterBaseline(X_image, **(segmenter_kwargs or {}))
+        report["segmenter_accuracy"] = float((segPred == np.asarray(y)).mean())
     return report

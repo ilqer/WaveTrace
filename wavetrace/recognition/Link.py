@@ -7,32 +7,32 @@ mesh and 5 GHz Pi link can combine (different feature spaces).
 
 Usage: one trained head per link → per-window `add` per link → `finalize`.
 `quality` is caller-supplied (e.g. max(proba) margin or window motion energy).
-Static priors from `accuracy_weights` of per-link LOGO results, or operator-set.
+Static priors from `accuracyWeights` of per-link LOGO results, or operator-set.
 NOT wired into Cli — lands with multi-node serving in Phase 0+.
 """
 
 import numpy as np
 
 
-def accuracy_weights(balanced_acc: dict) -> dict:
+def accuracyWeights(balanced_acc: dict) -> dict:
     """LOGO balanced accuracy -> static priors: w = max(acc - 0.5, 0) * 2 (chance->0, perfect->1)."""
     return {k: max(float(v) - 0.5, 0.0) * 2.0 for k, v in balanced_acc.items()}
 
 
-def evaluate_link_fusion(links, y, *, qualities=None) -> dict:
+def evaluateLinkFusion(links, y, *, qualities=None) -> dict:
     """Measure decision-level band fusion offline — the ONLY level the 2.4 GHz mesh and the 5 GHz Pi
     combine (different feature spaces never share a tensor, plan §2.9.3). Blend each link's per-window
     class probabilities with accuracy-derived static priors and report fused vs best-single accuracy.
 
     links: dict[node_id -> (proba, balanced_acc)] — proba is (n, C) from that link's OWN head, and
-    balanced_acc is its LOGO balanced accuracy (→ static prior via accuracy_weights; chance→0).
+    balanced_acc is its LOGO balanced accuracy (→ static prior via accuracyWeights; chance→0).
     qualities: optional dict[node_id -> (n,) live quality], e.g. per-window max-proba margin.
 
     Returns {fused_accuracy, per_link_accuracy, weights, n}. O(n·L·C). If every link is at/below
     chance (all weights 0) it falls back to a uniform blend so the vote is still defined."""
     y = np.asarray(y, dtype=np.int64)
     ids = list(links)
-    weights = accuracy_weights({nid: links[nid][1] for nid in ids})
+    weights = accuracyWeights({nid: links[nid][1] for nid in ids})
     static = weights if any(w > 0 for w in weights.values()) else None  # uniform if all at chance
     voter = LinkVoter(static)
     fused = np.empty(y.size, dtype=np.int64)
@@ -41,10 +41,10 @@ def evaluate_link_fusion(links, y, *, qualities=None) -> dict:
             q = float(qualities[nid][i]) if qualities and nid in qualities else 1.0
             voter.add(nid, links[nid][0][i], quality=q)
         fused[i] = voter.finalize()[0]
-    per_link = {nid: float((np.argmax(links[nid][0], axis=1) == y).mean()) for nid in ids}
+    perLink = {nid: float((np.argmax(links[nid][0], axis=1) == y).mean()) for nid in ids}
     return {
         "fused_accuracy": float((fused == y).mean()),
-        "per_link_accuracy": per_link,
+        "per_link_accuracy": perLink,
         "weights": weights,
         "n": int(y.size),
     }

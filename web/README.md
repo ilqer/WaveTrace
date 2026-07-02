@@ -42,7 +42,7 @@ cd web/ui && npm install && npm run dev
 
 WebSocket channels: `/ws/inference`, `/ws/stream`, `/ws/logs`, `/ws/training`, `/ws/telemetry`, `/ws/device`.
 
-Warning: `/api/script/run` passes the script name and args to the shell via `device_hub.run_script`. Do not expose this server to untrusted users.
+Warning: `/api/script/run` passes the script name and args to the shell via `device_hub.runScript`. Do not expose this server to untrusted users.
 
 ## Files
 

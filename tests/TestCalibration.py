@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from wavetrace import CsiFrame
-from wavetrace.Calibration import Calibration, CalibrationResult, reflection_signature
+from wavetrace.Calibration import Calibration, CalibrationResult, reflectionSignature
 
 
 def _quietBaseline(A, S, F, informative, seed):
@@ -35,7 +35,7 @@ def test_calibration_locks_gain_and_selects_subcarriers():
     res = cal.finalize()
 
     assert isinstance(res, CalibrationResult)
-    assert res.num_baseline == F
+    assert res.numBaseline == F
     assert res.reference_scale > 0
     assert informative in res.subcarriers                 # most-variable subcarrier chosen
     assert len(res.subcarriers) <= 6
@@ -51,9 +51,9 @@ def test_calibration_gain_lock_usable_after_finalize():
     cal.finalize()
     f = frames[0]
     before = np.angle(f.grid).copy()
-    cal.gain_lock.apply(f)                                # locked -> no raise
+    cal.gainLock.apply(f)                                # locked -> no raise
     assert np.allclose(np.angle(f.grid), before, atol=1e-5)
-    assert np.abs(f.grid).mean() == pytest.approx(cal.gain_lock.reference_scale, rel=1e-4)
+    assert np.abs(f.grid).mean() == pytest.approx(cal.gainLock.reference_scale, rel=1e-4)
 
 
 def test_calibration_ready_flag():
@@ -94,7 +94,7 @@ def test_calibration_without_gain_lock():
     assert np.isnan(res.reference_scale)
     assert 7 in res.subcarriers                  # subcarrier selection unaffected
     with pytest.raises(ValueError):
-        _ = cal.gain_lock                        # disabled -> no lock to hand out
+        _ = cal.gainLock                        # disabled -> no lock to hand out
 
 
 # Baseline reflection reference (material signature).
@@ -113,8 +113,8 @@ def test_reflection_signature_baseline_is_neutral():
     # Magnitudes match baseline mean -> ratio 1.
     ref = CsiFrame(A, S)
     ref.grid[:, :] = res.baseline_mag.astype(np.complex64)
-    mag_ratio, _ = reflection_signature(np.asarray(ref.grid), res)
-    assert np.allclose(mag_ratio, 1.0, atol=1e-4)
+    magRatio, _ = reflectionSignature(np.asarray(ref.grid), res)
+    assert np.allclose(magRatio, 1.0, atol=1e-4)
 
 
 def test_reflection_signature_detects_attenuation():
@@ -130,7 +130,7 @@ def test_reflection_signature_detects_attenuation():
     g = np.asarray(frames[0].grid).copy()
     g[:, 4:8] *= 0.4                                          # object attenuates subcarriers 4..7
     subj.grid[:, :] = g
-    mag_ratio, phase_delta = reflection_signature(np.asarray(subj.grid), res)
-    assert mag_ratio[4:8].mean() < 0.6                        # clear attenuation dip
-    assert mag_ratio[10:].mean() == pytest.approx(1.0, abs=0.2)  # untouched band stays ~1
-    assert phase_delta.shape == (S - 1,)
+    magRatio, phaseDelta = reflectionSignature(np.asarray(subj.grid), res)
+    assert magRatio[4:8].mean() < 0.6                        # clear attenuation dip
+    assert magRatio[10:].mean() == pytest.approx(1.0, abs=0.2)  # untouched band stays ~1
+    assert phaseDelta.shape == (S - 1,)

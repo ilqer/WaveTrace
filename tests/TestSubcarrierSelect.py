@@ -44,8 +44,8 @@ def test_noise_gate_drops_low_amplitude_subcarrier():
     sigma = np.full(S, 0.05, dtype=np.float32)
     amp = _altMatrix(sigma)            # mean ~1 everywhere
     amp[:, 5] = np.where(np.arange(amp.shape[0]) % 2 == 0, 0.0015, 0.0005)  # mean ~0.001, high CV
-    raw_scores = np.array(nbvi_scores(amp))
-    assert int(np.argmax(raw_scores)) == 5             # it WOULD win on score
+    rawScores = np.array(nbvi_scores(amp))
+    assert int(np.argmax(rawScores)) == 5             # it WOULD win on score
     sel = select_subcarriers_nbvi(amp, noise_gate_percentile=0.15)
     assert 5 not in sel                                 # ...but the gate drops it
 

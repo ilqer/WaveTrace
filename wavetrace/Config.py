@@ -38,7 +38,7 @@ class ModelConfig:
     backend: str = "mlp"            # "mlp" (default) | "svm" | "variance" (P7) | "cnn" (P7)
     window: int = 128               # front-end window (frames), locked P4
     hop: int = 32                   # front-end hop (frames), locked P4
-    fs_tol: float = 0.10            # fs_ok: max relative live-fs deviation before a window is dropped
+    fs_tol: float = 0.10            # fsOk: max relative live-fs deviation before a window is dropped
     hidden: int = 32                # MLP hidden width (single layer — tiny head, O(1) forward)
     seed: int = 0                   # backend rng seed (deterministic training/inference)
     frame_average: int = 1          # T2/P10: non-overlapping decimating mean (M=1 = no change)

@@ -2,16 +2,16 @@
 
 The labelers already exist (`VisionLabeler`/`YoloLabeler` → presence+weapon boxes, `YoloSegLabeler`
 → occupancy-mask "where" target). The only missing piece for a laptop is a frame source whose
-timestamps share the CSI wall clock so `build_dataset`'s align step can match camera Labels to CSI
+timestamps share the CSI wall clock so `buildDataset`'s align step can match camera Labels to CSI
 windows. This module provides that.
 
-Capture is split from inference on purpose: `record_frames` grabs (timestamp, RGB) cheaply into a
-buffer during the live CSI capture, then `stream_labels` runs YOLO OFFLINE over that buffer. That
+Capture is split from inference on purpose: `recordFrames` grabs (timestamp, RGB) cheaply into a
+buffer during the live CSI capture, then `streamLabels` runs YOLO OFFLINE over that buffer. That
 keeps the capture loop real-time (no per-frame model latency) and makes the model step testable with
 an injected detector. cv2 is imported lazily so importing this module never requires OpenCV.
 
   Input:  webcam index (or an injected grab fn) + a Labeler.
-  Output: list[Label] timestamped on the CSI wall clock → pass as collect_source(labeler=...).
+  Output: list[Label] timestamped on the CSI wall clock → pass as collectSource(labeler=...).
 """
 
 import time
@@ -53,18 +53,18 @@ class WebcamCapture:
             "-",
         ]
         self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        frame_bytes = self._frame_bytes()
-        if frame_bytes is None:
+        frameBytes = self._frameBytes()
+        if frameBytes is None:
             self._proc.terminate()
             self._proc = None
             raise RuntimeError(
                 f"cannot open webcam index {self._index} via ffmpeg "
                 "(grant camera permission in System Settings → Privacy → Camera)"
             )
-        self._first_frame = frame_bytes  # buffer the first frame so read() can return it
+        self._first_frame = frameBytes  # buffer the first frame so read() can return it
         return self
 
-    def _frame_bytes(self) -> bytes | None:
+    def _frameBytes(self) -> bytes | None:
         """Read exactly one raw RGB frame from the ffmpeg pipe, or None on EOF/error."""
         n = self._width * self._height * 3
         buf = b""
@@ -84,7 +84,7 @@ class WebcamCapture:
         if raw is not None:
             self._first_frame = None
         else:
-            raw = self._frame_bytes()
+            raw = self._frameBytes()
         if raw is None:
             return None
         arr = np.frombuffer(raw, dtype=np.uint8).reshape(self._height, self._width, 3)
@@ -110,46 +110,46 @@ def _paced(grab, duration_s, *, fps, stop, sleep, clock):
     """Yield non-None items from `grab` for `duration_s`, throttled to ~`fps`. Shared by the buffered
     and online paths. `grab` is callable() -> item|None; `stop` an optional Event for early exit."""
     period = 1.0 / fps if fps > 0 else 0.0
-    t_end = clock() + duration_s
-    next_t = clock()
-    while clock() < t_end and (stop is None or not stop.is_set()):
+    tEnd = clock() + duration_s
+    nextT = clock()
+    while clock() < tEnd and (stop is None or not stop.is_set()):
         now = clock()
-        if now < next_t:
-            sleep(min(next_t - now, t_end - now))
+        if now < nextT:
+            sleep(min(nextT - now, tEnd - now))
             continue
-        next_t = now + period
+        nextT = now + period
         item = grab()
         if item is not None:
             yield item
 
 
-def record_frames(grab, duration_s: float, *, fps: float = 10.0, stop=None,
+def recordFrames(grab, duration_s: float, *, fps: float = 10.0, stop=None,
                   sleep=time.sleep, clock=time.monotonic) -> list:
     """Buffer (ts, frame) from `grab` for `duration_s` at ~`fps` (label OFFLINE later via
-    `stream_labels`). Keeps capture real-time when you don't want per-frame model latency. O(frames)."""
+    `streamLabels`). Keeps capture real-time when you don't want per-frame model latency. O(frames)."""
     return list(_paced(grab, duration_s, fps=fps, stop=stop, sleep=sleep, clock=clock))
 
 
-def record_labels_online(grab, labeler, duration_s: float, *, fps: float = 15.0, on_label=None,
+def recordLabelsOnline(grab, labeler, duration_s: float, *, fps: float = 15.0, onLabel=None,
                          stop=None, sleep=time.sleep, clock=time.monotonic) -> list:
     """ONLINE path: grab a frame and run `labeler` LIVE per frame for `duration_s` → sorted
-    list[Label]. `on_label(label)` is an optional per-frame callback for live feedback (e.g. a rolling
-    present/weapon count). Labels carry the CSI wall-clock timestamp so `build_dataset` aligns them to
+    list[Label]. `onLabel(label)` is an optional per-frame callback for live feedback (e.g. a rolling
+    present/weapon count). Labels carry the CSI wall-clock timestamp so `buildDataset` aligns them to
     CSI windows. Heavier than buffering (YOLO runs in the loop) but gives live detections. O(frames·model)."""
     labels = []
     for ts, img in _paced(grab, duration_s, fps=fps, stop=stop, sleep=sleep, clock=clock):
         lab = labeler.label(img, ts)
         labels.append(lab)
-        if on_label is not None:
-            on_label(lab)
+        if onLabel is not None:
+            onLabel(lab)
     labels.sort(key=lambda l: l.timestamp)
     return labels
 
 
-def stream_labels(labeler, frames, *, max_frames=None) -> list:
+def streamLabels(labeler, frames, *, max_frames=None) -> list:
     """Run `labeler` (a CameraLabeler — YoloLabeler / YoloSegLabeler / VisionLabeler) over an
     iterable of (timestamp, image) → list[Label] sorted by time. This is the camera label stream
-    `collect_source(..., labeler=...)` / `build_dataset` aligns to CSI window timestamps. Pure and
+    `collectSource(..., labeler=...)` / `buildDataset` aligns to CSI window timestamps. Pure and
     detector-agnostic, so it unit-tests with a stub detector. O(frames · model)."""
     labels = []
     for i, (ts, image) in enumerate(frames):

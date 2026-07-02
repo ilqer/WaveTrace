@@ -17,22 +17,22 @@ import time
 
 import numpy as np
 
-from wavetrace.Source import parse_batch_links, resample_uniform, bind_udp
-from wavetrace.Calibration import load_calibration
-from wavetrace.Frontend import iter_windows
-from wavetrace.recognition import mode_session
+from wavetrace.Source import parseBatchLinks, resampleUniform, bindUdp
+from wavetrace.Calibration import loadCalibration
+from wavetrace.Frontend import iterWindows
+from wavetrace.recognition import modeSession
 from wavetrace.recognition.Link import LinkVoter
-from wavetrace.Cli import _serving_plan
-from collect_count import count_name  # shared label formatting (count module is internally DRY)
+from wavetrace.Cli import _servingPlan
+from collect_count import countName  # shared label formatting (count module is internally DRY)
 
 
-def _min_width(result):
+def _minWidth(result):
     """Calibration subcarrier width (highest index + 1)."""
     idx = [int(i) for i in list(result.subcarriers) + list(result.image_subcarriers)]
     return 1 + max(idx)
 
 
-def _logo_acc(metrics_path):
+def _logoAcc(metrics_path):
     """Node head LOGO accuracy (session or subject)."""
     try:
         with open(metrics_path) as f:
@@ -46,7 +46,7 @@ def _logo_acc(metrics_path):
     return None
 
 
-def _expand_proba(proba, col_map, k):
+def _expandProba(proba, col_map, k):
     """Expand node head proba into global k-class vector. Unseen classes stay 0."""
     g = np.zeros(k, dtype=np.float64)
     for j, col in enumerate(col_map):
@@ -54,22 +54,22 @@ def _expand_proba(proba, col_map, k):
     return g
 
 
-def _last_window_proba(frames, fs, result, gain_lock, cfg, intercarrier, pick, session):
+def _lastWindowProba(frames, fs, result, gainLock, cfg, intercarrier, pick, session):
     """Resample frames, window, and return last window's proba."""
-    res = resample_uniform(frames, fs)
+    res = resampleUniform(frames, fs)
     if len(res) < cfg.window:
         return None
     last = None
-    for _t, features, image, ic in iter_windows(
-        res, result.subcarriers, gain_lock,
+    for _t, features, image, ic in iterWindows(
+        res, result.subcarriers, gainLock,
         window=cfg.window, hop=cfg.hop, intercarrier=intercarrier,
         image_subcarriers=result.image_subcarriers,
     ):
-        last = session.predict_proba_window(pick(features, image, ic))
+        last = session.predictProbaWindow(pick(features, image, ic))
     return last
 
 
-def load_count_nodes(cal_root, model_root):
+def loadCountNodes(cal_root, model_root):
     """Discover calibrations and count heads per RX-node.
     Builds global class space, col_map, and static weight (LOGO accuracy with chance 1/K)."""
     nodes = {}
@@ -79,26 +79,26 @@ def load_count_nodes(cal_root, model_root):
         if not base[len("node"):].isdigit():
             continue
         nid = int(base[len("node"):])
-        cal_dir = os.path.join(cal_root, base)
-        model_path = os.path.join(model_dir, "model.joblib")
-        if not (os.path.isdir(cal_dir) and os.path.exists(model_path)):
+        calDir = os.path.join(cal_root, base)
+        modelPath = os.path.join(model_dir, "model.joblib")
+        if not (os.path.isdir(calDir) and os.path.exists(modelPath)):
             continue
-        result, gain_lock = load_calibration(cal_dir)
-        session = mode_session("presence", model_path)  # count head is a multi-class PresenceHead
-        apply_lock, intercarrier, pick = _serving_plan("presence", session.head)
+        result, gainLock = loadCalibration(calDir)
+        session = modeSession("presence", modelPath)  # count head is a multi-class PresenceHead
+        applyLock, intercarrier, pick = _servingPlan("presence", session.head)
         nodes[nid] = dict(
-            result=result, lock=gain_lock if apply_lock else None,
+            result=result, lock=gainLock if applyLock else None,
             intercarrier=intercarrier, pick=pick, session=session, cfg=session.head.config,
-            min_width=_min_width(result), classes=[int(c) for c in session.head.classes_],
+            min_width=_minWidth(result), classes=[int(c) for c in session.head.classes_],
         )
-        accs[nid] = _logo_acc(os.path.join(model_dir, "metrics.json"))
+        accs[nid] = _logoAcc(os.path.join(model_dir, "metrics.json"))
 
     classes = sorted(set().union(*[set(m["classes"]) for m in nodes.values()])) if nodes else []
     k = len(classes)
-    col_of = {c: i for i, c in enumerate(classes)}
+    colOf = {c: i for i, c in enumerate(classes)}
     chance = 1.0 / k if k else 0.5
     for nid, m in nodes.items():
-        m["col_map"] = [col_of[c] for c in m["classes"]]
+        m["col_map"] = [colOf[c] for c in m["classes"]]
         a = accs[nid]
         # Chance-aware static reliability prior. None -> 1.0.
         m["weight"] = max(a - chance, 0.0) / max(1.0 - chance, 1e-9) if a is not None else 1.0
@@ -124,42 +124,42 @@ def main():
     LINK_TIMEOUT_S = 3.0   # drop a link from the vote if unheard this long
     BUFFER_S = 3.0         # per-link rolling history kept for resampling/windowing
 
-    nodes, classes = load_count_nodes(args.cal, args.model)
+    nodes, classes = loadCountNodes(args.cal, args.model)
     if not nodes:
         print(f"[ERROR] no count models under {args.model}/node*/model.joblib with a matching "
               f"{args.cal}/node*/. Run collect_baseline.py then collect_count.py first.")
         return
     k = len(classes)
-    labels = [count_name(c, args.max_count) for c in classes]
-    cls_arr = np.asarray(classes, dtype=np.float64)
+    labels = [countName(c, args.max_count) for c in classes]
+    clsArr = np.asarray(classes, dtype=np.float64)
 
     buffers = collections.defaultdict(collections.deque)  # keyed by (tx_short, rx_node)
-    last_seen = {}
-    link_ids = {}
+    lastSeen = {}
+    linkIds = {}
 
-    sock = bind_udp(args.port, timeout=0.5)
+    sock = bindUdp(args.port, timeout=0.5)
     wsummary = "  ".join(f"N{nid}:w={nodes[nid]['weight']:.2f}" for nid in sorted(nodes))
     print(f"PEOPLE-COUNT on udp/{args.port} (fs={TARGET_FS:g}Hz, classes={labels}, rx nodes={sorted(nodes)}; "
           f"vote weights {wsummary}). vary the headcount. Ctrl+C to stop.\n")
 
-    next_fuse = time.time() + CHUNK_S
+    nextFuse = time.time() + CHUNK_S
     try:
         while True:
             now = time.time()
             try:
                 payload, _ = sock.recvfrom(65535)
-                for key, frames in parse_batch_links(payload).items():
+                for key, frames in parseBatchLinks(payload).items():
                     m = nodes.get(key[1])  # key = (tx_short, rx_node); cal+head belong to the RX node
                     if m is not None and frames[0].num_subcarriers >= m["min_width"]:
                         buffers[key].extend(frames)
-                        last_seen[key] = now
-                        link_ids.setdefault(key, len(link_ids))
+                        lastSeen[key] = now
+                        linkIds.setdefault(key, len(linkIds))
             except socket.timeout:
                 pass
 
-            if now < next_fuse:
+            if now < nextFuse:
                 continue
-            next_fuse = now + CHUNK_S
+            nextFuse = now + CHUNK_S
 
             for buf in buffers.values():
                 if buf:
@@ -168,22 +168,22 @@ def main():
                         buf.popleft()
 
             # Static per-node reliability x live margin. Uniform fallback.
-            link_static = {lid: nodes[key[1]]["weight"] for key, lid in link_ids.items()}
-            static = link_static if any(w > 0 for w in link_static.values()) else None
+            linkStatic = {lid: nodes[key[1]]["weight"] for key, lid in linkIds.items()}
+            static = linkStatic if any(w > 0 for w in linkStatic.values()) else None
             voter = LinkVoter(static)
             breakdown = []
             for key in sorted(buffers):
-                if now - last_seen.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
+                if now - lastSeen.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
                 m = nodes[key[1]]
-                proba = _last_window_proba(list(buffers[key]), TARGET_FS, m["result"], m["lock"],
+                proba = _lastWindowProba(list(buffers[key]), TARGET_FS, m["result"], m["lock"],
                                            m["cfg"], m["intercarrier"], m["pick"], m["session"])
                 if proba is None:
                     continue
-                g = _expand_proba(proba, m["col_map"], k)
+                g = _expandProba(proba, m["col_map"], k)
                 top = np.sort(proba)[::-1]
                 quality = float(top[0] - top[1]) if proba.size > 1 else float(top[0])  # Decision margin.
-                voter.add(link_ids[key], g, quality=quality)
+                voter.add(linkIds[key], g, quality=quality)
                 breakdown.append(f"{key[0]}->{key[1]}:{classes[int(np.argmax(g))]}")
 
             if not breakdown:
@@ -196,8 +196,8 @@ def main():
                 continue
             blended = np.asarray(blended, dtype=np.float64)
             count = classes[int(np.argmax(blended))]
-            expected = float((cls_arr * blended).sum())  # Soft estimate (handles 'N+' as N).
-            print(f"PEOPLE {count_name(count, args.max_count):>3}  (~{expected:0.1f})  "
+            expected = float((clsArr * blended).sum())  # Soft estimate (handles 'N+' as N).
+            print(f"PEOPLE {countName(count, args.max_count):>3}  (~{expected:0.1f})  "
                   f"[{len(breakdown)} links] " + " ".join(breakdown))
     except KeyboardInterrupt:
         print("\nstopped")

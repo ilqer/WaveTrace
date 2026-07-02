@@ -113,6 +113,13 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
     train_per_link: false,
   });
 
+  // Presence/count heads are sklearn-only (mlp/svm); snap out of cnn/variance when stage isn't weapon.
+  useEffect(() => {
+    if (config.col_stage !== 'weapon' && !['mlp', 'svm'].includes(config.train_backend)) {
+      setConfig(prev => ({ ...prev, train_backend: 'mlp' }));
+    }
+  }, [config.col_stage]);
+
   // Fetch pinned subcarrier width when calib path changes.
   useEffect(() => {
     fetch(`/api/calib/info?path=${encodeURIComponent(config.calibration)}`)
@@ -453,17 +460,33 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
         {action === 'train' && (
           <>
             <div className="space-y-1">
-              <label className="text-xs text-slate-400">ML Backend</label>
+              <label className="text-xs text-slate-400">
+                ML Backend <span className="text-slate-600">({config.col_stage} stage)</span>
+              </label>
               <select
                 className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-sm text-slate-200"
                 value={config.train_backend}
                 onChange={e => setConfig({ ...config, train_backend: e.target.value })}
               >
-                <option value="cnn">CNN (PyTorch)</option>
-                <option value="mlp">MLP Classifier</option>
-                <option value="svm">SVM (calibrated)</option>
-                <option value="variance">Variance Threshold (weapon baseline)</option>
+                {config.col_stage === 'weapon' ? (
+                  <>
+                    <option value="cnn">CNN (PyTorch)</option>
+                    <option value="svm">SVM (calibrated)</option>
+                    <option value="variance">Variance Threshold (weapon baseline)</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="mlp">MLP Classifier</option>
+                    <option value="svm">SVM (calibrated)</option>
+                  </>
+                )}
               </select>
+              {config.col_stage !== 'weapon' && (
+                <p className="text-[10px] text-slate-500 leading-snug">
+                  {config.col_stage} training is sklearn-only (mlp/svm) — CNN and Variance Threshold
+                  are weapon-stage backends.
+                </p>
+              )}
               {config.train_backend === 'cnn' && (
                 <p className="text-[10px] text-amber-400/80 leading-snug">
                   CNN wants hundreds+ of windows. On small or weapon datasets it overfits — start with

@@ -8,7 +8,7 @@ Also: permutation importance for MLP/SVM, and confusion matrix helper. Offline/U
 import numpy as np
 
 
-def cnn_channel_weights(head) -> np.ndarray | None:
+def cnnChannelWeights(head) -> np.ndarray | None:
     """Static weight per input channel (normalized L2 norm of Conv2d filters). O(filters)."""
     net = getattr(head, "_net", None)
     if net is None:
@@ -17,13 +17,13 @@ def cnn_channel_weights(head) -> np.ndarray | None:
         w = getattr(m, "weight", None)
         if w is not None and w.dim() == 4:           # (out_ch, in_ch, kH, kW)
             W = w.detach().cpu().numpy()
-            per_in = np.sqrt((W ** 2).sum(axis=(0, 2, 3)))   # (in_ch,) energy
-            s = per_in.sum()
-            return (per_in / s).astype(np.float32) if s > 0 else per_in.astype(np.float32)
+            perIn = np.sqrt((W ** 2).sum(axis=(0, 2, 3)))   # (in_ch,) energy
+            s = perIn.sum()
+            return (perIn / s).astype(np.float32) if s > 0 else perIn.astype(np.float32)
     return None
 
 
-def ablation_importance(head, image, *, baseline_value=0.0) -> np.ndarray:
+def ablationImportance(head, image, *, baseline_value=0.0) -> np.ndarray:
     """Dynamic per-channel ablation importance. Zero channel, measure confidence drop."""
     img = np.asarray(image, dtype=np.float32)
     if img.ndim == 2:                       # (K, W) single channel
@@ -41,7 +41,7 @@ def ablation_importance(head, image, *, baseline_value=0.0) -> np.ndarray:
     return (drops / s).astype(np.float32) if s > 0 else np.full(C, 1.0 / C, np.float32)
 
 
-def feature_node_importance(head, X, *, node_dim=9, k: int, n_nodes: int,
+def featureNodeImportance(head, X, *, node_dim=9, k: int, n_nodes: int,
                              n_repeats=5, seed=0) -> np.ndarray:
     """Permutation importance per node for MLP/SVM feature head. O(n_nodes*n_repeats*predict)."""
     X = np.asarray(X, dtype=np.float32)

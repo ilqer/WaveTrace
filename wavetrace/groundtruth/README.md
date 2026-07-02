@@ -8,7 +8,7 @@ Tools for producing labels during data collection. A label tells the model what 
 |---|---|
 | `CameraLabeler.py` | Reads an MJPEG stream from the Pi camera and runs a YOLO or SAM vision model to produce bounding-box or segmentation labels at each frame |
 | `DatasetBuilder.py` | Pairs CSI windows with labels and serializes them to `x.npy` + `y.npy` + `meta.json` |
-| `Align.py` | Matches camera timestamps to CSI timestamps using nearest-neighbour lookup; measures residual clock skew with `estimate_clock_offset` |
+| `Align.py` | Matches camera timestamps to CSI timestamps using nearest-neighbour lookup; measures residual clock skew with `estimateClockOffset` |
 
 ## Ground-truth tiers (weapon mode)
 

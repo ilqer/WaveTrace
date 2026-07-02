@@ -20,9 +20,9 @@ import time
 
 import numpy as np
 
-from wavetrace.Source import RecordingSource, save_recording, parse_batch_links, resample_uniform, bind_udp
-from wavetrace.Cli import collect_source
-from wavetrace.recognition import train_presence
+from wavetrace.Source import RecordingSource, saveRecording, parseBatchLinks, resampleUniform, bindUdp
+from wavetrace.Cli import collectSource
+from wavetrace.recognition import trainPresence
 from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler
 
 SUBJECT = "u0"
@@ -30,12 +30,12 @@ TARGET_FS = 100.0   # resample grid; MUST match run_count.TARGET_FS so train and
 WINDOW = 128        # front-end window (frames); a link shorter than this on the grid emits no window
 
 
-def count_name(c, max_count):
+def countName(c, max_count):
     """Display label for a count class: the top level is the open-ended 'N+' bin."""
     return f"{c}+" if c >= max_count else str(c)
 
 
-def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
+def captureLinks(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
     """Collect up to n frames PER (tx->rx) LINK in ONE pass. Returns {(tx_short, rx_node): [frames]}.
 
     Per-link so training matches per-link serving (run_count): each directed link is its own clean
@@ -53,7 +53,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
 
     links = collections.defaultdict(list)  # (tx_short, rx_node) -> [frames]
     want = set(node_ids)
-    sock = bind_udp(port, timeout=15.0)
+    sock = bindUdp(port, timeout=15.0)
     start = time.time()
     lastPrint = start
     try:
@@ -62,7 +62,7 @@ def capture_links(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
                 payload, _ = sock.recvfrom(65535)
             except socket.timeout:
                 break  # total silence
-            for key, frames in parse_batch_links(payload).items():
+            for key, frames in parseBatchLinks(payload).items():
                 buf = links[key]
                 if len(buf) < n:
                     buf.extend(frames[: n - len(buf)])
@@ -124,7 +124,7 @@ def main():
         if not calNodes:
             print(f"\n[ERROR] node {args.node} has no calibration in {args.cal}.", file=sys.stderr)
             return
-    labels = [count_name(c, args.max_count) for c in counts]
+    labels = [countName(c, args.max_count) for c in counts]
     print(f"training nodes: {calNodes}; count classes: {labels}")
 
     os.makedirs(args.model, exist_ok=True)
@@ -132,26 +132,26 @@ def main():
 
     for i in range(args.sessions):
         for c in counts:
-            label = count_name(c, args.max_count)
-            cap = capture_links(
+            label = countName(c, args.max_count)
+            cap = captureLinks(
                 f"session {i+1}/{args.sessions} — put {label} people in the zone and have them move.",
                 args.frames, args.port, calNodes, countdown=5 if c == 0 else 0)
             print('\a\a\a', end='', flush=True)  # 3 beeps = done, stop moving
             for nid in calNodes:
                 # every (tx->rx) link on this node, resampled on its own grid, pooled into one head
                 for key in sorted(k for k in cap if k[1] == nid):
-                    fr = resample_uniform(cap.get(key, []), TARGET_FS)
+                    fr = resampleUniform(cap.get(key, []), TARGET_FS)
                     if len(fr) < WINDOW:
                         continue
                     span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
                     tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
                     rec = f"{args.root}/count_sess_{i}/c{c}/node{nid}/link_{tag}"
                     ds = f"{args.root}/count_ds_{i}/c{c}/node{nid}/link_{tag}"
-                    save_recording(fr, rec)
+                    saveRecording(fr, rec)
                     # constant-count labeler: every window in this segment gets class_id = c
                     lab = ScriptedLabeler([(span[0], span[1], True)],
                                           label_fn=lambda raw, t, _c=c, _n=label: (_c, _n))
-                    collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
+                    collectSource(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
                                    stage="presence", session_id=f"sess{i}", subject_id=SUBJECT,
                                    labeler=lab)
                     dsDirs[nid].append(ds)
@@ -162,7 +162,7 @@ def main():
         if not dsDirs[nid]:
             print(f"   [SKIP] node {nid}: no usable segments.")
             continue
-        _, m = train_presence(dsDirs[nid], out_dir=f"{args.model}/node{nid}")
+        _, m = trainPresence(dsDirs[nid], out_dir=f"{args.model}/node{nid}")
         logo = m.get("logo", {}).get("session")
         line = (f"   [OK]   node {nid}: samples={m['n_samples']} class_counts={m['class_counts']} "
                 f"train_acc={m['train_accuracy']:.3f}")
@@ -171,10 +171,10 @@ def main():
         print(line)
         if logo and "confusion" in logo:
             cm = np.asarray(logo["confusion"])
-            row_sums = cm.sum(axis=1)
-            class_names = [count_name(c, args.max_count) for c in counts]
-            per = {class_names[i]: f"{cm[i,i]/row_sums[i]:.0%}" if row_sums[i] > 0 else "n/a"
-                   for i in range(min(len(class_names), cm.shape[0]))}
+            rowSums = cm.sum(axis=1)
+            classNames = [countName(c, args.max_count) for c in counts]
+            per = {classNames[i]: f"{cm[i,i]/rowSums[i]:.0%}" if rowSums[i] > 0 else "n/a"
+                   for i in range(min(len(classNames), cm.shape[0]))}
             print(f"          per-class: {per}")
         trained.append(nid)
 

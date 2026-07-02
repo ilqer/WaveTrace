@@ -92,5 +92,5 @@ The remaining settings are fixed for the current hardware:
 ## Notes
 
 - Weapon mode requires `WIRE_VER=3` and a fixed `CSI_SCALE` (both are the default). A per-frame auto-scale removes the absolute amplitude that the metal signature lives in.
-- I/Q ordering in `parse_nexmon_csi` does not matter for amplitude-based presence detection; verify it on hardware before using phase-based features.
+- I/Q ordering in `parseNexmonCsi` does not matter for amplitude-based presence detection; verify it on hardware before using phase-based features.
 - For fusing this node with the ESP mesh, NTP-sync the Pi's clock to the same source the ESP nodes use (the Mac). Weapon or presence detection using the Pi alone does not need NTP.

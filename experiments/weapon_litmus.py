@@ -171,13 +171,13 @@ def main():
 
     data = gather_sigma2(args.root, args.node, per_link=args.per_link)
     if not data:
-        print(f"[ERROR] No weapon recordings under {args.root}/weapon_rec/*/<clear|weapon>/node*/.\n"
-              f"        Run collect_weapon.py first (it saves the grids this tool reads).")
+        print(f"[ERROR] no weapon recordings under {args.root}/weapon_rec/*/<clear|weapon>/node*/.\n"
+              f"        run collect_weapon.py first (it saves the grids this tool reads).")
         return
 
     unit = "tx->rx link" if args.per_link else "node"
     # per-link: sort by separability, best first; else by node id
-    print(f"Static σ²[p] litmus over {args.root}/weapon_rec  (metal physics: weapon -> LOWER σ²)\n")
+    print(f"static σ²[p] litmus over {args.root}/weapon_rec  (metal physics: weapon -> lower σ²)\n")
     print(f"{unit:>8}  {'AUC':>6}  {'dir':>4}  {'cohen_d':>8}  {'clear~':>10}  {'weapon~':>10}  "
           f"{'n(c/w)':>13}  verdict")
 

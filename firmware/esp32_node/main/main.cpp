@@ -1,6 +1,5 @@
-// Mesh node: STA (backhaul) + ESP-NOW (sensing).
-// Time-division round-robin: one transmits, others capture CSI. Rotating N*(N-1) links/cycle.
-// Dynamic ring: nodes learn peers via liveness timeout. Leader is lowest live ID. Token passes to next-higher ID on burst's last frame.
+// Mesh node: STA (backhaul) + ESP-NOW (sensing). Time-division round-robin over N*(N-1) links/cycle.
+// Dynamic ring: peers found via liveness timeout, leader = lowest live ID, token passes on last frame.
 
 #include <stdio.h>
 #include <string.h>

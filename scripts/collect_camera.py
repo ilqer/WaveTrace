@@ -25,26 +25,26 @@ import time
 
 import numpy as np
 
-from wavetrace.Source import (parse_batch_links, resample_uniform, bind_udp, save_recording,
+from wavetrace.Source import (parseBatchLinks, resampleUniform, bindUdp, saveRecording,
                               RecordingSource)
-from wavetrace.Calibration import load_calibration
-from wavetrace.Cli import collect_source
+from wavetrace.Calibration import loadCalibration
+from wavetrace.Cli import collectSource
 from wavetrace.Config import ModelConfig
-from wavetrace.groundtruth.DatasetBuilder import build_dataset_stacked, save_dataset
-from wavetrace.recognition import train_presence
-from wavetrace.groundtruth.CameraLabeler import YoloSegLabeler, presence_label_fn, weapon_label_fn
-from wavetrace.groundtruth.Webcam import (WebcamCapture, record_labels_online,
+from wavetrace.groundtruth.DatasetBuilder import buildDatasetStacked, saveDataset
+from wavetrace.recognition import trainPresence
+from wavetrace.groundtruth.CameraLabeler import YoloSegLabeler, presenceLabelFn, weaponLabelFn
+from wavetrace.groundtruth.Webcam import (WebcamCapture, recordLabelsOnline,
                                           COCO_WEAPON_CLASSES)
 
 TARGET_FS = 100.0   # resample grid; matches the other collectors so train/serve windows align
 WINDOW = 128
 
 
-def capture_csi(duration_s, port, node_ids):
+def captureCsi(duration_s, port, node_ids):
     """Drain CSI for `duration_s`, bucketing frames by RX node (every tx link merged into its node).
     Frames keep node_id + wall-clock timestamps so they stack/align. Returns {rx_node: [frames]}."""
     perNode = collections.defaultdict(list)
-    sock = bind_udp(port, timeout=1.0)
+    sock = bindUdp(port, timeout=1.0)
     tEnd = time.monotonic() + duration_s
     try:
         while time.monotonic() < tEnd:
@@ -52,7 +52,7 @@ def capture_csi(duration_s, port, node_ids):
                 payload, _ = sock.recvfrom(65535)
             except socket.timeout:
                 continue
-            for (_tx, rx), frames in parse_batch_links(payload).items():
+            for (_tx, rx), frames in parseBatchLinks(payload).items():
                 if not node_ids or rx in node_ids:
                     perNode[rx].extend(frames)
     finally:
@@ -87,20 +87,20 @@ def main():
     for d in sorted(glob.glob(f"{args.cal}/node*")):
         base = os.path.basename(d)
         if base[4:].isdigit():
-            calibs[int(base[4:])] = load_calibration(d)
+            calibs[int(base[4:])] = loadCalibration(d)
     if not calibs:
         print(f"[ERROR] no calibrations in {args.cal}/node* — run collect_baseline.py first.")
         return
     calNodes = sorted(calibs)
     print(f"nodes: {calNodes}. loading YOLO-seg (first run downloads weights)...")
 
-    labelFn = weapon_label_fn if args.stage == "weapon" else presence_label_fn
+    labelFn = weaponLabelFn if args.stage == "weapon" else presenceLabelFn
     labeler = YoloSegLabeler(args.weights or "yolov8n-seg.pt", weapon_classes=weaponClasses,
                              conf=args.conf, grid=args.grid, label_fn=labelFn)
 
     # capture: webcam (online YOLO) runs in a thread while the main thread drains all nodes' CSI
     pos = {"n": 0, "tot": 0, "last": time.monotonic()}
-    def on_label(lab):
+    def onLabel(lab):
         pos["tot"] += 1
         pos["n"] += int(lab.class_id == 1)
         now = time.monotonic()
@@ -110,19 +110,19 @@ def main():
             pos["last"] = now
 
     box = {}
-    def cam_worker():
+    def camWorker():
         try:
             with WebcamCapture(index=args.cam_index) as cap:
-                box["labels"] = record_labels_online(cap.read, labeler, args.duration,
-                                                     fps=args.fps, on_label=on_label)
+                box["labels"] = recordLabelsOnline(cap.read, labeler, args.duration,
+                                                     fps=args.fps, onLabel=onLabel)
         except Exception as e:  # camera permission / busy — report after join
             box["error"] = e
 
     print(f"\n>> capturing {args.duration:g}s — keep the subject in camera view and the mesh zone. Press Enter...")
     input()
-    th = threading.Thread(target=cam_worker, daemon=True)
+    th = threading.Thread(target=camWorker, daemon=True)
     th.start()
-    csi = capture_csi(args.duration, args.port, calNodes)
+    csi = captureCsi(args.duration, args.port, calNodes)
     th.join()
     print()
     if "error" in box:
@@ -139,7 +139,7 @@ def main():
     # resample each node once onto a uniform grid, keep node_id, reuse for both dataset builds
     res = {}
     for nid, frs in csi.items():
-        rf = resample_uniform(frs, TARGET_FS)
+        rf = resampleUniform(frs, TARGET_FS)
         for f in rf:
             f.node_id = nid
         res[nid] = rf
@@ -154,8 +154,8 @@ def main():
             continue
         rec = f"{args.root}/cam_rec/{sess}/node{nid}"
         ds = f"{args.root}/cam_ds/{args.stage}/node{nid}/{sess}"
-        save_recording(fr, rec)
-        collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [], stage=args.stage,
+        saveRecording(fr, rec)
+        collectSource(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [], stage=args.stage,
                        labeler=labels, session_id=sess, subject_id=args.subject,
                        subtract_ic_baseline=(args.stage == "weapon"))
         presBuilt.append(nid)
@@ -166,9 +166,9 @@ def main():
     hmDir = f"{args.root}/cam_ds/heatmap/{sess}"
     hmDs = None
     if merged:
-        hmDs = build_dataset_stacked(merged, calibs, labels, window=WINDOW, hop=32,
+        hmDs = buildDatasetStacked(merged, calibs, labels, window=WINDOW, hop=32,
                                       session_id=sess, subject_id=args.subject)
-        save_dataset(hmDs, hmDir)
+        saveDataset(hmDs, hmDir)
         nMask = sum(1 for lb in hmDs.labels if lb.mask)
         print(f"   [OK heatmap]  stacked {len(calNodes)} nodes -> {hmDir} "
               f"({hmDs.X_image.shape[0]} windows, {nMask} with masks)")
@@ -182,19 +182,19 @@ def main():
         for nid in presBuilt:
             dirs = sorted(glob.glob(f"{args.root}/cam_ds/{args.stage}/node{nid}/*"))
             if dirs:
-                train_presence(dirs, out_dir=f"{args.model}/node{nid}")
+                trainPresence(dirs, out_dir=f"{args.model}/node{nid}")
                 print(f"   [OK] presence node {nid} -> {args.model}/node{nid}")
         if hmDs is not None:
-            _train_heatmap(hmDir, f"{args.model}/heatmap.joblib", args.grid)
+            _trainHeatmap(hmDir, f"{args.model}/heatmap.joblib", args.grid)
 
     print(f"\ndone. presence nodes {presBuilt}; heatmap {'built' if hmDs is not None else 'skipped'}.")
 
 
-def _train_heatmap(dataset_dir, out_path, grid):
+def _trainHeatmap(dataset_dir, out_path, grid):
     """Train the camera-supervised occupancy HeatmapHead from a stacked dataset's Label.masks."""
-    from wavetrace.groundtruth import load_dataset
+    from wavetrace.groundtruth import loadDataset
     from wavetrace.recognition.Heatmap import HeatmapHead
-    ds = load_dataset(dataset_dir)
+    ds = loadDataset(dataset_dir)
     masks = [lb.mask for lb in ds.labels if lb.mask]
     if not masks:
         print("   [SKIP] heatmap: no masks — need a person/weapon visible to the camera.")

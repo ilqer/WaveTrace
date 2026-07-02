@@ -12,9 +12,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "firmware", "pi
 
 import struct  # noqa: E402
 
-from nexmon_reader import parse_nexmon_csi  # noqa: E402
-from publisher import BatchPublisher, mac_to_bytes, quantize_csi, quantize_csi_i16  # noqa: E402
-from wavetrace.Source import parse_batch, parse_batch_links  # noqa: E402
+from nexmon_reader import parseNexmonCsi  # noqa: E402
+from publisher import BatchPublisher, macToBytes, quantizeCsi, quantizeCsiI16  # noqa: E402
+from wavetrace.Source import parseBatch, parseBatchLinks  # noqa: E402
 
 AP = "aa:bb:cc:dd:ee:ff"
 NODE = 5
@@ -40,9 +40,9 @@ def _publisher(mtu=1450):
 
 
 def test_mac_to_bytes_roundtrip():
-    assert mac_to_bytes(AP) == bytes([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
+    assert macToBytes(AP) == bytes([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
     with pytest.raises(ValueError):
-        mac_to_bytes("aa:bb:cc")
+        macToBytes("aa:bb:cc")
 
 
 def test_quantize_preserves_amplitude_shape():
@@ -50,7 +50,7 @@ def test_quantize_preserves_amplitude_shape():
     S = 64
     k = np.arange(S)
     csi = ((1.0 + k / S) * np.exp(1j * k * 0.1)).astype(np.complex64)
-    raw = np.frombuffer(quantize_csi(csi), dtype=np.int8).astype(np.float32)
+    raw = np.frombuffer(quantizeCsi(csi), dtype=np.int8).astype(np.float32)
     assert raw.size == 2 * S
     # Host reconstruction: csi[k] = real=d[2k+1] + 1j*d[2k].
     rec = raw[1::2] + 1j * raw[0::2]
@@ -67,18 +67,18 @@ def test_batch_parses_through_host():
     for j in range(4):
         csi = ((1.0 + 0.01 * j) * np.exp(1j * np.linspace(0, np.pi, S))).astype(np.complex64)
         csis.append(csi)
-        pub.add(quantize_csi(csi), ts_us=1000 + j * 100)
+        pub.add(quantizeCsi(csi), ts_us=1000 + j * 100)
     pub.flush()
 
     assert len(pub._sock.sent) == 1
-    frames = parse_batch(pub._sock.sent[0])
+    frames = parseBatch(pub._sock.sent[0])
     assert len(frames) == 4
     for fr in frames:
         assert fr.node_id == NODE
         assert fr.grid.shape == (1, S)
 
     # Per-link split: the link key uses the AP's last two octets and rx node.
-    links = parse_batch_links(pub._sock.sent[0])
+    links = parseBatchLinks(pub._sock.sent[0])
     assert ("ee:ff", NODE) in links
     assert len(links[("ee:ff", NODE)]) == 4
 
@@ -91,10 +91,10 @@ def test_v3_int16_preserves_exact_amplitude():
     real = (np.arange(S) % 4000 - 2000).astype(np.float32)
     imag = (np.arange(S) % 3000 - 1500).astype(np.float32)
     csi = (real + 1j * imag).astype(np.complex64)
-    pub.add(quantize_csi_i16(csi, scale=1.0), ts_us=42)
+    pub.add(quantizeCsiI16(csi, scale=1.0), ts_us=42)
     pub.flush()
 
-    links = parse_batch_links(pub._sock.sent[0])
+    links = parseBatchLinks(pub._sock.sent[0])
     frames = links[("ee:ff", NODE)]
     assert len(frames) == 1
     got = frames[0].grid[0]
@@ -112,11 +112,11 @@ def _nexmon_payload(mac_bytes, real, imag):
 
 
 def test_parse_nexmon_csi_roundtrip():
-    mac = mac_to_bytes(AP)
+    mac = macToBytes(AP)
     S = 128
     real = (np.arange(S) % 50 - 25).astype(np.int16)
     imag = (np.arange(S) % 30 - 15).astype(np.int16)
-    out = parse_nexmon_csi(_nexmon_payload(mac, real, imag))
+    out = parseNexmonCsi(_nexmon_payload(mac, real, imag))
     assert out is not None
     src, csi = out
     assert src == mac
@@ -126,8 +126,8 @@ def test_parse_nexmon_csi_roundtrip():
 
 
 def test_parse_nexmon_csi_rejects_malformed():
-    assert parse_nexmon_csi(b"\x00" * 10) is None          # shorter than header
-    assert parse_nexmon_csi(b"\x00" * (18 + 3)) is None     # non-multiple-of-4 body
+    assert parseNexmonCsi(b"\x00" * 10) is None          # shorter than header
+    assert parseNexmonCsi(b"\x00" * (18 + 3)) is None     # non-multiple-of-4 body
 
 
 def test_mtu_splits_but_preserves_all_records():
@@ -136,11 +136,11 @@ def test_mtu_splits_but_preserves_all_records():
     n = 17
     for j in range(n):
         csi = np.exp(1j * np.linspace(0, np.pi, S)).astype(np.complex64)
-        pub.add(quantize_csi(csi), ts_us=j)
+        pub.add(quantizeCsi(csi), ts_us=j)
     pub.flush()
 
     assert len(pub._sock.sent) > 1  # split across datagrams
-    total = sum(len(parse_batch(d)) for d in pub._sock.sent)
+    total = sum(len(parseBatch(d)) for d in pub._sock.sent)
     assert total == n
     for d in pub._sock.sent:
         assert len(d) <= 1450

@@ -2,7 +2,7 @@ import json
 import asyncio
 from typing import Any
 
-from wavetrace.output.Publisher import Publisher, result_to_dict
+from wavetrace.output.Publisher import Publisher, resultToDict
 
 class WsPublisher(Publisher):
     """WebSocket publisher. Thread-safely pushes inference results to an asyncio queue."""
@@ -12,6 +12,6 @@ class WsPublisher(Publisher):
         self.queue = queue
 
     def publish(self, result: Any) -> None:
-        data = result_to_dict(result, mode=self.mode)
+        data = resultToDict(result, mode=self.mode)
         # Thread-safe push since publish() is called from a background thread
         asyncio.run_coroutine_threadsafe(self.queue.put(json.dumps(data)), self.loop)

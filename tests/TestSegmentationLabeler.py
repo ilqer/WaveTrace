@@ -10,8 +10,8 @@ import pytest
 from wavetrace.groundtruth import (
     Segment,
     SegmentationLabeler,
-    presence_label_fn,
-    weapon_label_fn,
+    presenceLabelFn,
+    weaponLabelFn,
 )
 
 IMG = np.zeros((8, 8, 3), dtype=np.uint8)  # Dummy frame. Stub segmenter ignores content.
@@ -35,7 +35,7 @@ def _segmenter(*segments):
 
 
 def test_person_sets_present_bbox_and_mask_grid():
-    lab = SegmentationLabeler(_segmenter(Segment(0, 0.9, PERSON)), grid=8, label_fn=presence_label_fn)
+    lab = SegmentationLabeler(_segmenter(Segment(0, 0.9, PERSON)), grid=8, label_fn=presenceLabelFn)
     l = lab.label(IMG, 1.0)
     assert l.class_id == 1 and l.name == "present"
     assert l.mask_grid == 8 and len(l.mask) == 64
@@ -48,7 +48,7 @@ def test_person_sets_present_bbox_and_mask_grid():
 
 
 def test_no_segment_is_absent_with_no_mask():
-    lab = SegmentationLabeler(_segmenter(), label_fn=presence_label_fn)
+    lab = SegmentationLabeler(_segmenter(), label_fn=presenceLabelFn)
     l = lab.label(IMG, 0.0)
     assert l.class_id == 0 and l.name == "absent"
     assert l.bbox is None and list(l.mask) == [] and l.mask_grid == 0
@@ -56,7 +56,7 @@ def test_no_segment_is_absent_with_no_mask():
 
 def test_weapon_inside_person_passes_gate():
     seg = _segmenter(Segment(0, 0.9, PERSON), Segment(43, 0.8, WEAPON_IN))
-    lab = SegmentationLabeler(seg, weapon_classes=(43,), overlap_min=0.5, label_fn=weapon_label_fn)
+    lab = SegmentationLabeler(seg, weapon_classes=(43,), overlap_min=0.5, label_fn=weaponLabelFn)
     l = lab.label(IMG, 2.0)
     assert l.class_id == 1 and l.name == "weapon"
     # Supervised on weapon mask, not person mask. Grid mass is localized.
@@ -65,26 +65,26 @@ def test_weapon_inside_person_passes_gate():
 
 def test_weapon_outside_person_rejected_by_gate():
     seg = _segmenter(Segment(0, 0.9, PERSON), Segment(43, 0.95, WEAPON_OUT))
-    lab = SegmentationLabeler(seg, weapon_classes=(43,), overlap_min=0.5, label_fn=weapon_label_fn)
+    lab = SegmentationLabeler(seg, weapon_classes=(43,), overlap_min=0.5, label_fn=weaponLabelFn)
     l = lab.label(IMG, 3.0)
     assert l.class_id == 0 and l.name == "no_weapon"  # High conf, but fails mask-overlap gate.
 
 
 def test_weapon_without_person_rejected():
     lab = SegmentationLabeler(_segmenter(Segment(43, 0.99, WEAPON_OUT)), weapon_classes=(43,),
-                              label_fn=weapon_label_fn)
+                              label_fn=weaponLabelFn)
     assert lab.label(IMG, 0.0).class_id == 0  # No person to gate against.
 
 
 def test_low_confidence_segment_filtered():
-    lab = SegmentationLabeler(_segmenter(Segment(0, 0.10, PERSON)), conf=0.5, label_fn=presence_label_fn)
+    lab = SegmentationLabeler(_segmenter(Segment(0, 0.10, PERSON)), conf=0.5, label_fn=presenceLabelFn)
     assert lab.label(IMG, 0.0).class_id == 0
 
 
 def test_best_person_chosen_by_confidence():
     small = _rect_mask(0, 0, 2, 2)
     seg = _segmenter(Segment(0, 0.5, small), Segment(0, 0.95, PERSON))
-    lab = SegmentationLabeler(seg, grid=8, label_fn=presence_label_fn)
+    lab = SegmentationLabeler(seg, grid=8, label_fn=presenceLabelFn)
     l = lab.label(IMG, 0.0)
     assert l.bbox[3] == pytest.approx(1.0)  # Selects full-height higher-conf person.
 
@@ -96,5 +96,5 @@ def test_non_callable_segmenter_rejected():
 
 def _grid_sum(mask, lab):
     """Occupancy-grid mass of a mask at the labeler's grid resolution (test helper)."""
-    from wavetrace.groundtruth.CameraLabeler import _mask_to_grid
-    return sum(_mask_to_grid(mask, lab._grid))
+    from wavetrace.groundtruth.CameraLabeler import _maskToGrid
+    return sum(_maskToGrid(mask, lab._grid))

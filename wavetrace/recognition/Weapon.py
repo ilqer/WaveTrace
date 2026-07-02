@@ -17,7 +17,7 @@ import joblib
 import numpy as np
 
 from wavetrace.Config import ModelConfig
-from wavetrace.recognition.Model import sklearn_pipeline
+from wavetrace.recognition.Model import sklearnPipeline
 
 # Column of the 27-block holding the WINDOW MEAN of the per-packet σ²[p] series (µ|σ²|CV, 9 stats each, stat 0 = mean).
 VARIANCE_FEATURE = 9
@@ -34,7 +34,7 @@ def _torch():
         ) from e
 
 
-def _build_net(torch, hidden: int, num_classes: int, in_channels: int = 1):
+def _buildNet(torch, hidden: int, num_classes: int, in_channels: int = 1):
     """Small 2D-CNN. AdaptiveAvgPool makes it (K, window)-agnostic."""
     nn = torch.nn
     return nn.Sequential(
@@ -52,7 +52,7 @@ class WeaponHead:
         self._vf = int(variance_feature)
         # how the serving layer (Cli.run) must assemble x: "ic27" | "fusion" | "cnn"; None for directly-constructed heads.
         self.feature_mode: str | None = None
-        self._pipe = sklearn_pipeline(config) if config.backend in ("mlp", "svm") else None
+        self._pipe = sklearnPipeline(config) if config.backend in ("mlp", "svm") else None
         self._classes: np.ndarray | None = None
         # variance-backend state
         self._thr = self._scale = None
@@ -64,7 +64,7 @@ class WeaponHead:
 
     @property
     def classes_(self) -> np.ndarray:
-        self._require_fitted()
+        self._requireFitted()
         return self._pipe.classes_ if self._pipe is not None else self._classes
 
     # ----- fit ------------------------------------------------------------------------------------
@@ -81,82 +81,82 @@ class WeaponHead:
                 "weapon and no-weapon windows (check weapon label spans / --weapon-depth)"
             )
         if self.config.backend == "variance":
-            self._fit_variance(np.asarray(X, dtype=np.float32), y)
+            self._fitVariance(np.asarray(X, dtype=np.float32), y)
         elif self.config.backend == "cnn":
-            self._fit_cnn(X, y, epochs=epochs, lr=lr, batch_size=batch_size, report=report)
+            self._fitCnn(X, y, epochs=epochs, lr=lr, batch_size=batch_size, report=report)
         else:
             self._pipe.fit(np.asarray(X, dtype=np.float32), y)
         return self
 
-    def _fit_variance(self, X, y) -> None:
+    def _fitVariance(self, X, y) -> None:
         classes = np.unique(y)
         if classes.size != 2:
             raise ValueError(f"variance backend is binary, got classes {classes.tolist()}")
         x = X[:, self._vf]
         order = np.argsort(x, kind="stable")
         xs = x[order]
-        is_pos = (y[order] == classes[1]).astype(np.int64)
-        P = int(is_pos.sum())
-        N = int(is_pos.size - P)
+        isPos = (y[order] == classes[1]).astype(np.int64)
+        P = int(isPos.sum())
+        N = int(isPos.size - P)
         if P == 0 or N == 0:
             raise ValueError("variance backend needs both classes in the training data")
-        pos_below = np.cumsum(is_pos)              # positives among xs[:i+1]
-        n_below = np.arange(1, xs.size + 1)
+        posBelow = np.cumsum(isPos)              # positives among xs[:i+1]
+        nBelow = np.arange(1, xs.size + 1)
         # balanced accuracy of "positive when x <= thr" at every split point; one O(n) pass over the sorted feature
-        tpr_low = pos_below / P
-        tnr_low = (N - (n_below - pos_below)) / N
-        bal_low = (tpr_low + tnr_low) / 2.0
-        bal_high = 1.0 - bal_low                   # flipping the direction flips both rates
+        tprLow = posBelow / P
+        tnrLow = (N - (nBelow - posBelow)) / N
+        balLow = (tprLow + tnrLow) / 2.0
+        balHigh = 1.0 - balLow                   # flipping the direction flips both rates
         valid = np.empty(xs.size, dtype=bool)      # no threshold between equal feature values
         valid[:-1] = xs[:-1] < xs[1:]
         valid[-1] = False
         if not valid.any():
             raise ValueError("variance backend: feature is constant, nothing to threshold")
-        i_low = int(np.flatnonzero(valid)[np.argmax(bal_low[valid])])
-        i_high = int(np.flatnonzero(valid)[np.argmax(bal_high[valid])])
-        self._positive_below = bool(bal_low[i_low] >= bal_high[i_high])
-        i = i_low if self._positive_below else i_high
+        iLow = int(np.flatnonzero(valid)[np.argmax(balLow[valid])])
+        iHigh = int(np.flatnonzero(valid)[np.argmax(balHigh[valid])])
+        self._positive_below = bool(balLow[iLow] >= balHigh[iHigh])
+        i = iLow if self._positive_below else iHigh
         self._thr = float((xs[i] + xs[i + 1]) / 2.0)
         mad = float(np.median(np.abs(x - np.median(x))))
         self._scale = 1.4826 * mad if mad > 0 else (float(x.std()) or 1.0)  # robust σ for the logistic
         self._classes = classes
 
-    def _fit_cnn(self, X, y, *, epochs, lr, batch_size, report=None) -> None:
+    def _fitCnn(self, X, y, *, epochs, lr, batch_size, report=None) -> None:
         torch = _torch()
-        imgs = self._as_images(np.asarray(X, dtype=np.float32))  # (n, C, K, W) — 4-D
+        imgs = self._asImages(np.asarray(X, dtype=np.float32))  # (n, C, K, W) — 4-D
         self._image_shape = imgs.shape[1:]                        # (C, K, W) — always 3-tuple
         in_channels = imgs.shape[1]
         self._classes = np.unique(y)
-        y_idx = np.searchsorted(self._classes, y)
+        yIdx = np.searchsorted(self._classes, y)
         mean, std = float(imgs.mean()), float(imgs.std()) or 1.0
         self._norm = (mean, std)
         torch.manual_seed(self.config.seed)
-        net = _build_net(torch, self.config.hidden, int(self._classes.size), in_channels=in_channels)
+        net = _buildNet(torch, self.config.hidden, int(self._classes.size), in_channels=in_channels)
         xt = torch.from_numpy((imgs - mean) / std)  # (n, C, K, W) — no unsqueeze
-        yt = torch.from_numpy(y_idx.astype(np.int64))
+        yt = torch.from_numpy(yIdx.astype(np.int64))
         opt = torch.optim.Adam(net.parameters(), lr=lr)
-        loss_fn = torch.nn.CrossEntropyLoss()
+        lossFn = torch.nn.CrossEntropyLoss()
         gen = torch.Generator().manual_seed(self.config.seed)
         net.train()
         n = xt.shape[0]
         for ep in range(epochs):
-            batch_losses = []
+            batchLosses = []
             for idx in torch.randperm(n, generator=gen).split(batch_size):
                 opt.zero_grad()
-                loss = loss_fn(net(xt[idx]), yt[idx])
+                loss = lossFn(net(xt[idx]), yt[idx])
                 loss.backward()
                 opt.step()
-                batch_losses.append(loss.item())
-            ep_loss_avg = float(np.mean(batch_losses)) if batch_losses else 0.0
-            print(f"      cnn ep {ep+1:3d}/{epochs}  loss={ep_loss_avg:.4f}", end="\r", flush=True)
+                batchLosses.append(loss.item())
+            epLossAvg = float(np.mean(batchLosses)) if batchLosses else 0.0
+            print(f"      cnn ep {ep+1:3d}/{epochs}  loss={epLossAvg:.4f}", end="\r", flush=True)
             if report is not None:
                 # batch-loss spread = confidence band on the live training curve; accuracy from a cheap eval-mode pass
-                ep_loss_std = float(np.std(batch_losses)) if len(batch_losses) > 1 else 0.0
+                epLossStd = float(np.std(batchLosses)) if len(batchLosses) > 1 else 0.0
                 net.eval()
                 with torch.no_grad():
                     acc = float((net(xt).argmax(1) == yt).float().mean())
                 net.train()
-                report(ep + 1, {"loss": ep_loss_avg, "loss_std": ep_loss_std, "acc": acc})
+                report(ep + 1, {"loss": epLossAvg, "loss_std": epLossStd, "acc": acc})
         print()
         net.eval()
         self._net = net
@@ -170,22 +170,22 @@ class WeaponHead:
 
     def predict_proba(self, X) -> np.ndarray:
         """Predict class probabilities."""
-        self._require_fitted()
+        self._requireFitted()
         X = np.asarray(X, dtype=np.float32)
         if self.config.backend == "variance":
             # logistic in the threshold margin; sign flips with the learned direction
             m = (self._thr - X[:, self._vf]) / self._scale
-            p_pos = 1.0 / (1.0 + np.exp(-(m if self._positive_below else -m)))
-            return np.stack([1.0 - p_pos, p_pos], axis=1)
+            pPos = 1.0 / (1.0 + np.exp(-(m if self._positive_below else -m)))
+            return np.stack([1.0 - pPos, pPos], axis=1)
         if self.config.backend == "cnn":
             torch = _torch()
-            imgs = (self._as_images(X) - self._norm[0]) / self._norm[1]  # 4-D (n,C,K,W)
+            imgs = (self._asImages(X) - self._norm[0]) / self._norm[1]  # 4-D (n,C,K,W)
             with torch.no_grad():
                 logits = self._net(torch.from_numpy(imgs))  # no unsqueeze — already 4-D
                 return torch.softmax(logits, dim=1).numpy()
         return self._pipe.predict_proba(X)
 
-    def _as_images(self, X) -> np.ndarray:
+    def _asImages(self, X) -> np.ndarray:
         """Format to 4-D (n,C,K,W) for cnn fit and predict_proba."""
         if X.ndim == 4:
             return np.ascontiguousarray(X)
@@ -197,7 +197,7 @@ class WeaponHead:
     # ----- persist --------------------------------------------------------------------------------
 
     def save(self, path) -> Path:
-        self._require_fitted()
+        self._requireFitted()
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         blob = {"config": asdict(self.config), "variance_feature": self._vf,
@@ -229,18 +229,18 @@ class WeaponHead:
             torch = _torch()
             head._classes = blob["classes"]
             head._norm = blob["norm"]
-            raw_shape = tuple(blob["image_shape"])
+            rawShape = tuple(blob["image_shape"])
             # pre-P10 blobs store a 2-tuple (K, W); prepend C=1 to get the canonical 3-tuple
-            head._image_shape = raw_shape if len(raw_shape) == 3 else (1,) + raw_shape
+            head._image_shape = rawShape if len(rawShape) == 3 else (1,) + rawShape
             in_channels = head._image_shape[0]
-            net = _build_net(torch, head.config.hidden, int(head._classes.size),
+            net = _buildNet(torch, head.config.hidden, int(head._classes.size),
                              in_channels=in_channels)
             net.load_state_dict({k: torch.from_numpy(v) for k, v in blob["state"].items()})
             net.eval()
             head._net = net
         return head
 
-    def _require_fitted(self) -> None:
+    def _requireFitted(self) -> None:
         fitted = (self._pipe is not None and hasattr(self._pipe, "classes_")) \
             or self._thr is not None or self._net is not None
         if not fitted:

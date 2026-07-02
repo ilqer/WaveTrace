@@ -9,10 +9,10 @@ import numpy as np
 
 from wavetrace.recognition.Cir import (
     SUBCARRIER_SPACING_HZ,
-    cir_features,
-    cir_from_csi,
-    delay_dictionary,
-    estimate_cir_taps,
+    cirFeatures,
+    cirFromCsi,
+    delayDictionary,
+    estimateCirTaps,
 )
 
 DF = SUBCARRIER_SPACING_HZ
@@ -42,36 +42,36 @@ def test_two_tap_recovery_ht20():
     a2 = 0.3 * np.exp(1j * 3 * np.pi / 4)
     H = _two_tap_csi(56, [tau1, tau2], [a1, a2])
 
-    cir = cir_from_csi(H, oversample=3, lam=0.02, n_iter=200)
-    bin_w = cir.tap_delays_s[1]  # one fine-grid delay bin in seconds
+    cir = cirFromCsi(H, oversample=3, lam=0.02, n_iter=200)
+    binW = cir.tap_delays_s[1]  # one fine-grid delay bin in seconds
 
     # dominant tap is the direct path within one bin
-    assert abs(cir.dominant_delay_s - tau1) <= bin_w
+    assert abs(cir.dominantDelayS - tau1) <= binW
     # strong path dominates (power ratio 0.64 / 0.73 ≈ 0.88)
     assert cir.dominant_ratio > 0.7
     # exactly two taps survive the -25 dB floor
     assert cir.active_tap_count == 2
 
     # both physical paths appear as taps within one bin of their true delays
-    peak_delays = _peak_delays(cir)
-    assert np.min(np.abs(peak_delays - tau1)) <= bin_w
-    assert np.min(np.abs(peak_delays - tau2)) <= bin_w
+    peakDelays = _peak_delays(cir)
+    assert np.min(np.abs(peakDelays - tau1)) <= binW
+    assert np.min(np.abs(peakDelays - tau2)) <= binW
 
 
 def test_super_resolution_beats_nyquist():
     # two taps closer than the 1/BW native resolution must still separate (3× super-res).
     k = 56
-    native_res = 1.0 / (k * DF)  # ~57 ns
-    tau1, tau2 = 20e-9, 20e-9 + 0.6 * native_res  # sub-Nyquist separation
+    nativeRes = 1.0 / (k * DF)  # ~57 ns
+    tau1, tau2 = 20e-9, 20e-9 + 0.6 * nativeRes  # sub-Nyquist separation
     H = _two_tap_csi(k, [tau1, tau2], [1.0, 0.7])
-    cir = cir_from_csi(H, oversample=4, lam=0.01, n_iter=300)
+    cir = cirFromCsi(H, oversample=4, lam=0.01, n_iter=300)
     assert cir.active_tap_count >= 2
 
 
 def test_dictionary_is_well_conditioned():
     # κ(Φ) ≈ 1: ΦΦᴴ ≈ (G/K)·I for a normalised sub-DFT (ADR-134 §2.3).
     k, g = 52, 156
-    phi = delay_dictionary(np.arange(k), g)
+    phi = delayDictionary(np.arange(k), g)
     gram = phi @ phi.conj().T
     diag = np.diag(gram).real
     assert np.allclose(diag, g / k, rtol=0.1)
@@ -82,19 +82,19 @@ def test_dictionary_is_well_conditioned():
 def test_features_shape_and_gapped_band():
     # gapped layout (HT40-style central null) must be accepted via freq_idx.
     k = 48
-    freq_idx = np.concatenate([np.arange(0, 24), np.arange(28, 52)])  # 4-tone central gap
-    H = _two_tap_csi(52, [25e-9, 70e-9], [1.0, 0.4])[freq_idx]
-    cir = cir_from_csi(H, freq_idx=freq_idx, oversample=3, lam=0.02, n_iter=150)
-    feats = cir_features(cir)
+    freqIdx = np.concatenate([np.arange(0, 24), np.arange(28, 52)])  # 4-tone central gap
+    H = _two_tap_csi(52, [25e-9, 70e-9], [1.0, 0.4])[freqIdx]
+    cir = cirFromCsi(H, freq_idx=freqIdx, oversample=3, lam=0.02, n_iter=150)
+    feats = cirFeatures(cir)
     assert feats.shape == (5,)
     assert np.all(np.isfinite(feats))
 
 
 def test_rejects_bad_shapes():
-    phi = delay_dictionary(np.arange(10), 30)
+    phi = delayDictionary(np.arange(10), 30)
     import pytest
 
     with pytest.raises(Exception):
-        estimate_cir_taps(np.zeros(8, dtype=np.complex64), phi)  # subcarrier mismatch
+        estimateCirTaps(np.zeros(8, dtype=np.complex64), phi)  # subcarrier mismatch
     with pytest.raises(Exception):
-        cir_from_csi(np.array([], dtype=np.complex64))  # empty band
+        cirFromCsi(np.array([], dtype=np.complex64))  # empty band

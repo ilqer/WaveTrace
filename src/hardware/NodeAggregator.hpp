@@ -8,9 +8,8 @@
 
 namespace wavetrace {
 
-// Buffers the latest CsiFrame per node (multistatic capture). Nodes have independent CFO/SFO so they
-// can't be conjugate-multiplied across nodes; this stages fusion by grouping frames within a timestamp tolerance.
-// m = number of nodes (small): submit is O(n) (one frame's grid), synced/numNodes are O(m).
+// Buffers the latest CsiFrame per node; independent CFO/SFO per node rules out cross-node conjugate-
+// multiply, so this groups frames within a timestamp tolerance instead. submit is O(n), synced/numNodes O(m).
 class NodeAggregator {
 public:
   // Slot is reused after the node is first seen, so only a new node id allocates.

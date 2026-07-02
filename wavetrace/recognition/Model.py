@@ -31,7 +31,7 @@ from sklearn.svm import SVC
 from wavetrace.Config import ModelConfig
 
 
-def sklearn_pipeline(config: ModelConfig) -> Pipeline:
+def sklearnPipeline(config: ModelConfig) -> Pipeline:
     """Shared sklearn backend builder ('mlp' | 'svm') — used by PresenceHead and WeaponHead (P7).
 
     StandardScaler is required: the input features live on wildly different scales (mean |H| ~1 vs
@@ -46,7 +46,7 @@ def sklearn_pipeline(config: ModelConfig) -> Pipeline:
         # sklearn 1.9 deprecated SVC(probability=True); documented replacement (sigmoid calibration)
         clf = CalibratedClassifierCV(SVC(random_state=config.seed), ensemble=False)
     else:
-        raise ValueError(f"sklearn_pipeline supports 'mlp'/'svm', not {config.backend!r}")
+        raise ValueError(f"sklearnPipeline supports 'mlp'/'svm', not {config.backend!r}")
     return Pipeline([("scale", StandardScaler()), ("clf", clf)])
 
 
@@ -55,12 +55,12 @@ class PresenceHead:
 
     def __init__(self, config: ModelConfig):
         self.config = config
-        self._pipe = sklearn_pipeline(config)  # presence backends are sklearn-only (P6 lock)
+        self._pipe = sklearnPipeline(config)  # presence backends are sklearn-only (P6 lock)
         self._fitted = False
 
     @property
     def classes_(self) -> np.ndarray:
-        self._require_fitted()
+        self._requireFitted()
         return self._pipe.classes_
 
     def fit(self, X, y) -> "PresenceHead":
@@ -82,17 +82,17 @@ class PresenceHead:
 
     def predict(self, X) -> np.ndarray:
         """(n, d) -> (n,) class ids. O(1) per row."""
-        self._require_fitted()
+        self._requireFitted()
         return self._pipe.predict(np.asarray(X, dtype=np.float32))
 
     def predict_proba(self, X) -> np.ndarray:
         """(n, d) -> (n, C) class probabilities, columns ordered by classes_. O(1) per row."""
-        self._require_fitted()
+        self._requireFitted()
         return self._pipe.predict_proba(np.asarray(X, dtype=np.float32))
 
     def save(self, path) -> Path:
         """Persist (joblib) — config stored as a plain dict so loads survive dataclass evolution."""
-        self._require_fitted()
+        self._requireFitted()
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump({"config": asdict(self.config), "pipeline": self._pipe}, p)
@@ -107,6 +107,6 @@ class PresenceHead:
         head._fitted = True
         return head
 
-    def _require_fitted(self) -> None:
+    def _requireFitted(self) -> None:
         if not self._fitted:
             raise ValueError("PresenceHead: not fitted (call fit() or load())")

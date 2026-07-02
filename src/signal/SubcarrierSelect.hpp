@@ -7,9 +7,8 @@
 
 namespace wavetrace {
 
-// NBVI subcarrier selection. Offline/periodic over a quiet baseline (never per frame, so allocation is fine):
-// scores each subcarrier by amplitude variability relative to its level, keeping a spectrally-diverse
-// (non-consecutive) subset above a low-amplitude noise gate.
+// NBVI subcarrier selection (offline/periodic over a quiet baseline, not per-frame): scores each
+// subcarrier by amplitude variability, keeps a spectrally-diverse subset above a noise gate.
 
 // Per-subcarrier baseline means + noise-gate threshold (percentile of means); fills meansOut. O(F*S + S log S).
 inline float noiseGate(const float* amp, size_t numFrames, size_t numSubcarriers,

@@ -3,8 +3,8 @@
 import threading
 
 from wavetrace.groundtruth.CameraLabeler import (VisionLabeler, Detection,
-                                                 presence_label_fn, weapon_label_fn)
-from wavetrace.groundtruth.Webcam import (record_frames, record_labels_online, stream_labels,
+                                                 presenceLabelFn, weaponLabelFn)
+from wavetrace.groundtruth.Webcam import (recordFrames, recordLabelsOnline, streamLabels,
                                           COCO_WEAPON_CLASSES)
 
 
@@ -18,8 +18,8 @@ def _stub_detector(image):
 
 
 def test_stream_labels_presence_sorted_and_classified():
-    lab = VisionLabeler(_stub_detector, label_fn=presence_label_fn)
-    out = stream_labels(lab, [(2.0, "person"), (1.0, "empty")])
+    lab = VisionLabeler(_stub_detector, label_fn=presenceLabelFn)
+    out = streamLabels(lab, [(2.0, "person"), (1.0, "empty")])
     assert [l.timestamp for l in out] == [1.0, 2.0]      # sorted by time (for align)
     cls = {l.timestamp: l.class_id for l in out}
     assert cls[2.0] == 1 and cls[1.0] == 0               # person -> present, empty -> absent
@@ -27,16 +27,16 @@ def test_stream_labels_presence_sorted_and_classified():
 
 def test_stream_labels_open_carry_weapon():
     lab = VisionLabeler(_stub_detector, weapon_classes=COCO_WEAPON_CLASSES,
-                        label_fn=weapon_label_fn)
-    out = stream_labels(lab, [(0.0, "weapon"), (1.0, "person")])
+                        label_fn=weaponLabelFn)
+    out = streamLabels(lab, [(0.0, "weapon"), (1.0, "person")])
     cls = {l.timestamp: l.class_id for l in out}
     assert cls[0.0] == 1     # visible knife -> weapon
     assert cls[1.0] == 0     # person only -> no weapon
 
 
 def test_stream_labels_max_frames():
-    lab = VisionLabeler(_stub_detector, label_fn=presence_label_fn)
-    out = stream_labels(lab, [(0.0, "person")] * 5, max_frames=2)
+    lab = VisionLabeler(_stub_detector, label_fn=presenceLabelFn)
+    out = streamLabels(lab, [(0.0, "person")] * 5, max_frames=2)
     assert len(out) == 2
 
 
@@ -47,7 +47,7 @@ def test_record_frames_buffers_every_grab():
     def grab():
         calls["n"] += 1
         return ("frame", calls["n"])
-    out = record_frames(grab, 0.2, fps=20.0, sleep=lambda s: None, clock=clock)
+    out = recordFrames(grab, 0.2, fps=20.0, sleep=lambda s: None, clock=clock)
     assert all(isinstance(x, tuple) and x[0] == "frame" for x in out)
     assert len(out) == calls["n"]            # every grabbed frame is buffered
 
@@ -58,20 +58,20 @@ def test_record_frames_stop_event_returns_empty():
     def grab():
         calls["n"] += 1
         return ("f", 1)
-    out = record_frames(grab, 5.0, fps=10.0, stop=ev, sleep=lambda s: None, clock=lambda: 0.0)
+    out = recordFrames(grab, 5.0, fps=10.0, stop=ev, sleep=lambda s: None, clock=lambda: 0.0)
     assert out == [] and calls["n"] == 0     # pre-set stop -> no capture
 
 
 def test_record_labels_online_labels_live_and_calls_back():
-    """Online path runs labeler per frame, fires on_label, returns sorted Labels."""
-    lab = VisionLabeler(_stub_detector, label_fn=presence_label_fn)
+    """Online path runs labeler per frame, fires onLabel, returns sorted Labels."""
+    lab = VisionLabeler(_stub_detector, label_fn=presenceLabelFn)
     imgs = iter([(2.0, "person"), (1.0, "empty"), (0.5, "person")])
     ticks = {"t": 0.0}
     def clock():                       # advancing clock so the duration window actually closes
         t = ticks["t"]; ticks["t"] += 0.001; return t
     seen = []
-    out = record_labels_online(lambda: next(imgs, None), lab, 0.05, fps=1000.0,
-                               on_label=lambda l: seen.append(l.class_id),
+    out = recordLabelsOnline(lambda: next(imgs, None), lab, 0.05, fps=1000.0,
+                               onLabel=lambda l: seen.append(l.class_id),
                                sleep=lambda s: None, clock=clock)
     assert [l.timestamp for l in out] == [0.5, 1.0, 2.0]   # sorted for align
     assert len(seen) == 3                                    # live callback per frame

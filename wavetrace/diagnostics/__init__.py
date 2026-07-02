@@ -5,16 +5,16 @@ window or once per N frames), separate from the inference call, so it never slow
 
 from wavetrace.diagnostics.Telemetry import (
     NodeHealthMeter,
-    cluster_sync,
-    baseline_drift,
-    feature_separation,
-    dataset_report,
+    clusterSync,
+    baselineDrift,
+    featureSeparation,
+    datasetReport,
 )
 
 __all__ = [
     "NodeHealthMeter",
-    "cluster_sync",
-    "baseline_drift",
-    "feature_separation",
-    "dataset_report",
+    "clusterSync",
+    "baselineDrift",
+    "featureSeparation",
+    "datasetReport",
 ]

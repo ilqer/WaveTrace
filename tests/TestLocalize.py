@@ -14,7 +14,7 @@ from wavetrace.Localize import (
     Localizer,
     Localization,
     Tracker,
-    save_localization,
+    saveLocalization,
     SPEED_OF_LIGHT,
 )
 
@@ -22,7 +22,7 @@ from wavetrace.Localize import (
 def _meas(angle, conf, t, rng=5.0):
     """A mock Localization measurement. Only populates fields used by Tracker."""
     e = np.empty(0)
-    return Localization(timestamp=t, angles_deg=e, angle_spectrum=e, ranges_m=e, range_profile=e,
+    return Localization(timestamp=t, angles_deg=e, angleSpectrum=e, ranges_m=e, rangeProfile=e,
                         heatmap=e, peak_angle_deg=angle, peak_range_m=rng, x_m=0.0, y_m=0.0,
                         confidence=conf)
 
@@ -66,7 +66,7 @@ def test_bartlett_recovers_planted_angle(angle):
 def test_spectrum_normalized_and_confident():
     loc = Localizer(A, method="music")
     out = loc.locate(_planted_grid(15.0, seed=3))
-    assert out.angle_spectrum.min() >= 0.0 and out.angle_spectrum.max() == pytest.approx(1.0)
+    assert out.angleSpectrum.min() >= 0.0 and out.angleSpectrum.max() == pytest.approx(1.0)
     assert 0.0 < out.confidence <= 1.0  # a single sharp arrival -> peaked spectrum
 
 
@@ -130,7 +130,7 @@ def test_aggregate_azimuth_fallback_is_steady():
 def test_locate_stream_yields_per_frame():
     loc = Localizer(A, method="music")
     frames = [_Frame(_planted_grid(0.0, seed=i), t=i) for i in range(5)]
-    outs = list(loc.locate_stream(frames))
+    outs = list(loc.locateStream(frames))
     assert len(outs) == 5 and all(isinstance(o, Localization) for o in outs)
     assert [o.timestamp for o in outs] == [0, 1, 2, 3, 4]
 
@@ -139,7 +139,7 @@ def test_save_localization_roundtrip(tmp_path):
     loc = Localizer(A, method="music", num_ranges=40)
     frames = [_Frame(_planted_grid(20.0, seed=i), t=i * 0.1) for i in range(8)]
     agg = loc.aggregate(frames)
-    out = save_localization(agg, tmp_path / "loc")
+    out = saveLocalization(agg, tmp_path / "loc")
     angles = np.load(out / "angles.npy")
     ranges = np.load(out / "ranges.npy")
     heatmap = np.load(out / "heatmap.npy")
@@ -153,14 +153,14 @@ def test_localize_source_publishes_track_and_saves_map(tmp_path):
     from fixtures.SyntheticCsi import generateStream
     from wavetrace.Source import SyntheticSource
     from wavetrace.output import JsonlPublisher
-    from wavetrace.Cli import localize_source
+    from wavetrace.Cli import localizeSource
 
     frames, _ = generateStream(numAntennas=2, numSubcarriers=32, sampleRateHz=100.0, numFrames=20,
                                perturbationHz=1.0, perturbationDepth=0.3, cfoHz=10.0,
                                noiseStd=0.01, seed=3)
     sink = io.StringIO()
     pub = JsonlPublisher(sink, mode="localize")
-    path, agg = localize_source(SyntheticSource(frames), tmp_path / "loc", num_antennas=2,
+    path, agg = localizeSource(SyntheticSource(frames), tmp_path / "loc", num_antennas=2,
                                 publisher=pub)
     lines = sink.getvalue().strip().splitlines()
     assert len(lines) == 20  # one RecognitionResult per frame, through the wire schema

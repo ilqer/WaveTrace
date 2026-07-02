@@ -1,7 +1,7 @@
 """Per-node link health + dataset diagnostics. All numpy, all off the hot path.
 
 A `NodeHealthMeter` ingests the same CsiFrame stream the front-end sees (tee it through), tracks a
-rolling window per node_id, and emits a health dict per node on demand. The cluster_sync / drift /
+rolling window per node_id, and emits a health dict per node on demand. The clusterSync / drift /
 separation helpers are one-shot computations for the UI's calibration & training panels.
 
 node_id < 100 => 2.4 GHz (ESP32), node_id >= 100 => 5 GHz (nexmon Pi).
@@ -29,7 +29,7 @@ class NodeHealthMeter:
         self._gain_ref = dict(gain_ref_by_node or {})  # node_id -> calib mean amplitude
         self._subc = {}    # node_id -> NBVI subcarrier indices (for display)
 
-    def set_reference(self, node_id, ref_scale=None, subcarriers=None):
+    def setReference(self, node_id, ref_scale=None, subcarriers=None):
         """Record a node's calibration reference amplitude + NBVI subcarriers for display."""
         if ref_scale is not None:
             self._gain_ref[int(node_id)] = float(ref_scale)
@@ -87,7 +87,7 @@ class NodeHealthMeter:
         return out
 
 
-def cluster_sync(meter: NodeHealthMeter) -> dict:
+def clusterSync(meter: NodeHealthMeter) -> dict:
     """Time-alignment health: spread of the latest per-node frame timestamps.
     Large spread => nodes are de-synced => stacking will drop windows. O(nodes)."""
     last = {nid: meter._last_ts.get(nid, 0.0) for nid in meter._recv.keys()}
@@ -98,7 +98,7 @@ def cluster_sync(meter: NodeHealthMeter) -> dict:
     return {"spread_s": round(spread, 4), "ok": spread <= 0.05, "per_node_last": last}
 
 
-def baseline_drift(calib_result, recent_frames) -> dict:
+def baselineDrift(calib_result, recent_frames) -> dict:
     """How far the current quiet room has drifted from the calibrated baseline.
     >~20% mean ratio suggests recalibration. O(F·S)."""
     if not recent_frames:
@@ -114,7 +114,7 @@ def baseline_drift(calib_result, recent_frames) -> dict:
             "recalibrate": abs(meanR - 1.0) > 0.2}
 
 
-def feature_separation(x_intercarrier, y, *, variance_col=9) -> dict:
+def featureSeparation(x_intercarrier, y, *, variance_col=9) -> dict:
     """Is the σ²[p] weapon signature separable? Returns two histograms (weapon vs none) of the
     inter-carrier variance feature + a rank-AUC separability score. O(n log n).
 
@@ -145,7 +145,7 @@ def feature_separation(x_intercarrier, y, *, variance_col=9) -> dict:
     }
 
 
-def dataset_report(dataset) -> dict:
+def datasetReport(dataset) -> dict:
     """4-quadrant style summary of a built dataset for the training UI panel."""
     y = np.asarray(dataset.y)
     classes, counts = np.unique(y, return_counts=True)

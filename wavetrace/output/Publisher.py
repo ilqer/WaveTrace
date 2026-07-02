@@ -7,7 +7,7 @@ one JSON line per result to stdout or a file, always testable with no broker/ser
 Concrete network backends are SEAMS (built when a real consumer exists, behind optional deps):
   * MqttPublisher  — paho-mqtt; publish each line to a broker topic (pip install wavetrace[mqtt]).
   * WsPublisher    — websockets; push each line to connected clients (pip install wavetrace[ws]).
-Both would subclass Publisher and reuse `result_to_dict` — only the transport differs.
+Both would subclass Publisher and reuse `resultToDict` — only the transport differs.
 
 O(1) serialize + publish per result (plan §2.6).
 """
@@ -18,7 +18,7 @@ from pathlib import Path
 import sys
 
 
-def result_to_dict(result, *, mode: str = "") -> dict:
+def resultToDict(result, *, mode: str = "") -> dict:
     """RecognitionResult -> the wire schema. bbox/keypoints ride along only when the head is spatial
     (the ladder's location/posture heads); presence/weapon leave them null/empty."""
     boxVal = getattr(result, "bbox", None)
@@ -35,7 +35,7 @@ def result_to_dict(result, *, mode: str = "") -> dict:
 class Publisher(ABC):
     """Backend-agnostic result sink. Subclasses implement the transport; callers see publish/close.
 
-    Event lines carry an "event" key; result lines never do. publish_event has a no-op default so
+    Event lines carry an "event" key; result lines never do. publishEvent has a no-op default so
     subclasses without an override do not crash (non-breaking for existing subclasses)."""
 
     def __init__(self, *, mode: str = ""):
@@ -45,7 +45,7 @@ class Publisher(ABC):
     def publish(self, result) -> None:
         """Serialize and emit one RecognitionResult. O(1)."""
 
-    def publish_event(self, event: dict) -> None:
+    def publishEvent(self, event: dict) -> None:
         """Emit one guard/advisory event dict. Default is a no-op; override to transport it."""
 
     def close(self) -> None:
@@ -73,10 +73,10 @@ class JsonlPublisher(Publisher):
             self._fh, self._owned = sink, False
 
     def publish(self, result) -> None:
-        self._fh.write(json.dumps(result_to_dict(result, mode=self.mode)) + "\n")
+        self._fh.write(json.dumps(resultToDict(result, mode=self.mode)) + "\n")
         self._fh.flush()  # real-time: a downstream tail should see verdicts as they happen
 
-    def publish_event(self, event: dict) -> None:
+    def publishEvent(self, event: dict) -> None:
         self._fh.write(json.dumps(event) + "\n")
         self._fh.flush()
 

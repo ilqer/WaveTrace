@@ -29,12 +29,12 @@ from wavetrace import Label
 
 # ----- label policies: raw detection dict -> (class_id, name) -----------------------------------
 
-def presence_label_fn(raw: dict, timestamp: float) -> tuple[int, str]:
+def presenceLabelFn(raw: dict, timestamp: float) -> tuple[int, str]:
     """Stage A: present/absent from whether a person was detected."""
     return (1, "present") if raw.get("present") else (0, "absent")
 
 
-def weapon_label_fn(raw: dict, timestamp: float) -> tuple[int, str]:
+def weaponLabelFn(raw: dict, timestamp: float) -> tuple[int, str]:
     """Stage E: weapon present/absent (binary — the 'yes/no' the head collapses its heatmap to)."""
     return (1, "weapon") if raw.get("weapon") else (0, "no_weapon")
 
@@ -46,7 +46,7 @@ class Labeler(ABC):
     optional weapon `position` are copied onto the Label (position -> bbox when no person box exists,
     so the weapon location survives for segment-training)."""
 
-    def __init__(self, label_fn=presence_label_fn):
+    def __init__(self, label_fn=presenceLabelFn):
         self._label_fn = label_fn
 
     @abstractmethod
@@ -72,7 +72,7 @@ class Labeler(ABC):
             lab.mask_grid = int(raw.get("mask_grid") or 0)
         return lab
 
-    def label_stream(self, observations) -> list[Label]:
+    def labelStream(self, observations) -> list[Label]:
         """observations: iterable of {"t": ts, ...} -> Labels sorted by timestamp (for Align)."""
         out = [self.label(o, o["t"]) for o in observations]
         out.sort(key=lambda l: l.timestamp)
@@ -107,11 +107,11 @@ class VisionLabeler(Labeler):
     stub and the heavy model (YOLO/MediaPipe) is a thin subclass — see `YoloLabeler`.
 
     observation = the RGB frame (an (H, W, 3) array or a path the detector accepts); timestamp comes
-    from the stream. With `label_fn=presence_label_fn` it teaches Stage A; `weapon_label_fn` +
+    from the stream. With `label_fn=presenceLabelFn` it teaches Stage A; `weaponLabelFn` +
     `weapon_classes` teaches Stage E from a camera that CAN see the weapon (open-carry tier)."""
 
     def __init__(self, detector, *, person_class=0, weapon_classes=(), conf=0.35,
-                 label_fn=presence_label_fn):
+                 label_fn=presenceLabelFn):
         super().__init__(label_fn)
         if not callable(detector):
             raise ValueError("VisionLabeler: detector must be callable(image) -> list[Detection]")
@@ -144,12 +144,12 @@ class YoloLabeler(VisionLabeler):
     with boxes in normalized xywh; pose keypoints (normalized) ride along when present."""
 
     def __init__(self, model="yolov8n.pt", *, device=None, person_class=0, weapon_classes=(),
-                 conf=0.35, imgsz=640, label_fn=presence_label_fn):
+                 conf=0.35, imgsz=640, label_fn=presenceLabelFn):
         net = self._load(model, device) if isinstance(model, (str, bytes)) else model
 
         def detector(image):
-            results = net(image, imgsz=imgsz, verbose=False) if _accepts_kwargs(net) else net(image)
-            return _yolo_to_detections(results)
+            results = net(image, imgsz=imgsz, verbose=False) if _acceptsKwargs(net) else net(image)
+            return _yoloToDetections(results)
 
         super().__init__(detector, person_class=person_class, weapon_classes=weapon_classes,
                          conf=conf, label_fn=label_fn)
@@ -168,12 +168,12 @@ class YoloLabeler(VisionLabeler):
         return net
 
 
-def _accepts_kwargs(net) -> bool:
+def _acceptsKwargs(net) -> bool:
     """ultralytics models take imgsz/verbose kwargs; a bare test stub may not."""
     return hasattr(net, "predict") or hasattr(net, "model")
 
 
-def _yolo_to_detections(results) -> list[Detection]:
+def _yoloToDetections(results) -> list[Detection]:
     """Ultralytics Results (a list) -> [Detection] with normalized xywh boxes + optional keypoints."""
     out: list[Detection] = []
     for res in results:
@@ -204,7 +204,7 @@ class Segment:
     bbox_xywhn: tuple = None    # (x, y, w, h) normalized; None -> computed from the mask
 
 
-def _mask_bbox_xywhn(mask) -> tuple:
+def _maskBboxXywhn(mask) -> tuple:
     """Tight normalized (x, y, w, h) enclosing the mask. O(H*W). (0,0,0,0) if empty."""
     m = np.asarray(mask) > 0
     rows = np.any(m, axis=1)
@@ -217,7 +217,7 @@ def _mask_bbox_xywhn(mask) -> tuple:
     return ((x0 + x1) / (2 * W), (y0 + y1) / (2 * H), (x1 - x0) / W, (y1 - y0) / H)
 
 
-def _mask_overlap(weapon, person) -> float:
+def _maskOverlap(weapon, person) -> float:
     """Fraction of the weapon mask that lies inside the person mask (intersection / weapon area).
     This is the A->E false-positive gate: a real concealed/carried weapon sits ON the body. O(H*W)."""
     w = np.asarray(weapon) > 0
@@ -227,7 +227,7 @@ def _mask_overlap(weapon, person) -> float:
     return float((w & (np.asarray(person) > 0)).sum()) / wa
 
 
-def _mask_to_grid(mask, grid: int) -> list:
+def _maskToGrid(mask, grid: int) -> list:
     """Average-pool an (H, W) mask into a flattened grid*grid occupancy heatmap in [0,1], row-major.
     O(H*W) via one bincount over per-pixel cell ids (no per-pixel Python loop)."""
     m = np.asarray(mask, dtype=np.float32)
@@ -254,7 +254,7 @@ class SegmentationLabeler(Labeler):
     CSI. `grid` is stored with the mask, so the heatmap resolution stays tunable without a type change."""
 
     def __init__(self, segmenter, *, person_class=0, weapon_classes=(), conf=0.5, grid=16,
-                 overlap_min=0.5, label_fn=presence_label_fn):
+                 overlap_min=0.5, label_fn=presenceLabelFn):
         super().__init__(label_fn)
         if not callable(segmenter):
             raise ValueError("SegmentationLabeler: segmenter must be callable(image) -> list[Segment]")
@@ -275,14 +275,14 @@ class SegmentationLabeler(Labeler):
             cands = sorted((s for s in segs if s.cls in self._weapon),
                            key=lambda s: s.conf, reverse=True)
             for s in cands:
-                if _mask_overlap(s.mask, best.mask) >= self._overlap_min:
+                if _maskOverlap(s.mask, best.mask) >= self._overlap_min:
                     weaponSeg = s
                     break
         src = weaponSeg if weaponSeg is not None else best  # supervise on the weapon if we have one
-        maskGrid = _mask_to_grid(src.mask, self._grid) if src is not None else []
+        maskGrid = _maskToGrid(src.mask, self._grid) if src is not None else []
         bbox = None
         if src is not None:
-            bbox = src.bbox_xywhn or _mask_bbox_xywhn(src.mask)
+            bbox = src.bbox_xywhn or _maskBboxXywhn(src.mask)
         return {
             "present": best is not None,
             "weapon": weaponSeg is not None,
@@ -300,18 +300,18 @@ class YoloSegLabeler(SegmentationLabeler):
     Results carry per-instance masks (`res.masks.data`, (N,H,W)) + normalized boxes -> `Segment`s."""
 
     def __init__(self, model="yolov8n-seg.pt", *, device=None, person_class=0, weapon_classes=(),
-                 conf=0.5, grid=16, overlap_min=0.5, imgsz=640, label_fn=presence_label_fn):
+                 conf=0.5, grid=16, overlap_min=0.5, imgsz=640, label_fn=presenceLabelFn):
         net = YoloLabeler._load(model, device) if isinstance(model, (str, bytes)) else model
 
         def segmenter(image):
-            results = net(image, imgsz=imgsz, verbose=False) if _accepts_kwargs(net) else net(image)
-            return _yolo_to_segments(results)
+            results = net(image, imgsz=imgsz, verbose=False) if _acceptsKwargs(net) else net(image)
+            return _yoloToSegments(results)
 
         super().__init__(segmenter, person_class=person_class, weapon_classes=weapon_classes,
                          conf=conf, grid=grid, overlap_min=overlap_min, label_fn=label_fn)
 
 
-def _yolo_to_segments(results) -> list[Segment]:
+def _yoloToSegments(results) -> list[Segment]:
     """Ultralytics seg Results -> [Segment] with binary masks + normalized xywh boxes."""
     out: list[Segment] = []
     for res in results:
@@ -345,10 +345,10 @@ class ThermalLabeler(Labeler):
 class ScriptedLabeler(Labeler):
     """Concealed-tier (plan §5 ii): a camera cannot see a concealed weapon, so the label is known by
     construction (planted weapon). `spans` = iterable of (start, end, present) in the CSI clock; a
-    timestamp inside a present span is labeled weapon. Time-style: call `__call__(t)`/`label_at(t)`.
-    Default `label_fn` = weapon_label_fn."""
+    timestamp inside a present span is labeled weapon. Time-style: call `__call__(t)`/`labelAt(t)`.
+    Default `label_fn` = weaponLabelFn."""
 
-    def __init__(self, spans, label_fn=weapon_label_fn):
+    def __init__(self, spans, label_fn=weaponLabelFn):
         super().__init__(label_fn)
         self._present = sorted((float(s), float(e)) for s, e, p in spans if p)
 
@@ -356,13 +356,13 @@ class ScriptedLabeler(Labeler):
         weapon = any(s <= timestamp < e for s, e in self._present)
         return {"weapon": weapon, "present": weapon}
 
-    def label_at(self, timestamp: float) -> Label:
+    def labelAt(self, timestamp: float) -> Label:
         return self.label(None, timestamp)
 
-    __call__ = label_at
+    __call__ = labelAt
 
     @classmethod
-    def from_manifest(cls, path, label_fn=weapon_label_fn) -> "ScriptedLabeler":
+    def fromManifest(cls, path, label_fn=weaponLabelFn) -> "ScriptedLabeler":
         """JSON sidecar: {"spans": [{"start":s,"end":e,"present":bool}, ...]} (Q8)."""
         with open(path) as f:
             m = json.load(f)
@@ -376,9 +376,9 @@ class LocationChipLabeler(Labeler):
     (t, present, position) in the CSI clock; nearest-sample lookup yields present/absent + the weapon
     `position`, stashed on the Label so a later stage can use it as a delay/attention hint to segment
     the weapon's reflection from the body's (caveat: WiFi delay resolution is coarse + leakage risk →
-    use it as a HINT, not a hard crop; see Phase-7 notes). Time-style: `__call__(t)`/`label_at(t)`."""
+    use it as a HINT, not a hard crop; see Phase-7 notes). Time-style: `__call__(t)`/`labelAt(t)`."""
 
-    def __init__(self, track, label_fn=weapon_label_fn):
+    def __init__(self, track, label_fn=weaponLabelFn):
         samples = sorted(track, key=lambda r: r[0])
         self._t = [float(r[0]) for r in samples]
         self._present = [bool(r[1]) for r in samples]
@@ -405,7 +405,7 @@ class LocationChipLabeler(Labeler):
             "position": list(self._pos[i]) if present and self._pos[i] is not None else None,
         }
 
-    def label_at(self, timestamp: float) -> Label:
+    def labelAt(self, timestamp: float) -> Label:
         return self.label(None, timestamp)
 
-    __call__ = label_at
+    __call__ = labelAt

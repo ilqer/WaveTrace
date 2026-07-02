@@ -1,10 +1,10 @@
-"""resample_uniform: jittery CSI stream -> uniform grid (fixes the front-end fs_ok drops)."""
+"""resampleUniform: jittery CSI stream -> uniform grid (fixes the front-end fsOk drops)."""
 
 import numpy as np
 import pytest
 
 from wavetrace import CsiFrame
-from wavetrace.Source import resample_uniform
+from wavetrace.Source import resampleUniform
 
 
 def _frame(t, vals):
@@ -30,7 +30,7 @@ def _jittery_stream(fs_true=120.0, dur=1.0, seed=0):
 def test_uniform_grid_spacing_and_span():
     frames, _ = _jittery_stream()
     fs = 100.0
-    out = resample_uniform(frames, fs)
+    out = resampleUniform(frames, fs)
     ts = np.array([f.timestamp for f in out])
     dt = np.diff(ts)
     assert np.allclose(dt, 1.0 / fs, rtol=1e-6)
@@ -42,7 +42,7 @@ def test_uniform_grid_spacing_and_span():
 def test_values_track_the_signal():
     frames, freqs = _jittery_stream(fs_true=400.0)        # dense input -> small interp error
     fs = 100.0
-    out = resample_uniform(frames, fs)
+    out = resampleUniform(frames, fs)
     err = 0.0
     for fr in out:
         truth = np.exp(2j * np.pi * freqs * fr.timestamp)
@@ -51,8 +51,8 @@ def test_values_track_the_signal():
 
 
 def test_edge_cases():
-    assert resample_uniform([], 100.0) == []
+    assert resampleUniform([], 100.0) == []
     one = [_frame(0.0, [1 + 1j])]
-    assert len(resample_uniform(one, 100.0)) == 1         # <2 frames: returned as-is
+    assert len(resampleUniform(one, 100.0)) == 1         # <2 frames: returned as-is
     with pytest.raises(ValueError):
-        resample_uniform(one, 0.0)
+        resampleUniform(one, 0.0)
