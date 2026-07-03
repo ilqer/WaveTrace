@@ -642,8 +642,10 @@ Central harness: experiments/weapon_experiments.py. Evaluated on session-LOGO on
 - 6 of 12 links beat majority class (AUC > 0.50)
 
 **Experiment C — Combined 12-link multi-channel CNN:**
-- All 12 links stacked as channels; result: AUC = 0.500 ≈ chance; 166 windows × 12 channels — even fewer effective samples per channel
-- Conclusion: stacked multi-channel CNN needs n in the thousands; shelved
+- First bake-off: all 12 links stacked as channels, only 166 windows available → AUC = 0.500, chance-level. Called it sample-starved and shelved it.
+- Update (after more sessions piled up across all three weapon datasets): rerunning the same script with more data gives a real, repeatable "beats majority" score every time — 2g4_ht20 LOGO=0.811 (n=159), 2g4_ht40 LOGO=0.663 (n=175), 2g4_ht40/ui LOGO=0.697 (n=519). Same seed each run, identical numbers every time, so this is not noise or a fluke fold.
+- But the z-norm check in Experiment E below says this is the same session confound as everywhere else, not real weapon signal: stripping the absolute level drops AUC on 2g4_ht40 (0.164→0.121) and 2g4_ht40/ui (0.716→0.653), same pattern as the ic27 confound (2g4_ht20 goes the other way, 0.121→0.397, unexplained).
+- Conclusion: it's no longer accurate to call the combined CNN "sample-starved and shelved" — it has enough data now and clears majority every time. But it should stay shelved anyway, for the same reason as the rest of Section 9.5: the score is riding on session identity, not the object.
 
 **Experiment D — Flat per-link weighted fusion:**
 

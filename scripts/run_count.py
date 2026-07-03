@@ -195,9 +195,10 @@ def main():
                 print("\r(live links present, but all from chance-level nodes)   ", end="", flush=True)
                 continue
             blended = np.asarray(blended, dtype=np.float64)
-            count = classes[int(np.argmax(blended))]
             expected = float((clsArr * blended).sum())  # Soft estimate (handles 'N+' as N).
-            print(f"PEOPLE {countName(count, args.max_count):>3}  (~{expected:0.1f})  "
+            rounded = int(round(expected))
+            label = countName(min(rounded, max(classes)), args.max_count)
+            print(f"PEOPLE ~{expected:0.1f}  ({label})  "
                   f"[{len(breakdown)} links] " + " ".join(breakdown))
     except KeyboardInterrupt:
         print("\nstopped")

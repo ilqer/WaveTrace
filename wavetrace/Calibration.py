@@ -150,7 +150,7 @@ def loadCalibration(out_dir) -> tuple[CalibrationResult, GainLock | None]:
         reference_scale=ref,
         subcarriers=[int(s) for s in meta["subcarriers"]],
         image_subcarriers=[int(s) for s in meta.get("image_subcarriers", meta["subcarriers"])],
-        numBaseline=int(meta["numBaseline"]),
+        numBaseline=int(meta.get("numBaseline", meta.get("num_baseline"))),
         baseline_mag=np.load(p / "baseline_mag.npy"),
         baseline_diff=np.load(p / "baseline_diff.npy"),
     )
