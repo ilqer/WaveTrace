@@ -10,7 +10,10 @@ CMake 3.16+ and a C++ compiler (gcc or clang)
 ESP-IDF v5.3      firmware flashing
 Node.js 18+       web dashboard (optional)
 ffmpeg            camera features (optional — brew install ffmpeg)
+ultralytics       camera ground-truth labeling only (optional — pip install ultralytics)
 ```
+
+`ultralytics` is only needed for `scripts/collect_camera.py` (YOLO-based labeling). It's not a core dependency — `pip install -e .` won't install it, and nothing else in the pipeline imports it. If you run `collect_camera.py` without it, you'll get an `ImportError` telling you to `pip install ultralytics`. There's no weights file to download by hand either: passing a model name like `yolov8n-seg.pt` triggers an automatic download the first time it's used.
 
 ## Installation
 
@@ -21,6 +24,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .     # builds the C++ extension and installs the wavetrace package
 brew bundle          # macOS system dependencies (Brewfile)
 ```
+
+`data/` is git-ignored, so a fresh clone won't have it. The `collect_*.py` scripts create it (and the profile subfolders under it) automatically the first time you pass `--root data/<profile>` — you don't need to create it by hand, just make sure the scripts are run from the project root so the relative path resolves correctly.
 
 ## Usage
 

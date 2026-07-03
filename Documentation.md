@@ -157,6 +157,15 @@ Each run saves `output/model/model.pkl` and `metrics.json` with LOGO accuracy.
 | Node.js | 18+ | Web dashboard only (optional) |
 | numpy, scikit-learn | via `pip install -e .` | Signal processing and ML |
 | torch | via `pip install 'wavetrace[cnn]'` | CNN backend only (optional) |
+| ultralytics | via `pip install ultralytics` | YOLO-based camera ground-truth labeling only (optional, used by `scripts/collect_camera.py`) |
+
+### `data/` folder
+
+`data/` is git-ignored, so it does not exist right after cloning. Don't create it by hand — the `collect_*.py` scripts create it, and the profile subfolder under it, automatically the first time you pass `--root data/<profile>`. It only needs to exist before you run something that *reads* from it (e.g. `run_live_mesh.py` after training), which will already be true if you followed the calibrate → collect → train order in section 6.
+
+### Optional: YOLO model for camera labeling
+
+`ultralytics` (YOLOv8) is only needed for camera-supervised ground-truth labeling (`scripts/collect_camera.py`), not for the core CSI pipeline. It is not a project dependency — `pip install -e .` does not install it, and nothing else imports it. Install it separately with `pip install ultralytics` if you want that feature; running `collect_camera.py` without it raises an `ImportError` telling you to install it. There is no weights file to download manually either — passing a model name like `yolov8n-seg.pt` triggers an automatic one-time download the first time it's used.
 
 ### Network setup
 
