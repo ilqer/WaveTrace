@@ -6,22 +6,26 @@
 
 WaveTrace uses Wi-Fi Channel State Information (CSI) to sense what is happening in a room without a camera. Wi-Fi signals bounce off everything in the room. When a person or object moves, those reflections change in a measurable way across each frequency bin of the signal. By analyzing those per-frequency changes — one packet at a time — the system can tell whether a person is present and, eventually, whether they are carrying concealed metal.
 
-The project has two independent operating modes:
+The project has four independent operating modes. They all share one CSI front-end (preprocess → features) and differ only in the head:
 
-- **Presence** — is a person in the room? Binary output: occupied / empty.
-- **Weapon** — is a person carrying a concealed weapon (knife, gun, or similar metal object)?
+- **Presence** — is a person in the room? Occupied or empty. This is the fully proven mode: 98.5% accuracy on real captures under leave-one-session-out validation.
+- **People counting** — how many people are moving in the room? A four-class head (0, 1, 2, 3+) runs on each node, and the mesh links are combined into one count. On real hardware it reaches 53–61% accuracy where random guessing scores 25%, so it more than doubles the baseline. Collecting more sessions raises it further.
+- **Occupancy heatmap** — where in the room is the person? A small CNN turns the CSI into a 16×16 occupancy grid. During collection a webcam labels the data on its own with a YOLO segmentation model, and those labels are time-aligned to each node's CSI windows, so no hand-labeling is needed. The camera is used only for training; the running system needs no camera. The pieces are built and covered by tests, and the live labeling works during capture. What remains is one full webcam-to-model run on real hardware (see §11); until then the live view uses a simpler energy-based estimate.
+- **Weapon** — is a person carrying a concealed weapon (knife, gun, or similar metal object)? This is a research mode. It measures how flat the signal is across frequencies, since metal reflects evenly. At 2.4 GHz with the omnidirectional antennas, no reliable body-worn signal has appeared yet (see §11).
 
-Weapon detection is the main goal. Presence is the easier step that proves the pipeline works before tackling the harder problem.
+Weapon detection was the original headline goal, and presence is the easier step that proves the pipeline works. Presence is what works today. People counting also runs on real hardware. The occupancy heatmap is built and tested but has not had its one full end-to-end run on a real webcam yet.
 
 ---
 
-## 2. The two modes
+## 2. Presence and weapon in depth
 
-**Presence** is a binary classification problem. The model gets a short window of CSI frames, extracts statistical features, and outputs 0 or 1. It trains in a few minutes on a laptop and achieves good accuracy on real data. Start here.
+This section goes deep on presence and weapon, the two modes with the most physics behind them. The other two heads reuse the same machinery: **people counting** is the presence head widened to a 4-class output (0, 1, 2, 3+) — see projectProgress.md §9.10 — and the **occupancy heatmap** is a separate camera-supervised CNN covered in §11 here and in projectProgress.md §9.11.
+
+**Presence** is a binary classification problem. The model gets a short window of CSI frames, extracts statistical features, and outputs 0 or 1. It trains in a few minutes on a laptop and achieves good accuracy on real data (LOGO 0.985 on real hardware). Start here.
 
 **Weapon detection** is harder for a physical reason: a concealed metal object is much smaller than the human body it is attached to, so its signal rides on top of the person's much stronger reflection. The key discriminator is per-packet inter-subcarrier variance σ²[p]. Metal reflects all subcarriers evenly → lower variance. A human body scatters the signal unevenly → higher variance. This difference is detectable but subtle — sensor placement and geometry matter a lot.
 
-The two modes are **fully independent**. Weapon mode does not use the presence model as a pre-filter. They share the signal-processing front-end (preprocess → features) and differ only in the classification head.
+Presence and weapon are **fully independent** (as are all four modes). Weapon mode does not use the presence model as a pre-filter. Every mode shares the signal-processing front-end (preprocess → features) and differs only in the classification head.
 
 ---
 
@@ -199,7 +203,7 @@ wavetrace/          the Python library
 ├── Calibration.py  saves/loads per-session calibration: gain-lock scalar, NBVI mask, quiet baseline
 ├── Cli.py          `wavetrace` CLI: capture / calibrate / collect-data / train / localize / run
 ├── Config.py       runtime config: mode, backend, head, subcarrier count, window/hop sizes
-├── recognition/    training, inference, voting, multi-node fusion, evaluation
+├── recognition/    heads (presence, people-count, occupancy heatmap, weapon) + training, inference, voting, multi-node fusion, evaluation, CIR
 ├── groundtruth/    camera labeler, timestamp alignment, dataset serializer
 ├── output/         result publisher (JSONL default; WebSocket seam for the dashboard)
 └── diagnostics/    per-node health telemetry
@@ -505,7 +509,12 @@ Do not report accuracy from a random within-session split.
 
 - Full C++ signal processing pipeline: frame parsing, conjugate-multiply, Hampel filter, phase unwrap, EMA detrend, gain lock, NBVI subcarrier selection, FFT, 9-feature extractor, inter-subcarrier σ²[p], spectrogram builder.
 - Full Python presence pipeline: calibration, dataset builder, MLP/SVM training, LOGO evaluation, live inference, per-node voting, multi-node fusion, result publishing.
+- People-count pipeline: a standalone path (`collect_count.py` + `run_count.py`) with a four-class head per node and live voting across all links. On real hardware it reaches 53–61% accuracy against a 25% random baseline (see projectProgress.md §9.10). It runs today; more sessions raise the score.
+- Occupancy-heatmap pipeline: a camera-supervised CNN (`HeatmapHead`, trained with BCE plus soft-Dice), a `SegmentationLabeler` that turns YOLO masks into a 16×16 occupancy grid, temporal smoothing in `Occupancy.py` (a per-cell Bayesian grid plus a 2D Kalman tracker that follows the hottest cell without jumping), `collect_camera.py --train`, live serving in `web/streamer.py`, and the `OccupancyHeatmap` and `OccupancyGrid3D` panels in the dashboard. All parts are built and covered by unit tests across the vision-labeler, segmentation, webcam, and ground-truth (alignment and dataset) suites. The one thing left is a full webcam-to-model run on real hardware; until a model is trained the live path uses an energy-based estimate (see projectProgress.md §9.11).
+- Automatic camera labeling: `collect_camera.py` captures every node's CSI and the MacBook webcam at the same time, runs a YOLO segmentation model live on each frame, and time-aligns the labels to every node's CSI windows. This produces a labeled presence and heatmap dataset in one pass, with no hand-labeling. The camera is used only for collection; the deployed detector needs no camera.
 - Weapon pipeline: σ²[p] variance baseline, sklearn head, CNN head, `SegmentVoter`, `tierVerdict` gate.
+- Extra recognition tools built and tested, used by the dashboard and the fusion path: model explainability (`Explain.py` — CNN channel-ablation importance, permutation importance for MLP/SVM, confusion matrices), per-link decision fusion with automatic blockage recovery (`Link.py` — a link that loses sight of the target drops its own weight so the others take over), learned late fusion across radio bands (`Stack.py`), and label-free in-room adaptation (`Adapt.py` — refresh input statistics and recalibrate without retraining weights).
+- Spatial localization (`Localize.py`): a joint 2D delay-and-angle MUSIC estimator (SpotFi-style) plus a MUSIC/Bartlett angle spectrum and a Kalman position tracker. It is fully implemented but **parked**, because it needs at least two phase-coherent receive antennas on one radio and the current boards have one receive chain (see §13).
 - Ground-truth tools: camera labeler (YOLO/SAM), segmentation labeler, scripted labeler, timestamp alignment, dataset serializer.
 - CLI: `wavetrace capture / calibrate / collect-data / train / localize / run`.
 - Web dashboard: spectrograms, node health, live predictions. (Train button returns placeholder metrics — real training runs from the terminal.)

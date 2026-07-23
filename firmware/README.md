@@ -4,9 +4,21 @@
 
 Every board runs the same binary. `NODE_ID` is the only per-board difference; there is no TX-only or RX-only role. The mesh is time-division round-robin: one node transmits an ESP-NOW burst while the others capture CSI; the TX role rotates. N nodes → N·(N−1) directed (tx, rx) links per cycle.
 
-Each node joins the router as a STA, which locks all boards to the same channel so they hear each other's ESP-NOW traffic automatically. CSI datagrams go to the Mac over UDP port 9876.
+Each node joins the router as a STA, which locks all boards to the same channel so they hear each other's ESP-NOW traffic automatically. CSI datagrams go to the Mac over UDP port 9876. A healthy mesh sustains about 200–300 CSI frames per second across the nodes.
 
-Turn-taking is token-passing: the last frame of a burst names the next node to transmit. Node 1 is the leader — it starts the first burst and restarts the token if the air goes quiet.
+Turn-taking is token-passing: the last frame of a burst names the next node to transmit. The leader — the lowest-numbered node that is currently alive — starts the first burst and restarts the token if the air goes quiet.
+
+### Self-organizing and fault-tolerant
+
+The mesh has no fixed node list and no central controller. Each board learns which others are alive by hearing their bursts, and the ring adjusts itself:
+
+- **Leader by lowest live ID.** The leader is always the lowest-numbered node that is still alive. If that board drops off, leadership moves to the next lowest on its own, with no restart.
+- **Failed boards are dropped.** A node that goes silent past a timeout is removed from the ring, so the token is never passed to a board that is gone. A board that keeps missing its turn is skipped early instead of stalling the ring.
+- **Rejoiners are let back in.** A board that comes back, or a brand-new board, announces itself and is added back into the turn order. New boards announce more often at first so they join quickly.
+- **Clocks stay in sync.** Every board uses the Mac as its SNTP time source, so all nodes share one clock and their CSI timestamps line up. If the Mac's IP changes, the boards pick up the new one through discovery and re-sync.
+- **The handoff survives losses.** The token is repeated on the last few frames of each burst, so a single dropped frame does not break the ring.
+
+None of this needs a node count in the code. The ring works the same with two boards or with the full set.
 
 ### Step 1 — Install ESP-IDF (once, ~30–60 min)
 

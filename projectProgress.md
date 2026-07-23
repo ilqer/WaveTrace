@@ -6,7 +6,7 @@ Last updated: 2026-06-30 | Tests passing: 295
 
 ## 1. Executive Summary
 
-WaveTrace is a WiFi CSI (channel state information) based sensing system built on ESP32 hardware. The goal is to detect concealed weapons on a person walking through a checkpoint — using WiFi signals the way a metal detector uses a magnetic field. The project has two independent operating modes: presence detection and weapon detection. As of June 2026, presence detection works on real hardware at LOGO 0.985. Weapon detection has shown no above-chance body-worn signal at 2.4 GHz in any dataset tested so far. The analysis points to geometry (all captures were line-of-sight; the only published gun detection result used strict non-LOS with a directional antenna) and data scale (1 subject, back-to-back sessions) as the main gaps. Antennas are physically aimed at the center zone now. The immediate next step is clearing the per-link litmus gate (AUC >= 0.65 on at least one link) before any further ML training.
+WaveTrace is a WiFi CSI (channel state information) based sensing system built on ESP32 hardware. The goal is to detect concealed weapons on a person walking through a checkpoint — using WiFi signals the way a metal detector uses a magnetic field. The project has four independent operating modes on one shared CSI front-end: presence detection, people counting, camera-supervised occupancy heatmap, and weapon detection. As of June 2026, presence detection works on real hardware at LOGO 0.985; people counting runs on real hardware at LOGO 0.53–0.61 against a 0.25 random baseline (§9.10), more than double chance and rising with more sessions; the occupancy-heatmap head (with automatic live YOLO labeling) is built and covered by unit tests, with the one remaining step being a full webcam-to-model run on real hardware (§9.11). Weapon detection has shown no above-chance body-worn signal at 2.4 GHz in any dataset tested so far. The analysis points to geometry (all captures were line-of-sight; the only published gun detection result used strict non-LOS with a directional antenna) and data scale (1 subject, back-to-back sessions) as the main gaps. Antennas are physically aimed at the center zone now. The immediate next step is clearing the per-link litmus gate (AUC >= 0.65 on at least one link) before any further ML training.
 
 ---
 
@@ -65,7 +65,7 @@ Node 2 LOGO 0.782, Node 3 LOGO 0.800. Valid result but a different physical prob
 
 These are finalized. Do not revisit without strong new evidence.
 
-1. **Two independent modes** — Presence and weapon are separate operating modes with no gate between them. The A→E gating was removed on 2026-06-11 and is irreversible.
+1. **Independent modes, no gating** — Presence and weapon (and the later people-count and occupancy-heatmap heads) are separate operating modes with no gate between them. The A→E presence-gates-weapon gating was removed on 2026-06-11 and is irreversible.
 2. **No cross-node phase multiply** — Independent ESP32 clocks make phase differences between nodes clock noise, not signal. Each node is processed independently; feature vectors are concatenated at the feature level.
 3. **Per-link over per-node for weapon** — Pooling all TX directions into one RX node averages a good NLOS direction with noise links. This causes sign-flip and washout. Per-link models are the correct unit.
 4. **LOGO evaluation only** — Within-session train/test splits inflate accuracy by 10–30% because of window overlap. Leave-One-Group-Out over sessions (and subjects when available) is the only honest evaluation.
