@@ -19,15 +19,16 @@ namespace wavetrace {
 // Percentile of an ascending-sorted buffer via linear interpolation, matching numpy's default. percentile in [0,1]. O(1).
 inline float PercentileSorted(const float* sortedValues, size_t sampleCount, float percentile) {
   if (sampleCount == 1) return sortedValues[0];
-  const float idx = percentile * static_cast<float>(sampleCount - 1);
-  const size_t lo = static_cast<size_t>(idx);
-  const size_t hi = (lo + 1 < sampleCount) ? lo + 1 : lo;
-  const float frac = idx - static_cast<float>(lo);
-  return sortedValues[lo] + frac * (sortedValues[hi] - sortedValues[lo]);
+  const float index = percentile * static_cast<float>(sampleCount - 1);
+  const size_t lowerIndex = static_cast<size_t>(index);
+  const size_t upperIndex = (lowerIndex + 1 < sampleCount) ? lowerIndex + 1 : lowerIndex;
+  const float interpolationFraction = index - static_cast<float>(lowerIndex);
+  return sortedValues[lowerIndex] + interpolationFraction * (sortedValues[upperIndex] - sortedValues[lowerIndex]);
 }
 
-// Nine-feature vector over one chronological window, out[0..8] = mean, std, max, min, IQR(P75-P25), skewness,
-// lag-1 autocorrelation, MAD(median|x-median|), waveform-length(sum|x_i-x_i-1|). O(n log n) (IQR/MAD sorts).
+// Nine-feature vector over one chronological window, out[0..8] = mean, standard deviation, max, min,
+// interquartile range (P75-P25), skewness, lag-1 autocorrelation, median absolute deviation (median|x-median|),
+// waveform length (sum|x_i-x_i-1|). O(n log n) (sorts for interquartile range and median absolute deviation).
 inline void NineFeatures(const float* values, size_t sampleCount, float* scratch, float* out) {
   if (sampleCount == 0) {
     for (size_t i = 0; i < 9; ++i) out[i] = 0.0f;
@@ -37,44 +38,47 @@ inline void NineFeatures(const float* values, size_t sampleCount, float* scratch
   for (size_t i = 0; i < sampleCount; ++i) mean += static_cast<double>(values[i]);
   mean /= static_cast<double>(sampleCount);
 
-  double var = 0.0, m3 = 0.0, autocov = 0.0, wl = 0.0;
-  float mx = values[0], mn = values[0];
+  double variance = 0.0, thirdCentralMoment = 0.0, autoCovariance = 0.0, waveformLength = 0.0;
+  float maximum = values[0], minimum = values[0];
   for (size_t i = 0; i < sampleCount; ++i) {
-    const double d = static_cast<double>(values[i]) - mean;
-    var += d * d;
-    m3 += d * d * d;
-    if (values[i] > mx) mx = values[i];
-    if (values[i] < mn) mn = values[i];
+    const double deviationFromMean = static_cast<double>(values[i]) - mean;
+    variance += deviationFromMean * deviationFromMean;
+    thirdCentralMoment += deviationFromMean * deviationFromMean * deviationFromMean;
+    if (values[i] > maximum) maximum = values[i];
+    if (values[i] < minimum) minimum = values[i];
     if (i >= 1) {
-      wl += std::fabs(static_cast<double>(values[i]) - static_cast<double>(values[i - 1]));
-      autocov += (static_cast<double>(values[i]) - mean) * (static_cast<double>(values[i - 1]) - mean);
+      waveformLength += std::fabs(static_cast<double>(values[i]) - static_cast<double>(values[i - 1]));
+      autoCovariance += (static_cast<double>(values[i]) - mean) * (static_cast<double>(values[i - 1]) - mean);
     }
   }
-  const double sumSq = var;  // total sum of squared deviations (autocorr denominator)
-  var /= static_cast<double>(sampleCount);
-  m3 /= static_cast<double>(sampleCount);
-  const double sd = std::sqrt(var);
-  const double skew = (sd > 1e-12) ? (m3 / (sd * sd * sd)) : 0.0;
-  const double lag1 = (sumSq > 1e-12) ? (autocov / sumSq) : 0.0;  // lag-1 autocorrelation coeff
+  const double sumOfSquaredDeviations = variance;  // autocorrelation denominator
+  variance /= static_cast<double>(sampleCount);
+  thirdCentralMoment /= static_cast<double>(sampleCount);
+  const double standardDeviation = std::sqrt(variance);
+  const double skewness =
+      (standardDeviation > 1e-12) ? (thirdCentralMoment / (standardDeviation * standardDeviation * standardDeviation)) : 0.0;
+  const double lag1AutoCorrelation =
+      (sumOfSquaredDeviations > 1e-12) ? (autoCovariance / sumOfSquaredDeviations) : 0.0;
 
-  // IQR + median from the sorted window, then MAD = median(|x - median|) reusing the scratch.
+  // Median from the sorted window, then median absolute deviation = median(|x - median|) reusing the scratch.
   for (size_t i = 0; i < sampleCount; ++i) scratch[i] = values[i];
   std::sort(scratch, scratch + sampleCount);
-  const float med = PercentileSorted(scratch, sampleCount, 0.5f);
-  const float iqr = PercentileSorted(scratch, sampleCount, 0.75f) - PercentileSorted(scratch, sampleCount, 0.25f);
-  for (size_t i = 0; i < sampleCount; ++i) scratch[i] = std::fabs(values[i] - med);
+  const float median = PercentileSorted(scratch, sampleCount, 0.5f);
+  const float interquartileRange =
+      PercentileSorted(scratch, sampleCount, 0.75f) - PercentileSorted(scratch, sampleCount, 0.25f);
+  for (size_t i = 0; i < sampleCount; ++i) scratch[i] = std::fabs(values[i] - median);
   std::sort(scratch, scratch + sampleCount);
-  const float mad = PercentileSorted(scratch, sampleCount, 0.5f);
+  const float medianAbsoluteDeviation = PercentileSorted(scratch, sampleCount, 0.5f);
 
   out[0] = static_cast<float>(mean);
-  out[1] = static_cast<float>(sd);
-  out[2] = mx;
-  out[3] = mn;
-  out[4] = iqr;
-  out[5] = static_cast<float>(skew);
-  out[6] = static_cast<float>(lag1);
-  out[7] = mad;
-  out[8] = static_cast<float>(wl);
+  out[1] = static_cast<float>(standardDeviation);
+  out[2] = maximum;
+  out[3] = minimum;
+  out[4] = interquartileRange;
+  out[5] = static_cast<float>(skewness);
+  out[6] = static_cast<float>(lag1AutoCorrelation);
+  out[7] = medianAbsoluteDeviation;
+  out[8] = static_cast<float>(waveformLength);
 }
 
 // --- Per-packet inter-subcarrier dispersion (REFERENCE §0B — weapon discriminator) ----------
@@ -92,13 +96,13 @@ inline InterCarrierStat ComputeInterCarrierStats(const float* magnitudes, size_t
   for (size_t i = 0; i < subcarrierCount; ++i) mean += static_cast<double>(magnitudes[i]);
   mean /= static_cast<double>(subcarrierCount);
   if (subcarrierCount == 1) return {static_cast<float>(mean), 0.0f};
-  double var = 0.0;
+  double variance = 0.0;
   for (size_t i = 0; i < subcarrierCount; ++i) {
-    const double d = static_cast<double>(magnitudes[i]) - mean;
-    var += d * d;
+    const double deviationFromMean = static_cast<double>(magnitudes[i]) - mean;
+    variance += deviationFromMean * deviationFromMean;
   }
-  var /= static_cast<double>(subcarrierCount - 1);  // sample variance (M-1), matches Yousaf/LUMS
-  return {static_cast<float>(mean), static_cast<float>(var)};
+  variance /= static_cast<double>(subcarrierCount - 1);  // sample variance (M-1), matches Yousaf/LUMS
+  return {static_cast<float>(mean), static_cast<float>(variance)};
 }
 
 // --- Per-frame inter-subcarrier PHASE dispersion (phase counterpart of sigma2[p]) ------------
@@ -118,13 +122,13 @@ inline InterCarrierPhaseStat ComputeInterCarrierPhaseStats(const float* phase, s
   // Unwrap across subcarriers so the linear slope is not corrupted by 2*pi jumps.
   scratch[0] = phase[0];
   for (size_t i = 1; i < subcarrierCount; ++i) {
-    float d = phase[i] - phase[i - 1];
-    while (d > PI) d -= TWO_PI;
-    while (d < -PI) d += TWO_PI;
-    scratch[i] = scratch[i - 1] + d;
+    float phaseStepRadians = phase[i] - phase[i - 1];
+    while (phaseStepRadians > PI) phaseStepRadians -= TWO_PI;
+    while (phaseStepRadians < -PI) phaseStepRadians += TWO_PI;
+    scratch[i] = scratch[i - 1] + phaseStepRadians;
   }
-  // Least-squares line y = a*x + b over x = 0..k-1 (closed form).
-  const double n = static_cast<double>(subcarrierCount);
+  // Closed-form least-squares line fit of scratch[i] against i = 0..k-1.
+  const double subcarrierCountAsDouble = static_cast<double>(subcarrierCount);
   double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
   for (size_t i = 0; i < subcarrierCount; ++i) {
     const double x = static_cast<double>(i), y = static_cast<double>(scratch[i]);
@@ -133,15 +137,15 @@ inline InterCarrierPhaseStat ComputeInterCarrierPhaseStats(const float* phase, s
     sumXX += x * x;
     sumXY += x * y;
   }
-  const double denom = n * sumXX - sumX * sumX;  // > 0 for k >= 2
-  const double a = (n * sumXY - sumX * sumY) / denom;
-  const double b = (sumY - a * sumX) / n;
-  double sse = 0.0;
+  const double denominator = subcarrierCountAsDouble * sumXX - sumX * sumX;  // > 0 for k >= 2
+  const double slope = (subcarrierCountAsDouble * sumXY - sumX * sumY) / denominator;
+  const double intercept = (sumY - slope * sumX) / subcarrierCountAsDouble;
+  double sumOfSquaredErrors = 0.0;
   for (size_t i = 0; i < subcarrierCount; ++i) {
-    const double r = static_cast<double>(scratch[i]) - (a * static_cast<double>(i) + b);
-    sse += r * r;
+    const double residual = static_cast<double>(scratch[i]) - (slope * static_cast<double>(i) + intercept);
+    sumOfSquaredErrors += residual * residual;
   }
-  return {static_cast<float>(a), static_cast<float>(std::sqrt(sse / n))};
+  return {static_cast<float>(slope), static_cast<float>(std::sqrt(sumOfSquaredErrors / subcarrierCountAsDouble))};
 }
 
 // --- Complex-CSI material reconstruction (in-baggage CNS'18 §IV / material-ID) ---------------
@@ -159,13 +163,13 @@ inline void ReconstructComplexCsi(const std::complex<float>* in, size_t subcarri
   constexpr float TWO_PI = 2.0f * PI;
   scratch[0] = std::arg(in[0]);
   for (size_t i = 1; i < subcarrierCount; ++i) {  // unwrap across subcarriers so the slope isn't broken by 2*pi
-    float d = std::arg(in[i]) - std::arg(in[i - 1]);
-    while (d > PI) d -= TWO_PI;
-    while (d < -PI) d += TWO_PI;
-    scratch[i] = scratch[i - 1] + d;
+    float phaseStepRadians = std::arg(in[i]) - std::arg(in[i - 1]);
+    while (phaseStepRadians > PI) phaseStepRadians -= TWO_PI;
+    while (phaseStepRadians < -PI) phaseStepRadians += TWO_PI;
+    scratch[i] = scratch[i - 1] + phaseStepRadians;
   }
-  // Least-squares line y = a*x + b over x = 0..k-1 (closed form, same fit as ComputeInterCarrierPhaseStats).
-  const double n = static_cast<double>(subcarrierCount);
+  // Closed-form least-squares fit (same as ComputeInterCarrierPhaseStats).
+  const double subcarrierCountAsDouble = static_cast<double>(subcarrierCount);
   double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
   for (size_t i = 0; i < subcarrierCount; ++i) {
     const double x = static_cast<double>(i), y = static_cast<double>(scratch[i]);
@@ -174,12 +178,12 @@ inline void ReconstructComplexCsi(const std::complex<float>* in, size_t subcarri
     sumXX += x * x;
     sumXY += x * y;
   }
-  const double denom = n * sumXX - sumX * sumX;  // > 0 for k >= 2
-  const double a = (n * sumXY - sumX * sumY) / denom;
-  const double b = (sumY - a * sumX) / n;
+  const double denominator = subcarrierCountAsDouble * sumXX - sumX * sumX;  // > 0 for k >= 2
+  const double slope = (subcarrierCountAsDouble * sumXY - sumX * sumY) / denominator;
+  const double intercept = (sumY - slope * sumX) / subcarrierCountAsDouble;
   for (size_t i = 0; i < subcarrierCount; ++i) {  // residual phase recombined with the original magnitude
-    const float resid = scratch[i] - static_cast<float>(a * static_cast<double>(i) + b);
-    out[i] = std::polar(std::abs(in[i]), resid);
+    const float residualPhase = scratch[i] - static_cast<float>(slope * static_cast<double>(i) + intercept);
+    out[i] = std::polar(std::abs(in[i]), residualPhase);
   }
 }
 
@@ -199,13 +203,13 @@ inline void ComputeReflectionNull(const std::complex<float>* h1, const std::comp
 // denoising and shrinking the CNN input; trailing remainder dropped. Returns the output count. O(n).
 inline size_t BlockAverageDecimate(const float* values, size_t sampleCount, size_t factor, float* out) {
   if (factor == 0) return 0;
-  const size_t m = sampleCount / factor;
-  for (size_t b = 0; b < m; ++b) {
-    double s = 0.0;
-    for (size_t i = 0; i < factor; ++i) s += static_cast<double>(values[b * factor + i]);
-    out[b] = static_cast<float>(s / static_cast<double>(factor));
+  const size_t blockCount = sampleCount / factor;
+  for (size_t blockIndex = 0; blockIndex < blockCount; ++blockIndex) {
+    double blockSum = 0.0;
+    for (size_t i = 0; i < factor; ++i) blockSum += static_cast<double>(values[blockIndex * factor + i]);
+    out[blockIndex] = static_cast<float>(blockSum / static_cast<double>(factor));
   }
-  return m;
+  return blockCount;
 }
 
 // --- Frequency domain: PSD + Doppler (REFERENCE §2.6) ---------------------------------------
@@ -219,10 +223,10 @@ inline void ComputePowerSpectrum(const float* values, size_t sampleCount, const 
   for (size_t i = 0; i < sampleCount; ++i) mean += static_cast<double>(values[i]);
   mean /= static_cast<double>(sampleCount);
   constexpr float TWO_PI = 6.28318530717958647692f;
-  const float c = (sampleCount > 1) ? TWO_PI / static_cast<float>(sampleCount - 1) : 0.0f;
+  const float hannAngularStep = (sampleCount > 1) ? TWO_PI / static_cast<float>(sampleCount - 1) : 0.0f;
   for (size_t i = 0; i < sampleCount; ++i) {
-    const float w = 0.5f * (1.0f - std::cos(c * static_cast<float>(i)));  // Hann
-    scratch[i] = std::complex<float>((static_cast<float>(values[i]) - static_cast<float>(mean)) * w, 0.0f);
+    const float hannWeight = 0.5f * (1.0f - std::cos(hannAngularStep * static_cast<float>(i)));  // Hann
+    scratch[i] = std::complex<float>((static_cast<float>(values[i]) - static_cast<float>(mean)) * hannWeight, 0.0f);
   }
   for (size_t i = sampleCount; i < nfft; ++i) scratch[i] = std::complex<float>(0.0f, 0.0f);  // zero-pad
   fft.Forward(scratch);
@@ -252,20 +256,20 @@ inline DopplerFeature ComputeDopplerFeatures(const float* values, size_t sampleC
   size_t peakK = (bins > 1) ? 1 : 0;
   double sumP = 0.0, sumPf = 0.0;
   for (size_t k = 1; k <= kHi; ++k) {
-    const float p = power[k];
-    if (p > peakPow) {
-      peakPow = p;
+    const float binPower = power[k];
+    if (binPower > peakPow) {
+      peakPow = binPower;
       peakK = k;
     }
-    const double f = static_cast<double>(k) * freqRes;
-    sumP += p;
-    sumPf += static_cast<double>(p) * f;
+    const double frequencyHz = static_cast<double>(k) * freqRes;
+    sumP += binPower;
+    sumPf += static_cast<double>(binPower) * frequencyHz;
   }
   const double centroid = (sumP > 0.0) ? (sumPf / sumP) : 0.0;
   double sumPdf2 = 0.0;
   for (size_t k = 1; k <= kHi; ++k) {
-    const double f = static_cast<double>(k) * freqRes;
-    sumPdf2 += static_cast<double>(power[k]) * (f - centroid) * (f - centroid);
+    const double frequencyHz = static_cast<double>(k) * freqRes;
+    sumPdf2 += static_cast<double>(power[k]) * (frequencyHz - centroid) * (frequencyHz - centroid);
   }
   const double spread = (sumP > 0.0) ? std::sqrt(sumPdf2 / sumP) : 0.0;
   return {static_cast<float>(peakK) * freqRes, static_cast<float>(spread)};
@@ -279,10 +283,10 @@ class FeatureExtractor {
 public:
   static constexpr size_t FEATURES_PER_SERIES = 9;
 
-  FeatureExtractor(size_t numSeries, size_t window, size_t hop)
-      : seriesCount_(numSeries), window_(window), hop_(hop) {
-    if (numSeries == 0 || window == 0 || hop == 0) {
-      throw WaveTraceError("FeatureExtractor: numSeries, window, hop must be non-zero");
+  FeatureExtractor(size_t seriesCount, size_t window, size_t hop)
+      : seriesCount_(seriesCount), window_(window), hop_(hop) {
+    if (seriesCount == 0 || window == 0 || hop == 0) {
+      throw WaveTraceError("FeatureExtractor: seriesCount, window, hop must be non-zero");
     }
     rings_.reserve(seriesCount_);
     for (size_t i = 0; i < seriesCount_; ++i) rings_.emplace_back(window_);
@@ -291,7 +295,7 @@ public:
     output_.assign(seriesCount_ * FEATURES_PER_SERIES, 0.0f);
   }
 
-  size_t NumSeries() const { return seriesCount_; }
+  size_t SeriesCount() const { return seriesCount_; }
   size_t Window() const { return window_; }
   size_t Hop() const { return hop_; }
   size_t OutputSize() const { return output_.size(); }
@@ -329,18 +333,18 @@ private:
 // INPUT CONTRACT: push RAW magnitudes, not gain-locked — a mean lock cancels the flatness that IS the metal signature. O(K) push.
 class InterCarrierExtractor {
 public:
-  static constexpr size_t NUM_SERIES = 3;  // 0 mu, 1 sigma2, 2 cv
+  static constexpr size_t SERIES_COUNT = 3;  // 0 mu, 1 sigma2, 2 cv
   static constexpr size_t FEATURES_PER_SERIES = 9;
 
   InterCarrierExtractor(size_t window, size_t hop) : window_(window), hop_(hop) {
     if (window == 0 || hop == 0) {
       throw WaveTraceError("InterCarrierExtractor: window, hop must be non-zero");
     }
-    rings_.reserve(NUM_SERIES);
-    for (size_t i = 0; i < NUM_SERIES; ++i) rings_.emplace_back(window_);
+    rings_.reserve(SERIES_COUNT);
+    for (size_t i = 0; i < SERIES_COUNT; ++i) rings_.emplace_back(window_);
     windowBuffer_.assign(window_, 0.0f);
     scratch_.assign(window_, 0.0f);
-    output_.assign(NUM_SERIES * FEATURES_PER_SERIES, 0.0f);
+    output_.assign(SERIES_COUNT * FEATURES_PER_SERIES, 0.0f);
   }
 
   size_t Window() const { return window_; }
@@ -350,15 +354,15 @@ public:
 
   // Push one frame's K subcarrier magnitudes; True when a feature block was emitted (see Data()).
   bool Push(const float* magnitudes, size_t subcarrierCount) {
-    const InterCarrierStat s = ComputeInterCarrierStats(magnitudes, subcarrierCount);
-    const float coefficientOfVariation = (s.mean > 1e-12f) ? std::sqrt(s.variance) / s.mean : 0.0f;
-    rings_[0].Push(s.mean);
-    rings_[1].Push(s.variance);
+    const InterCarrierStat stats = ComputeInterCarrierStats(magnitudes, subcarrierCount);
+    const float coefficientOfVariation = (stats.mean > 1e-12f) ? std::sqrt(stats.variance) / stats.mean : 0.0f;
+    rings_[0].Push(stats.mean);
+    rings_[1].Push(stats.variance);
     rings_[2].Push(coefficientOfVariation);
     ++sinceEmit_;
     if (rings_[0].Size() < window_ || sinceEmit_ < hop_) return false;
     sinceEmit_ = 0;
-    for (size_t i = 0; i < NUM_SERIES; ++i) {
+    for (size_t i = 0; i < SERIES_COUNT; ++i) {
       rings_[i].CopyOrdered(windowBuffer_.data());  // chronological (lag-1/WL need order)
       NineFeatures(windowBuffer_.data(), window_, scratch_.data(), &output_[i * FEATURES_PER_SERIES]);
     }

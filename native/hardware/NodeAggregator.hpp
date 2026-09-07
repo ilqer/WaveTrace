@@ -9,7 +9,7 @@
 namespace wavetrace {
 
 // Buffers the latest CsiFrame per node; independent CFO/SFO per node rules out cross-node conjugate-
-// multiply, so this groups frames within a timestamp tolerance instead. Submit is O(n), Synced/NumNodes O(m).
+// multiply, so this groups frames within a timestamp tolerance instead. Submit is O(n), CollectFramesWithin/NumNodes O(m).
 class NodeAggregator {
 public:
   // Slot is reused after the node is first seen, so only a new node id allocates.
@@ -20,20 +20,20 @@ public:
     } else {
       it->second = frame;  // reuse existing slot
     }
-    newestTimestamp_ = std::max(newestTimestamp_, frame.Timestamp());
+    newestTimestamp_ = std::max(newestTimestamp_, frame.TimestampSeconds());
   }
 
   size_t NumNodes() const { return nodes_.size(); }
 
-  // Frames within `tolerance` seconds of the newest submitted frame; returns copies (safe across the FFI; m small).
-  std::vector<CsiFrame> Synced(double tolerance) const {
-    std::vector<CsiFrame> out;
-    out.reserve(nodes_.size());
-    for (const auto& [id, f] : nodes_) {
+  // Frames within `toleranceSeconds` of the newest submitted frame; returns copies (safe across the FFI; m small).
+  std::vector<CsiFrame> CollectFramesWithin(double toleranceSeconds) const {
+    std::vector<CsiFrame> syncedFrames;
+    syncedFrames.reserve(nodes_.size());
+    for (const auto& [id, frame] : nodes_) {
       (void)id;
-      if (newestTimestamp_ - f.Timestamp() <= tolerance) out.push_back(f);
+      if (newestTimestamp_ - frame.TimestampSeconds() <= toleranceSeconds) syncedFrames.push_back(frame);
     }
-    return out;
+    return syncedFrames;
   }
 
 private:

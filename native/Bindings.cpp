@@ -20,15 +20,15 @@
 namespace py = pybind11;
 using namespace wavetrace;
 
-// Zero-copy writable (numAntennas x numSubcarriers) complex64 view sharing the frame's buffer; `frame` is the base object so the buffer outlives the array.
+// Zero-copy writable (antennaCount x subcarrierCount) complex64 view sharing the frame's buffer; `frame` is the base object so the buffer outlives the array.
 static py::array GridView(py::object frame) {
   CsiFrame& csiFrame = frame.cast<CsiFrame&>();
-  const auto rows = static_cast<py::ssize_t>(csiFrame.NumAntennas());
-  const auto cols = static_cast<py::ssize_t>(csiFrame.NumSubcarriers());
-  const auto elem = static_cast<py::ssize_t>(sizeof(CsiFrame::Sample));
+  const auto rows = static_cast<py::ssize_t>(csiFrame.AntennaCount());
+  const auto columns = static_cast<py::ssize_t>(csiFrame.SubcarrierCount());
+  const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(CsiFrame::Sample));
   return py::array_t<std::complex<float>>(
-      {rows, cols},                 // shape
-      {cols * elem, elem},          // row-major strides
+      {rows, columns},                 // shape
+      {columns * elementSizeBytes, elementSizeBytes},          // row-major strides
       csiFrame.Data(),              // shared buffer
       frame);                       // base keepalive
 }
@@ -41,10 +41,10 @@ PYBIND11_MODULE(_wavetrace, m) {
 
   py::class_<CsiFrame>(m, "CsiFrame")
       .def(py::init<uint16_t, uint16_t>(), py::arg("num_antennas"), py::arg("num_subcarriers"))
-      .def_property_readonly("num_antennas", &CsiFrame::NumAntennas)
-      .def_property_readonly("num_subcarriers", &CsiFrame::NumSubcarriers)
+      .def_property_readonly("num_antennas", &CsiFrame::AntennaCount)
+      .def_property_readonly("num_subcarriers", &CsiFrame::SubcarrierCount)
       .def_property_readonly("size", &CsiFrame::Size)
-      .def_property("timestamp", &CsiFrame::Timestamp, &CsiFrame::SetTimestamp)
+      .def_property("timestamp", &CsiFrame::TimestampSeconds, &CsiFrame::SetTimestamp)
       .def_property("node_id", &CsiFrame::NodeId, &CsiFrame::SetNodeId)
       .def("reshape", &CsiFrame::Reshape, py::arg("num_antennas"), py::arg("num_subcarriers"))
       .def_property_readonly("grid", &GridView,
@@ -71,16 +71,16 @@ PYBIND11_MODULE(_wavetrace, m) {
   // Phase 2 — hardware ingest.
   py::class_<FrameParser>(m, "FrameParser")
       .def(py::init<uint16_t, uint16_t>(), py::arg("num_antennas"), py::arg("num_subcarriers"))
-      .def_property_readonly("num_antennas", &FrameParser::NumAntennas)
-      .def_property_readonly("num_subcarriers", &FrameParser::NumSubcarriers)
+      .def_property_readonly("num_antennas", &FrameParser::AntennaCount)
+      .def_property_readonly("num_subcarriers", &FrameParser::SubcarrierCount)
       .def(
           "parse",
           [](FrameParser& self,
-             py::array_t<uint8_t, py::array::c_style | py::array::forcecast> raw, double timestamp,
-             int32_t nodeId) -> const CsiFrame& {
-            py::buffer_info info = raw.request();
+             py::array_t<uint8_t, py::array::c_style | py::array::forcecast> rawIqBytes,
+             double timestampSeconds, int32_t nodeId) -> const CsiFrame& {
+            py::buffer_info info = rawIqBytes.request();
             return self.Parse(static_cast<const uint8_t*>(info.ptr),
-                              static_cast<size_t>(info.size), timestamp, nodeId);
+                              static_cast<size_t>(info.size), timestampSeconds, nodeId);
           },
           py::arg("raw"), py::arg("timestamp") = 0.0, py::arg("node_id") = -1,
           // Ties the reused CsiFrame's lifetime to the parser and keeps `raw` alive for the decode.
@@ -91,7 +91,7 @@ PYBIND11_MODULE(_wavetrace, m) {
       .def(py::init<>())
       .def("submit", &NodeAggregator::Submit, py::arg("frame"))
       .def_property_readonly("num_nodes", &NodeAggregator::NumNodes)
-      .def("synced", &NodeAggregator::Synced, py::arg("tolerance"),
+      .def("synced", &NodeAggregator::CollectFramesWithin, py::arg("tolerance"),
            "Latest frame per node within `tolerance` s of the newest submit (copies). O(m).");
 
   // Signal preprocessing: stateless transforms first (bound for unit tests), then the streaming Preprocessor.
@@ -165,13 +165,13 @@ PYBIND11_MODULE(_wavetrace, m) {
         py::buffer_info info = amplitudes.request();
         if (info.ndim != 2)
           throw WaveTraceError("select_subcarriers_nbvi: amp must be 2D (frames x subcarriers)");
-        NbviParams p;
-        p.alpha = alpha;
-        p.maxSubcarriers = maxSubcarriers;
-        p.noiseGatePercentile = noiseGatePercentile;
+        NbviParams params;
+        params.alpha = alpha;
+        params.maxSubcarriers = maxSubcarriers;
+        params.noiseGatePercentile = noiseGatePercentile;
         return SelectSubcarriersNbvi(static_cast<const float*>(info.ptr),
                                      static_cast<size_t>(info.shape[0]),
-                                     static_cast<size_t>(info.shape[1]), p);
+                                     static_cast<size_t>(info.shape[1]), params);
       },
       py::arg("amp"), py::arg("alpha") = 0.75f, py::arg("max_subcarriers") = 12,
       py::arg("noise_gate_percentile") = 0.15f,
@@ -190,10 +190,10 @@ PYBIND11_MODULE(_wavetrace, m) {
             Preprocessor& p = self.cast<Preprocessor&>();
             p.Process(in);
             const auto rows = static_cast<py::ssize_t>(p.OutRows());
-            const auto cols = static_cast<py::ssize_t>(p.OutCols());
-            const auto elem = static_cast<py::ssize_t>(sizeof(float));
+            const auto columns = static_cast<py::ssize_t>(p.OutCols());
+            const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(float));
             // Zero-copy float32 view of the reused output grid (same buffer each call).
-            return py::array_t<float>({rows, cols}, {cols * elem, elem}, p.Data(), self);
+            return py::array_t<float>({rows, columns}, {columns * elementSizeBytes, elementSizeBytes}, p.Data(), self);
           },
           py::arg("frame"),
           "Process one frame -> drift-free differential-phase grid (zero-copy view). O(n).");
@@ -348,7 +348,7 @@ PYBIND11_MODULE(_wavetrace, m) {
   py::class_<FeatureExtractor>(m, "FeatureExtractor")
       .def(py::init<size_t, size_t, size_t>(), py::arg("num_series"), py::arg("window"),
            py::arg("hop"))
-      .def_property_readonly("num_series", &FeatureExtractor::NumSeries)
+      .def_property_readonly("num_series", &FeatureExtractor::SeriesCount)
       .def_property_readonly("window", &FeatureExtractor::Window)
       .def_property_readonly("hop", &FeatureExtractor::Hop)
       .def_property_readonly("output_size", &FeatureExtractor::OutputSize)
@@ -358,7 +358,7 @@ PYBIND11_MODULE(_wavetrace, m) {
           [](FeatureExtractor& self,
              py::array_t<float, py::array::c_style | py::array::forcecast> values) {
             py::buffer_info info = values.request();
-            if (static_cast<size_t>(info.size) != self.NumSeries())
+            if (static_cast<size_t>(info.size) != self.SeriesCount())
               throw WaveTraceError("FeatureExtractor.push: values length must equal num_series");
             return self.Push(static_cast<const float*>(info.ptr));
           },
@@ -368,10 +368,10 @@ PYBIND11_MODULE(_wavetrace, m) {
           "features",
           [](py::object self) -> py::array {
             FeatureExtractor& f = self.cast<FeatureExtractor&>();
-            const auto len = static_cast<py::ssize_t>(f.OutputSize());
-            const auto elem = static_cast<py::ssize_t>(sizeof(float));
-            // Zero-copy float32 view of the reused output (len 9*num_series, same buffer each emit).
-            return py::array_t<float>({len}, {elem}, f.Data(), self);
+            const auto outputLength = static_cast<py::ssize_t>(f.OutputSize());
+            const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(float));
+            // Zero-copy float32 view of the reused output (length 9*num_series, same buffer each emit).
+            return py::array_t<float>({outputLength}, {elementSizeBytes}, f.Data(), self);
           },
           "Zero-copy view of the latest emitted feature vector (length 9*num_series).");
 
@@ -395,10 +395,10 @@ PYBIND11_MODULE(_wavetrace, m) {
           "features",
           [](py::object self) -> py::array {
             InterCarrierExtractor& f = self.cast<InterCarrierExtractor&>();
-            const auto len = static_cast<py::ssize_t>(f.OutputSize());
-            const auto elem = static_cast<py::ssize_t>(sizeof(float));
+            const auto outputLength = static_cast<py::ssize_t>(f.OutputSize());
+            const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(float));
             // Zero-copy float32 view of the reused output (length 27, same buffer each emit).
-            return py::array_t<float>({len}, {elem}, f.Data(), self);
+            return py::array_t<float>({outputLength}, {elementSizeBytes}, f.Data(), self);
           },
           "Zero-copy view of the latest emitted feature block (length 27 = 3*9: mu|sigma2|cv).");
 
@@ -427,7 +427,7 @@ PYBIND11_MODULE(_wavetrace, m) {
   py::class_<SpectrogramBuilder>(m, "SpectrogramBuilder")
       .def(py::init<size_t, size_t, size_t>(), py::arg("num_subcarriers"), py::arg("time_steps"),
            py::arg("hop"))
-      .def_property_readonly("num_subcarriers", &SpectrogramBuilder::NumSubcarriers)
+      .def_property_readonly("num_subcarriers", &SpectrogramBuilder::SubcarrierCount)
       .def_property_readonly("time_steps", &SpectrogramBuilder::TimeSteps)
       .def_property_readonly("hop", &SpectrogramBuilder::Hop)
       .def("reset", &SpectrogramBuilder::Reset)
@@ -436,7 +436,7 @@ PYBIND11_MODULE(_wavetrace, m) {
           [](SpectrogramBuilder& self,
              py::array_t<float, py::array::c_style | py::array::forcecast> values) {
             py::buffer_info info = values.request();
-            if (static_cast<size_t>(info.size) != self.NumSubcarriers())
+            if (static_cast<size_t>(info.size) != self.SubcarrierCount())
               throw WaveTraceError(
                   "SpectrogramBuilder.push: values length must equal num_subcarriers");
             return self.Push(static_cast<const float*>(info.ptr));
@@ -447,11 +447,11 @@ PYBIND11_MODULE(_wavetrace, m) {
           "image",
           [](py::object self) -> py::array {
             SpectrogramBuilder& s = self.cast<SpectrogramBuilder&>();
-            const auto rows = static_cast<py::ssize_t>(s.NumSubcarriers());
-            const auto cols = static_cast<py::ssize_t>(s.TimeSteps());
-            const auto elem = static_cast<py::ssize_t>(sizeof(float));
+            const auto rows = static_cast<py::ssize_t>(s.SubcarrierCount());
+            const auto columns = static_cast<py::ssize_t>(s.TimeSteps());
+            const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(float));
             // Zero-copy float32 view of the reused (num_subcarriers x time_steps) image.
-            return py::array_t<float>({rows, cols}, {cols * elem, elem}, s.Data(), self);
+            return py::array_t<float>({rows, columns}, {columns * elementSizeBytes, elementSizeBytes}, s.Data(), self);
           },
           "Zero-copy view of the latest emitted (num_subcarriers x time_steps) CSI image.");
 }

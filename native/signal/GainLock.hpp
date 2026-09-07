@@ -18,13 +18,13 @@ inline float CoefficientOfVariation(const float* amplitudes, size_t sampleCount)
   for (size_t i = 0; i < sampleCount; ++i) mean += amplitudes[i];
   mean /= static_cast<double>(sampleCount);
   if (std::fabs(mean) < 1e-12) return 0.0f;
-  double var = 0.0;
+  double variance = 0.0;
   for (size_t i = 0; i < sampleCount; ++i) {
-    const double d = static_cast<double>(amplitudes[i]) - mean;
-    var += d * d;
+    const double deviationFromMean = static_cast<double>(amplitudes[i]) - mean;
+    variance += deviationFromMean * deviationFromMean;
   }
-  var /= static_cast<double>(sampleCount);
-  return static_cast<float>(std::sqrt(var) / mean);
+  variance /= static_cast<double>(sampleCount);
+  return static_cast<float>(std::sqrt(variance) / mean);
 }
 
 // Host-side surrogate for the firmware AGC lock: rescales frames to a quiet baseline's median mean magnitude (real-multiply, phase untouched).
@@ -49,9 +49,9 @@ public:
   // Lock the reference scale = median of the observed per-frame scales. Requires >= 1 observation.
   void Finalize() {
     if (scales_.empty()) throw FrameError("GainLock: no baseline frames observed");
-    const size_t mid = scales_.size() / 2;
-    std::nth_element(scales_.begin(), scales_.begin() + mid, scales_.end());
-    referenceScale_ = scales_[mid];
+    const size_t medianIndex = scales_.size() / 2;
+    std::nth_element(scales_.begin(), scales_.begin() + medianIndex, scales_.end());
+    referenceScale_ = scales_[medianIndex];
     bLocked_ = true;
   }
 
