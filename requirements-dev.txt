@@ -1,0 +1,7 @@
+# Phase 0 tooling (REFACTOR_PLAN.md). Not wired into pyproject.toml [project.optional-dependencies]
+# on purpose — Phase 0's hard constraints forbid touching the [project] table.
+# Install with: .venv/bin/python -m pip install -r requirements-dev.txt
+ruff==0.16.6
+mypy==2.3.1
+pre-commit==4.6.2
+import-linter==2.14

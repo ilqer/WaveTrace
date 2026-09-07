@@ -1,0 +1,26 @@
+# REFACTOR_PLAN.md Phase 0 step 1/2. `ruff` covers Python everywhere; `clang-format` is scoped to
+# the C++ core (native/, renamed from src/ in Phase 1) and the 6 firmware main/config files —
+# never firmware/*/managed_components/** or firmware/*/build/** (vendored/generated, §0).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff
+        name: ruff (pep8-naming intentionally off — see pyproject.toml [tool.ruff])
+        args: [--config=pyproject.toml]
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.8
+    hooks:
+      - id: clang-format
+        files: ^(src|native)/.*\.(h|hpp|c|cc|cpp)$|^firmware/[^/]+/main/(main|config)\.(cpp|h)$
+        exclude: ^firmware/[^/]+/(managed_components|build)/
+
+  - repo: local
+    hooks:
+      - id: lint-imports
+        name: import-linter (wavetrace does not depend on web/scripts)
+        entry: .venv/bin/lint-imports
+        language: system
+        pass_filenames: false
+        always_run: true

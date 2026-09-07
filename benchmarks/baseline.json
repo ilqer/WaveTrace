@@ -1,0 +1,101 @@
+{
+  "python_version": "3.14.0",
+  "platform": "macOS-26.3.1-arm64-arm-64bit-Mach-O",
+  "numpy_version": "2.4.6",
+  "seed": 1234,
+  "batches_per_benchmark": 50,
+  "calls_per_batch": 500,
+  "regression_budget": 0.05,
+  "benchmarks": [
+    {
+      "name": "conjugate_multiply",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 0.21758401999250054,
+      "mean_us": 0.3838416747748852,
+      "median_us": 0.3108329838141799,
+      "p95_us": 0.6309423915809019
+    },
+    {
+      "name": "combined_channel_difference",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 0.1170000177808106,
+      "mean_us": 0.2808084001298993,
+      "median_us": 0.3521240141708404,
+      "p95_us": 0.42477498936932523
+    },
+    {
+      "name": "coefficient_of_variation",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 0.47916604671627283,
+      "mean_us": 1.1705799563787875,
+      "median_us": 1.0128330031875519,
+      "p95_us": 2.2503590094856905
+    },
+    {
+      "name": "hampel",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 0.5460000247694552,
+      "mean_us": 1.3229800818953663,
+      "median_us": 1.2189159751869738,
+      "p95_us": 2.0649676996981725
+    },
+    {
+      "name": "unwrap_step",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 0.06900000153109431,
+      "mean_us": 0.17971476190723482,
+      "median_us": 0.18479101709090173,
+      "p95_us": 0.3551660163793712
+    },
+    {
+      "name": "preprocessor_process",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 9.075750014744699,
+      "mean_us": 13.925815079128371,
+      "median_us": 13.601748971268533,
+      "p95_us": 18.116070376709104
+    },
+    {
+      "name": "fft",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 1.4690840034745634,
+      "mean_us": 2.9535750427749003,
+      "median_us": 2.624625019961968,
+      "p95_us": 3.742046491242945
+    },
+    {
+      "name": "nine_features",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 2.6230840012431145,
+      "mean_us": 4.825399961555377,
+      "median_us": 4.409999964991584,
+      "p95_us": 7.487419480457901
+    },
+    {
+      "name": "inter_carrier_stats",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 0.4917500191368162,
+      "mean_us": 1.1870249605271965,
+      "median_us": 1.1531250202096999,
+      "p95_us": 1.8906993762357156
+    },
+    {
+      "name": "inter_carrier_phase_stats",
+      "batches": 50,
+      "calls_per_batch": 500,
+      "min_us": 0.5807499983347952,
+      "mean_us": 1.2090133177116513,
+      "median_us": 1.2059159926138818,
+      "p95_us": 1.9810505851637565
+    }
+  ]
+}

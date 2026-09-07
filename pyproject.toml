@@ -31,3 +31,77 @@ python_files = "Test*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 testpaths = ["tests"]
+
+[tool.ruff]
+# Matches the project's existing line-wrap style (see CLAUDE.md).
+line-length = 110
+target-version = "py310"
+extend-exclude = [
+    "_skbuild",
+    "build",
+    "archive",
+    "docs/archive",
+    "data",
+    "output",
+    "models",
+    "web/ui",
+    "firmware/*/managed_components",
+    "firmware/*/build",
+]
+
+[tool.ruff.lint]
+# pep8-naming (N) is intentionally OFF: the codebase is camelCase Python on purpose until
+# Phase 6 of REFACTOR_PLAN.md converts it. Turning N on here would fight every existing name.
+select = ["F"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# Phase 0 is behaviour-preserving and may not touch these files (REFACTOR_PLAN.md Phase 0 hard
+# constraints). Each entry below is pre-existing pyflakes debt caught by turning the linter on for
+# the first time, not something introduced here — left in place and noted under "Found, deferred"
+# in REFACTOR_PROGRESS.md for a later, in-scope phase to clean up.
+"experiments/weapon_experiments.py" = ["F541"]
+"scripts/health_monitor.py" = ["F401"]
+"scripts/ntp_server.py" = ["F541"]
+"scripts/run_live_mesh.py" = ["F401"]
+"tests/TestCir.py" = ["F841"]
+"tests/TestFeatures.py" = ["F401"]
+"tests/TestFrontendExt.py" = ["F401", "F841"]
+"tests/TestMeshLinks.py" = ["F401"]
+"tests/TestRegression.py" = ["F401"]
+"tests/TestSubcarrierSelect.py" = ["F401", "F841"]
+"wavetrace/Cli.py" = ["F401"]
+"wavetrace/Localize.py" = ["F401"]
+"wavetrace/groundtruth/Webcam.py" = ["F401"]
+"wavetrace/recognition/Heatmap.py" = ["F841"]
+"web/app.py" = ["F401"]
+"web/foxglove.py" = ["F401"]
+"web/streamer.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+# The codebase predates type hints in most modules; this is a starting posture for Phase 0,
+# not an enforced gate yet (mypy is not part of the Phase 0 verify gate).
+check_untyped_defs = false
+disallow_untyped_defs = false
+exclude = [
+    "^build/",
+    "^_skbuild/",
+    "^archive/",
+    "^web/ui/",
+    "^firmware/.*/managed_components/",
+    "^firmware/.*/build/",
+]
+
+[tool.importlinter]
+root_packages = ["wavetrace", "web", "scripts"]
+
+[[tool.importlinter.contracts]]
+# Not yet the full §2 dependency rule (that needs the domain/application/adapters split, Phase 4) —
+# this is the one boundary that already holds today: the CSI-only recognition package must not
+# reach into the web dashboard or the throwaway operator scripts around it.
+name = "wavetrace does not depend on web or scripts"
+type = "forbidden"
+source_modules = ["wavetrace"]
+forbidden_modules = ["web", "scripts"]

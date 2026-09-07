@@ -1,0 +1,13 @@
+# Microsoft/Unreal-hybrid C++ style (REFACTOR_PLAN.md §1.1). Applies to native/ (renamed from
+# src/ in Phase 1) and firmware/*/main/ — never firmware/*/managed_components/ (vendored, §0).
+BasedOnStyle: Microsoft
+Language: Cpp
+Standard: c++17
+ColumnLimit: 110
+IndentWidth: 2
+AccessModifierOffset: -2
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+PointerAlignment: Left
+ReferenceAlignment: Left
+SortIncludes: false

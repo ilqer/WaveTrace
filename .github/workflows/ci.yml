@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build the native extension + install test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+          python -m pip install -r requirements-dev.txt
+
+      - name: pytest (295+ tests, fully offline)
+        run: python -m pytest tests/ -q
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: import-linter (dependency-rule contracts)
+        run: lint-imports

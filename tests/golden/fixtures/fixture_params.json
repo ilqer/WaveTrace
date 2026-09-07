@@ -1,0 +1,24 @@
+{
+  "num_antennas": 2,
+  "num_subcarriers": 32,
+  "sample_rate_hz": 100.0,
+  "duration_s": 4.0,
+  "seed": 555,
+  "presence_spans": [
+    [
+      1.0,
+      3.0
+    ]
+  ],
+  "weapon_spans": [
+    [
+      1.5,
+      2.5
+    ]
+  ],
+  "presence_turbulence_std": 0.15,
+  "weapon_signature_depth": 0.4,
+  "baseline_seed": 42,
+  "baseline_num_frames": 50,
+  "generated_by": "tests/golden/README.md \u2014 fixtures.SyntheticRecording.generatePairedRecording"
+}

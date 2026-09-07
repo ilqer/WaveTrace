@@ -3,41 +3,43 @@ __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
-.pytest_cache/
 
-# Build
-build/
-dist/
-_skbuild/
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.import_linter_cache/
+
+# Build output
+/build/
+/dist/
+/_skbuild/
 *.so
 *.dylib
 
-# Native extension landing spot (built by scikit-build-core)
-wavetrace/_wavetrace*.so
-wavetrace/_wavetrace*.dylib
-
 # Models (quantized weights, added in Phase 6)
-models/
+/models/
 
 # Recorded CSI + camera datasets (Phase 5)
-data/
+/data/
 
 # CLI run artifacts (capture/calibrate/collect-data/train/localize outputs)
-output/
+/output/
 
 # Local debugging / throwaway scripts (not collected by pytest — testpaths=["tests"])
-scratch/
+/scratch/
 
-# Local reference / analysis notes (not part of the shipped repo)
-fixtures
+# Retired scripts and superseded guides, kept locally for reference
+/archive/
+/docs/archive/
 
-# Retired scripts kept locally for reference (superseded by web/streamer + CLI)
-archive/
 # IDE
 .idea/
 
 # macOS
 .DS_Store
+
+# Large model weight checked out beside the source, not part of the repo
 /yolov8n-seg.pt
 
 # Presentation stuff, private
