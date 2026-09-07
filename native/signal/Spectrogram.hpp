@@ -20,13 +20,13 @@ public:
     output_.assign(k_ * t_, 0.0f);  // (k_ x t_) row-major after an emit
   }
 
-  size_t numSubcarriers() const { return k_; }
-  size_t timeSteps() const { return t_; }
-  size_t hop() const { return hop_; }
-  const float* data() const { return output_.data(); }
+  size_t NumSubcarriers() const { return k_; }
+  size_t TimeSteps() const { return t_; }
+  size_t Hop() const { return hop_; }
+  const float* Data() const { return output_.data(); }
 
-  // Returns true when an image was emitted (window full and `hop` frames since the last emit), then available via data(). O(K) otherwise.
-  bool push(const float* values) {
+  // Returns true when an image was emitted (window full and `hop` frames since the last emit), then available via Data(). O(K) otherwise.
+  bool Push(const float* values) {
     float* col = &cols_[head_ * k_];
     for (size_t s = 0; s < k_; ++s) col[s] = values[s];
     head_ = (head_ + 1) % t_;
@@ -43,7 +43,7 @@ public:
     return true;
   }
 
-  void reset() {
+  void Reset() {
     head_ = 0;
     count_ = 0;
     sinceEmit_ = 0;

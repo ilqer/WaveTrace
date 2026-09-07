@@ -1,4 +1,4 @@
-# `src/core/`
+# `native/core/`
 
 Shared types used across the entire C++ backend.
 

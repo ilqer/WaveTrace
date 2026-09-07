@@ -1,4 +1,4 @@
-# `src/` — C++ signal processing core
+# `native/` — C++ signal processing core
 
 This folder is compiled into the `wavetrace` Python package via pybind11. It handles the parts of the pipeline that must run fast: parsing raw UDP datagrams, cleaning the signal, and extracting features.
 

@@ -11,12 +11,12 @@ namespace wavetrace {
 // subcarrier by amplitude variability, keeps a spectrally-diverse subset above a noise gate.
 
 // Per-subcarrier baseline means + noise-gate threshold (percentile of means); fills meansOut. O(F*S + S log S).
-inline float noiseGate(const float* amp, size_t numFrames, size_t numSubcarriers,
+inline float NoiseGate(const float* amplitudes, size_t numFrames, size_t numSubcarriers,
                        float percentile, std::vector<float>& meansOut) {
   meansOut.assign(numSubcarriers, 0.0f);
   for (size_t s = 0; s < numSubcarriers; ++s) {
     double m = 0.0;
-    for (size_t f = 0; f < numFrames; ++f) m += amp[f * numSubcarriers + s];
+    for (size_t f = 0; f < numFrames; ++f) m += amplitudes[f * numSubcarriers + s];
     meansOut[s] = static_cast<float>(m / static_cast<double>(numFrames));
   }
   std::vector<float> sortedMeans = meansOut;
@@ -27,11 +27,11 @@ inline float noiseGate(const float* amp, size_t numFrames, size_t numSubcarriers
 }
 
 // All subcarriers passing the noise gate, ascending — CNN image rows (contiguous-frequency, unlike the NBVI MLP subset). O(S log S), offline.
-inline std::vector<uint16_t> validSubcarriers(const float* amp, size_t numFrames,
+inline std::vector<uint16_t> ValidSubcarriers(const float* amplitudes, size_t numFrames,
                                               size_t numSubcarriers, float noiseGatePercentile) {
   if (numFrames == 0 || numSubcarriers == 0) return {};
   std::vector<float> means;
-  const float gate = noiseGate(amp, numFrames, numSubcarriers, noiseGatePercentile, means);
+  const float gate = NoiseGate(amplitudes, numFrames, numSubcarriers, noiseGatePercentile, means);
   std::vector<uint16_t> result;
   for (size_t s = 0; s < numSubcarriers; ++s) {
     if (means[s] >= gate) result.push_back(static_cast<uint16_t>(s));
@@ -39,20 +39,20 @@ inline std::vector<uint16_t> validSubcarriers(const float* amp, size_t numFrames
   return result;  // already ascending (iterated s=0..S-1)
 }
 
-// Per-subcarrier NBVI over row-major (numFrames x numSubcarriers) amp: alpha*(sigma/mu^2) + (1-alpha)*(sigma/mu).
+// Per-subcarrier NBVI over row-major (numFrames x numSubcarriers) amplitudes: alpha*(sigma/mu^2) + (1-alpha)*(sigma/mu).
 // Higher = more informative. O(F*S). mu~0 -> score 0.
-inline std::vector<float> nbviScores(const float* amp, size_t numFrames, size_t numSubcarriers,
+inline std::vector<float> NbviScores(const float* amplitudes, size_t numFrames, size_t numSubcarriers,
                                      float alpha) {
   std::vector<float> scores(numSubcarriers, 0.0f);
   if (numFrames == 0) return scores;
   for (size_t s = 0; s < numSubcarriers; ++s) {
     double mean = 0.0;
-    for (size_t f = 0; f < numFrames; ++f) mean += amp[f * numSubcarriers + s];
+    for (size_t f = 0; f < numFrames; ++f) mean += amplitudes[f * numSubcarriers + s];
     mean /= static_cast<double>(numFrames);
     if (mean < 1e-12) continue;
     double var = 0.0;
     for (size_t f = 0; f < numFrames; ++f) {
-      const double d = static_cast<double>(amp[f * numSubcarriers + s]) - mean;
+      const double d = static_cast<double>(amplitudes[f * numSubcarriers + s]) - mean;
       var += d * d;
     }
     var /= static_cast<double>(numFrames);
@@ -70,13 +70,13 @@ struct NbviParams {
 
 // Up to maxSubcarriers non-consecutive subcarriers by NBVI after a noise gate (also removes DC/guard bands,
 // geometry-agnostic); greedy by score with index tie-break for a stable result. O(S log S), ascending.
-inline std::vector<uint16_t> selectSubcarriersNbvi(const float* amp, size_t numFrames,
+inline std::vector<uint16_t> SelectSubcarriersNbvi(const float* amplitudes, size_t numFrames,
                                                    size_t numSubcarriers, const NbviParams& p) {
   if (numFrames == 0 || numSubcarriers == 0) return {};
 
   std::vector<float> means;
-  const float gate = noiseGate(amp, numFrames, numSubcarriers, p.noiseGatePercentile, means);
-  const std::vector<float> scores = nbviScores(amp, numFrames, numSubcarriers, p.alpha);
+  const float gate = NoiseGate(amplitudes, numFrames, numSubcarriers, p.noiseGatePercentile, means);
+  const std::vector<float> scores = NbviScores(amplitudes, numFrames, numSubcarriers, p.alpha);
 
   // Candidates passing the gate, ranked by score desc; stable_sort keeps the lower index on ties -> deterministic.
   std::vector<uint16_t> cand;

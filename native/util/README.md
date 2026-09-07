@@ -1,4 +1,4 @@
-# `src/util/`
+# `native/util/`
 
 Low-level helpers used by the rest of the C++ code.
 

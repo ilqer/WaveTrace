@@ -1,4 +1,4 @@
-# `src/signal/`
+# `native/signal/`
 
 DSP pipeline: cleans the raw CSI and extracts features the models can use.
 

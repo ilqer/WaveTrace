@@ -1,4 +1,4 @@
-# `src/hardware/`
+# `native/hardware/`
 
 Turns raw UDP bytes into `CsiFrame` objects.
 

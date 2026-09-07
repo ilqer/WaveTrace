@@ -13,9 +13,9 @@ find_package(pybind11 CONFIG REQUIRED)
 
 # Single native extension `_wavetrace`; Phase 1 ships only core types + bindings.
 pybind11_add_module(_wavetrace
-  src/Bindings.cpp
+  native/Bindings.cpp
 )
-target_include_directories(_wavetrace PRIVATE src)
+target_include_directories(_wavetrace PRIVATE native)
 
 # Land the .so inside the importable Python package.
 install(TARGETS _wavetrace DESTINATION wavetrace)
