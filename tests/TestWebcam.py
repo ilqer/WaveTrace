@@ -2,7 +2,7 @@
 
 import threading
 
-from wavetrace.groundtruth.CameraLabeler import (VisionLabeler, Detection,
+from wavetrace.groundtruth.CameraLabeler import (VisionLabeler, Detection, LabelerOptions,
                                                  presenceLabelFn, weaponLabelFn)
 from wavetrace.groundtruth.Webcam import (recordFrames, recordLabelsOnline, streamLabels,
                                           COCO_WEAPON_CLASSES)
@@ -26,7 +26,7 @@ def test_stream_labels_presence_sorted_and_classified():
 
 
 def test_stream_labels_open_carry_weapon():
-    lab = VisionLabeler(_stub_detector, weapon_classes=COCO_WEAPON_CLASSES,
+    lab = VisionLabeler(_stub_detector, options=LabelerOptions(weapon_classes=COCO_WEAPON_CLASSES),
                         label_fn=weaponLabelFn)
     out = streamLabels(lab, [(0.0, "weapon"), (1.0, "person")])
     cls = {l.timestamp: l.class_id for l in out}

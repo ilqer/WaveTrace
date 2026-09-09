@@ -11,21 +11,60 @@ Note: we do NOT use Localize.Tracker here — that tracks azimuth+range (AoA, pa
 This module tracks grid cell coordinates directly. O(G²) per OccupancyGrid step.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
+@dataclass(frozen=True, slots=True)
+class OccupancyOptions:
+    """Tuning knobs for `OccupancyGrid` / `HeatmapTrack` (§1.6: >3 related constructor parameters).
+
+    `decay`: higher = forget faster. `blur`: 4-neighbour spatial coupling each predict step, i.e.
+    motion uncertainty. `measurement_weight_floor`: minimum measurement weight so even
+    low-confidence frames still update."""
+
+    grid: int = 16
+    decay: float = 0.1
+    blur: float = 0.5
+    measurement_weight_floor: float = 0.2
+
+    def __post_init__(self) -> None:
+        if self.grid <= 0:
+            raise ValueError("grid must be positive")
+        if not 0.0 <= self.decay <= 1.0:
+            raise ValueError("decay must be in [0, 1]")
+        if self.blur < 0.0:
+            raise ValueError("blur must be non-negative")
+        if not 0.0 <= self.measurement_weight_floor <= 1.0:
+            raise ValueError("measurement_weight_floor must be in [0, 1]")
+
+
+@dataclass(frozen=True, slots=True)
+class KalmanOptions:
+    """Tuning knobs for `_GridKalman`, the constant-velocity peak smoother."""
+
+    acceleration_std: float = 2.0
+    measurement_std: float = 1.5
+    gate: float = 9.0
+
+    def __post_init__(self) -> None:
+        if self.acceleration_std <= 0:
+            raise ValueError("acceleration_std must be positive")
+        if self.measurement_std <= 0:
+            raise ValueError("measurement_std must be positive")
+        if self.gate <= 0:
+            raise ValueError("gate must be positive")
+
+
 class OccupancyGrid:
-    """Per-cell predict/update filter over a G×G heatmap.
+    """Per-cell predict/update filter over a G×G heatmap. See `OccupancyOptions` for the knobs."""
 
-    decay:  per-step pull toward 0 when unseen (0..1, higher = forget faster).
-    blur:   4-neighbour spatial coupling each predict step (motion uncertainty).
-    meas_weight_floor: minimum measurement weight so even low-confidence frames still update."""
-
-    def __init__(self, grid=16, *, decay=0.1, blur=0.5, meas_weight_floor=0.2):
-        self.g = int(grid)
-        self.decay = float(decay)
-        self.blur = float(blur)
-        self.floor = float(meas_weight_floor)
+    def __init__(self, options: OccupancyOptions = OccupancyOptions()):
+        self.g = options.grid
+        self.decay = options.decay
+        self.blur = options.blur
+        self.floor = options.measurement_weight_floor
         self.state = np.zeros((self.g, self.g), dtype=np.float32)
 
     def _predict(self) -> None:
@@ -61,10 +100,10 @@ class _GridKalman:
     """Constant-velocity 2D Kalman in grid coordinates (row, col).
     State = [r, c, dr, dc]. Fuses measurement with motion model; gates impossible jumps."""
 
-    def __init__(self, *, accel=2.0, meas_std=1.5, gate=9.0):
-        self._qa = float(accel) ** 2
-        self._rs = float(meas_std) ** 2
-        self._gate = float(gate)
+    def __init__(self, options: KalmanOptions = KalmanOptions()):
+        self._qa = options.acceleration_std ** 2
+        self._rs = options.measurement_std ** 2
+        self._gate = options.gate
         self._x: np.ndarray | None = None
         self._P: np.ndarray | None = None
         self._t: float | None = None
@@ -110,11 +149,13 @@ class HeatmapTrack:
     grid_origin: (row_origin, col_origin) = the grid index corresponding to (0, 0) in metres.
     """
 
-    def __init__(self, grid=16, *, cell_size_m=0.25, grid_kw=None):
-        self.g = int(grid)
+    def __init__(self, *, cell_size_m=0.25, occupancy: OccupancyOptions = OccupancyOptions(),
+                 kalman: KalmanOptions = KalmanOptions()):
+        self.g = occupancy.grid
         self.cell = float(cell_size_m)
-        self.occ = OccupancyGrid(grid, **(grid_kw or {}))
-        self._kalman = _GridKalman()
+        self._kalman_options = kalman
+        self.occ = OccupancyGrid(occupancy)
+        self._kalman = _GridKalman(kalman)
 
     def update(self, measurement, confidence: float, t: float) -> dict:
         """One step: fuse measurement into the grid, smooth the peak. Returns the telemetry dict."""
@@ -132,4 +173,4 @@ class HeatmapTrack:
 
     def reset(self) -> None:
         self.occ.reset()
-        self._kalman = _GridKalman()
+        self._kalman = _GridKalman(self._kalman_options)

@@ -83,7 +83,7 @@ def test_block_average_decimate_block_means():
 def test_block_average_decimate_drops_remainder():
     out = block_average_decimate(np.arange(105, dtype=np.float32), 20)
     assert out.shape == (5,)  # the trailing 5 samples are dropped
-from fixtures.SyntheticCsi import generateStream
+from wavetrace.Synthetic import generateStream
 
 
 # FFT vs numpy.

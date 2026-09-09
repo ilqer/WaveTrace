@@ -7,8 +7,8 @@ Tier verdicts use scripted recordings. CNN tests skip if torch is missing.
 import numpy as np
 import pytest
 
-from fixtures.SyntheticCsi import generateStream
-from fixtures.SyntheticRecording import generatePairedRecording
+from wavetrace.Synthetic import generateStream
+from wavetrace.Synthetic import generatePairedRecording
 from wavetrace.Calibration import Calibration
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth import buildDataset, loadDataset, saveDataset, weaponLabelFn

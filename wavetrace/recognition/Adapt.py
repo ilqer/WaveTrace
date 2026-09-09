@@ -22,9 +22,12 @@ def refreshNormStats(head, recent_images, *, blend=0.5) -> tuple[float, float]:
     return head._norm
 
 
-def recalibrate(source, out_dir, *, baseline_packets=300, use_gain_lock=True) -> str:
-    """Re-run quiet-room calibration (gain, baseline, NBVI) with weights intact. Returns path."""
-    from wavetrace.Cli import calibrateSource
-    calPath, _ = calibrateSource(source, out_dir, baseline_packets=baseline_packets,
+def recalibrate(calibrate_fn, source, out_dir, *, baseline_packets=300, use_gain_lock=True) -> str:
+    """Re-run quiet-room calibration (gain, baseline, NBVI) with weights intact. Returns path.
+
+    calibrate_fn takes the same arguments as wavetrace.Cli.calibrateSource and is injected by the
+    caller so this module never imports the Cli entrypoint directly.
+    """
+    calPath, _ = calibrate_fn(source, out_dir, baseline_packets=baseline_packets,
                                 use_gain_lock=use_gain_lock)
     return str(calPath)

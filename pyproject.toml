@@ -26,8 +26,9 @@ wheel.packages = ["wavetrace"]
 cmake.build-type = "Release"
 
 [tool.pytest.ini_options]
-# Intentional PascalCase test files (CLAUDE.md naming): discover Test*.py.
-python_files = "Test*.py"
+# Legacy PascalCase test files (CLAUDE.md naming) stay Test*.py until Phase 6's tree rename;
+# new Phase-3-onward tests use the final PEP 8 test_*.py name (REFACTOR_PLAN.md §1.2/§1.5).
+python_files = ["Test*.py", "test_*.py"]
 python_classes = "Test*"
 python_functions = "test_*"
 testpaths = ["tests"]
@@ -95,13 +96,88 @@ exclude = [
 ]
 
 [tool.importlinter]
-root_packages = ["wavetrace", "web", "scripts"]
+root_packages = ["wavetrace", "web", "scripts", "fixtures", "experiments"]
 
 [[tool.importlinter.contracts]]
 # Not yet the full §2 dependency rule (that needs the domain/application/adapters split, Phase 4) —
 # this is the one boundary that already holds today: the CSI-only recognition package must not
-# reach into the web dashboard or the throwaway operator scripts around it.
-name = "wavetrace does not depend on web or scripts"
+# reach into the web dashboard, the throwaway operator scripts, its own test-data generators, or
+# the one-off research scripts around it. (Phase 3d: added fixtures/experiments to close the
+# wavetrace<->fixtures two-way cycle — wavetrace.Cli used to import fixtures.SyntheticRecording.)
+name = "wavetrace does not depend on web, scripts, fixtures or experiments"
 type = "forbidden"
 source_modules = ["wavetrace"]
-forbidden_modules = ["web", "scripts"]
+forbidden_modules = ["web", "scripts", "fixtures", "experiments"]
+
+[[tool.importlinter.contracts]]
+# Phase 3d: the delivery layer must not reach sideways into operator scripts or throwaway
+# experiments (the skill's named symptom) — web/streamer.py imported scripts.run_weapon helpers
+# and web/app.py imported experiments.weapon_litmus helpers. Both are now defined in wavetrace.
+name = "web does not depend on scripts or experiments"
+type = "forbidden"
+source_modules = ["web"]
+forbidden_modules = ["scripts", "experiments"]
+
+[[tool.importlinter.contracts]]
+# Phase 3d: each operator script is a standalone entrypoint; one must never reach into another's
+# internals. This catches a properly-qualified `from scripts.X import Y`. It does NOT catch a bare
+# `from collect_count import countName` (scripts/run_count.py:26, fixed in Phase 3d by moving
+# countName into wavetrace) — that import is syntactically indistinguishable from importing an
+# unrelated third-party package named `collect_count`, so no import-linter contract can see that it
+# resolves to scripts/collect_count.py only via a sys.path hack. Mechanical enforcement of THAT
+# defect is the code fix itself (there is nothing left to import), not a lint rule.
+name = "scripts are independent of each other"
+type = "independence"
+modules = [
+    "scripts.collect_baseline",
+    "scripts.collect_camera",
+    "scripts.collect_count",
+    "scripts.collect_presence",
+    "scripts.collect_weapon",
+    "scripts.health_monitor",
+    "scripts.mesh_verify",
+    "scripts.ntp_server",
+    "scripts.run_count",
+    "scripts.run_live_mesh",
+    "scripts.run_weapon",
+]
+
+[[tool.importlinter.contracts]]
+# Phase 3d: the entrypoint rule, scoped to what is actually clean today. `wavetrace.Cli` is the
+# composition root (argparse -> object graph -> use-case call); nothing else INSIDE wavetrace.* may
+# import it. This enforces exactly the wavetrace-internal fix Phase 3d made:
+# wavetrace/recognition/Adapt.py used to do `from wavetrace.Cli import calibrateSource` (the worst
+# of the seven original violations, an inner module reaching into the entrypoint); it now takes the
+# calibration callable as a parameter (`recalibrate(calibrate_fn, ...)`) and the caller — which is
+# already outside wavetrace — passes `Cli.calibrateSource` in. That import is gone for good and
+# this contract locks it in.
+#
+# It deliberately does NOT cover `scripts/*` or `web/streamer.py` importing `wavetrace.Cli` for
+# `calibrateSource` / `collectSource` / `runInference` / `localizeSource` — those four use-cases
+# still live IN Cli.py by design (REFACTOR_PLAN.md Phase 4 step 5 relocates them into
+# `application/`; moving them now is out of scope for Phase 3d and explicitly prohibited). Six
+# import sites are still red against the full-strength version of this contract:
+# scripts/collect_baseline.py:18, scripts/collect_camera.py:31, scripts/collect_count.py:24,
+# scripts/collect_presence.py:28, scripts/collect_weapon.py:29, web/streamer.py:11,637. A contract
+# that is red by design trains later phases to ignore the tool, so it is narrowed to green here;
+# the full-strength version is restored verbatim by Phase 4 (see the commented-out contract below
+# and REFACTOR_PLAN.md Phase 4's verify gate).
+name = "wavetrace does not import the wavetrace.Cli entrypoint"
+type = "forbidden"
+# "wavetrace.*" (direct children, each checked as its whole subtree), not the bare "wavetrace"
+# package: import-linter's forbidden contract silently SKIPS a source/forbidden pair that overlaps
+# as packages (source contains forbidden or vice versa), so source_modules = ["wavetrace"] against
+# forbidden_modules = ["wavetrace.Cli"] would skip the pair entirely and miss every intra-package
+# violation (e.g. wavetrace/recognition/Adapt.py importing wavetrace.Cli) — only "wavetrace.Cli"
+# itself overlaps and is correctly skipped; every sibling still gets checked.
+source_modules = ["wavetrace.*"]
+forbidden_modules = ["wavetrace.Cli"]
+
+# --- Phase 4 target: restore this verbatim once calibrateSource/collectSource/runInference/
+# localizeSource move out of Cli.py into application/ (REFACTOR_PLAN.md Phase 4 step 5), then
+# delete the narrower contract above.
+# [[tool.importlinter.contracts]]
+# name = "nothing outside Cli.py imports the wavetrace.Cli entrypoint"
+# type = "forbidden"
+# source_modules = ["wavetrace.*", "web", "scripts"]
+# forbidden_modules = ["wavetrace.Cli"]

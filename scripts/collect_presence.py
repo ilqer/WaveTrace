@@ -6,10 +6,11 @@ and trained independently into data/model/node{id}/. Live, run_live_mesh.py vote
 node that drops/crashes just lowers the vote weight instead of taking the system down.
 
 Per-LINK training (matches serving): capture splits the stream per (tx->rx) link and each link is
-resampled to TARGET_FS and windowed on its OWN clean grid, then all of a node's links are POOLED into
-that node's single head. This mirrors run_live_mesh (per-link, 100 Hz), instead of interleaving both
-transmitters into one window, and teaches the head the human signal common to every link (generalize)
-rather than the round-robin slot-switching artifact of a merged stream.
+resampled onto the shared pipeline rate and windowed on its OWN clean grid, then all of a node's
+links are POOLED into that node's single head. This mirrors run_live_mesh (per-link, 100 Hz),
+instead of interleaving both transmitters into one window, and teaches the head the human signal
+common to every link (generalize) rather than the round-robin slot-switching artifact of a merged
+stream.
 
 Each session = part A (zone EMPTY) then part B (you stand + MOVE in the zone).
 """
@@ -22,21 +23,20 @@ import socket
 import sys
 import time
 
-from wavetrace.Source import (UdpSource, RecordingSource, saveRecording,
+from wavetrace.Source import (UdpSource, UdpSourceOptions, RecordingSource, saveRecording,
                               parseBatchLinks, resampleUniform, bindUdp)
 from wavetrace.Cli import collectSource
 from wavetrace.recognition import trainPresence
+from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
 
 SUBJECT = "u0"
-TARGET_FS = 100.0   # resample grid; MUST match run_live_mesh.TARGET_FS so train and serve windows align
-WINDOW = 128        # front-end window (frames); a link segment shorter than this emits no window
 
 
-def detectNodes(port, timeout_s=3.0):
+def detectNodes(port, timeout_seconds=3.0):
     """Briefly listen to detect the active Node IDs in the live UDP stream. Returns sorted list."""
     print("listening for active nodes...")
     detected = collections.Counter()
-    source = UdpSource(port, timeout_s=timeout_s, max_frames=150)
+    source = UdpSource(UdpSourceOptions(port=port, timeout_seconds=timeout_seconds, max_frames=150))
     for fr in source.frames():
         detected[fr.node_id] += 1
     return sorted(detected.keys())
@@ -139,9 +139,10 @@ def main():
             used = 0
             for key in keys:
                 # resample separately: a single resample across both would interpolate fake frames across the gap
-                e = resampleUniform(empty.get(key, []), TARGET_FS)
-                p = resampleUniform(present.get(key, []), TARGET_FS)
-                if len(e) < WINDOW or len(p) < WINDOW:
+                e = resampleUniform(empty.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
+                p = resampleUniform(present.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
+                # a link segment shorter than this emits no window
+                if len(e) < DEFAULT_WINDOW_FRAMES or len(p) < DEFAULT_WINDOW_FRAMES:
                     continue  # too short on this grid to emit a window in each class
                 span = (p[0].timestamp, p[-1].timestamp + 1.0)
                 tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
@@ -152,7 +153,8 @@ def main():
                 dsDirs[nid].append(ds)
                 used += 1
             if used == 0:
-                print(f"   [SKIP] node {nid} session {i}: no link had >= {WINDOW} frames/class.")
+                print(f"   [SKIP] node {nid} session {i}: "
+                      f"no link had >= {DEFAULT_WINDOW_FRAMES} frames/class.")
 
     print("\ntraining per-node presence models...")
     trained = []

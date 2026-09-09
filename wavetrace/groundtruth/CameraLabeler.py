@@ -99,6 +99,33 @@ class Detection:
     keypoints: list = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class LabelerOptions:
+    """Detector-selection knobs every `Labeler` subclass reads: which detector class id counts as
+    the person, and which class ids count as a weapon."""
+
+    person_class: int = 0
+    weapon_classes: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "weapon_classes", tuple(int(c) for c in self.weapon_classes))
+        if self.person_class < 0:
+            raise ValueError("person_class must be >= 0")
+
+
+@dataclass(frozen=True, slots=True)
+class YoloLabelerOptions(LabelerOptions):
+    """Adds the Ultralytics network-selection knobs only `YoloLabeler`/`YoloSegLabeler` read:
+    `device` (a torch device string, e.g. "cuda"; `None` = ultralytics' own default) and
+    `weights_path` (a weights file for that class to load; `None` = its own `DEFAULT_WEIGHTS`). A
+    pre-built model object — what tests pass to skip the ultralytics import — is a collaborator,
+    not a setting, so it stays a separate `model=` constructor parameter (see `YoloLabeler`)
+    rather than a field here."""
+
+    device: str | None = None
+    weights_path: str | None = None
+
+
 class VisionLabeler(Labeler):
     """Camera-supervised labeler driven by a REAL object detector (the seam ReplayLabeler stood in
     for). `detector(image) -> list[Detection]` runs the model on one RGB frame; this picks the
@@ -110,14 +137,14 @@ class VisionLabeler(Labeler):
     from the stream. With `label_fn=presenceLabelFn` it teaches Stage A; `weaponLabelFn` +
     `weapon_classes` teaches Stage E from a camera that CAN see the weapon (open-carry tier)."""
 
-    def __init__(self, detector, *, person_class=0, weapon_classes=(), conf=0.35,
+    def __init__(self, detector, *, options: LabelerOptions = LabelerOptions(), conf=0.35,
                  label_fn=presenceLabelFn):
         super().__init__(label_fn)
         if not callable(detector):
             raise ValueError("VisionLabeler: detector must be callable(image) -> list[Detection]")
         self._detector = detector
-        self._person = int(person_class)
-        self._weapon = set(int(c) for c in weapon_classes)
+        self._person = options.person_class
+        self._weapon = set(options.weapon_classes)
         self._conf = float(conf)
 
     def _detect(self, observation, timestamp: float) -> dict:
@@ -136,33 +163,38 @@ class VisionLabeler(Labeler):
 
 class YoloLabeler(VisionLabeler):
     """Ultralytics-YOLO adapter (person detection + optional weapon classes; pose model -> keypoints).
-    The dependency is OPTIONAL and imported lazily (`pip install ultralytics`); pass `model=` a
-    pre-built model object to bypass the import (what the tests do).
+    The dependency is OPTIONAL and imported lazily (`pip install ultralytics`); pass `model=` an
+    already-built model object to bypass the import (what the tests do).
 
-    `model`: a weights path/name (e.g. "yolov8n.pt", "yolov8n-pose.pt") loaded via ultralytics, OR a
-    ready model object exposing `__call__(image) -> results`. Results are converted to `Detection`s
-    with boxes in normalized xywh; pose keypoints (normalized) ride along when present."""
+    `model`: a ready model object exposing `__call__(image) -> results` — bypasses
+    `options.weights_path` entirely, since a prebuilt model and a weights file are two different
+    things (a collaborator vs. a setting), not one field wearing both hats. `options.weights_path`:
+    a weights path/name (e.g. "yolov8n.pt", "yolov8n-pose.pt") for THIS class to load via
+    ultralytics when `model` isn't given; `None` loads `DEFAULT_WEIGHTS`. Results are converted to
+    `Detection`s with boxes in normalized xywh; pose keypoints (normalized) ride along when present."""
 
-    def __init__(self, model="yolov8n.pt", *, device=None, person_class=0, weapon_classes=(),
-                 conf=0.35, imgsz=640, label_fn=presenceLabelFn):
-        net = self._load(model, device) if isinstance(model, (str, bytes)) else model
+    DEFAULT_WEIGHTS = "yolov8n.pt"
+
+    def __init__(self, *, options: YoloLabelerOptions = YoloLabelerOptions(), model=None, conf=0.35,
+                 imgsz=640, label_fn=presenceLabelFn):
+        net = model if model is not None else self._load(
+            options.weights_path or self.DEFAULT_WEIGHTS, options.device)
 
         def detector(image):
             results = net(image, imgsz=imgsz, verbose=False) if _acceptsKwargs(net) else net(image)
             return _yoloToDetections(results)
 
-        super().__init__(detector, person_class=person_class, weapon_classes=weapon_classes,
-                         conf=conf, label_fn=label_fn)
+        super().__init__(detector, options=options, conf=conf, label_fn=label_fn)
 
     @staticmethod
-    def _load(weights, device):
+    def _load(weights_path, device):
         try:
             from ultralytics import YOLO
         except ImportError as e:  # pragma: no cover - exercised only without the optional dep
             raise ImportError(
-                "YoloLabeler needs ultralytics: pip install ultralytics (or pass a prebuilt model=)"
+                "YoloLabeler needs ultralytics: pip install ultralytics (or pass model= a prebuilt model)"
             ) from e
-        net = YOLO(weights)
+        net = YOLO(weights_path)
         if device is not None:
             net.to(device)
         return net
@@ -253,14 +285,14 @@ class SegmentationLabeler(Labeler):
     A weapon needs BOTH conf >= `conf` AND the mask-overlap gate, so spurious detections never label
     CSI. `grid` is stored with the mask, so the heatmap resolution stays tunable without a type change."""
 
-    def __init__(self, segmenter, *, person_class=0, weapon_classes=(), conf=0.5, grid=16,
+    def __init__(self, segmenter, *, options: LabelerOptions = LabelerOptions(), conf=0.5, grid=16,
                  overlap_min=0.5, label_fn=presenceLabelFn):
         super().__init__(label_fn)
         if not callable(segmenter):
             raise ValueError("SegmentationLabeler: segmenter must be callable(image) -> list[Segment]")
         self._seg = segmenter
-        self._person = int(person_class)
-        self._weapon = set(int(c) for c in weapon_classes)
+        self._person = options.person_class
+        self._weapon = set(options.weapon_classes)
         self._conf = float(conf)
         self._grid = int(grid)
         self._overlap_min = float(overlap_min)
@@ -296,19 +328,23 @@ class SegmentationLabeler(Labeler):
 
 class YoloSegLabeler(SegmentationLabeler):
     """Ultralytics YOLO-seg adapter (e.g. "yolov8n-seg.pt") — the SegmentationLabeler over a real
-    model. Optional dep imported lazily; pass `model=` a prebuilt object to bypass the import (tests).
-    Results carry per-instance masks (`res.masks.data`, (N,H,W)) + normalized boxes -> `Segment`s."""
+    model. Optional dep imported lazily; pass `model=` an already-built segmenter object to bypass
+    the import (tests). See `YoloLabeler` for the `model` vs. `options.weights_path` split. Results
+    carry per-instance masks (`res.masks.data`, (N,H,W)) + normalized boxes -> `Segment`s."""
 
-    def __init__(self, model="yolov8n-seg.pt", *, device=None, person_class=0, weapon_classes=(),
-                 conf=0.5, grid=16, overlap_min=0.5, imgsz=640, label_fn=presenceLabelFn):
-        net = YoloLabeler._load(model, device) if isinstance(model, (str, bytes)) else model
+    DEFAULT_WEIGHTS = "yolov8n-seg.pt"
+
+    def __init__(self, *, options: YoloLabelerOptions = YoloLabelerOptions(), model=None, conf=0.5,
+                 grid=16, overlap_min=0.5, imgsz=640, label_fn=presenceLabelFn):
+        net = model if model is not None else YoloLabeler._load(
+            options.weights_path or self.DEFAULT_WEIGHTS, options.device)
 
         def segmenter(image):
             results = net(image, imgsz=imgsz, verbose=False) if _acceptsKwargs(net) else net(image)
             return _yoloToSegments(results)
 
-        super().__init__(segmenter, person_class=person_class, weapon_classes=weapon_classes,
-                         conf=conf, grid=grid, overlap_min=overlap_min, label_fn=label_fn)
+        super().__init__(segmenter, options=options, conf=conf, grid=grid,
+                         overlap_min=overlap_min, label_fn=label_fn)
 
 
 def _yoloToSegments(results) -> list[Segment]:

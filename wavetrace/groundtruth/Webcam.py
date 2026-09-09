@@ -15,8 +15,24 @@ an injected detector. cv2 is imported lazily so importing this module never requ
 """
 
 import time
+from dataclasses import dataclass
 
 from wavetrace import Label
+
+
+@dataclass(frozen=True, slots=True)
+class WebcamOptions:
+    """Capture geometry for `WebcamCapture` (§1.6 options-class treatment)."""
+
+    index: int = 0
+    width: int = 1280
+    height: int = 720
+
+    def __post_init__(self) -> None:
+        if self.index < 0:
+            raise ValueError("index must be >= 0")
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("width and height must be positive")
 
 
 class WebcamCapture:
@@ -28,9 +44,9 @@ class WebcamCapture:
     `clock` is injectable (defaults to wall-clock `time.time`, matching the CSI
     ntp_ms stamp so labels and CSI windows align). Use as a context manager."""
 
-    def __init__(self, index: int = 0, size=(1280, 720), clock=time.time):
-        self._index = int(index)
-        self._width, self._height = size
+    def __init__(self, options: WebcamOptions = WebcamOptions(), *, clock=time.time):
+        self._index = options.index
+        self._width, self._height = options.width, options.height
         self._clock = clock
         self._proc = None
 

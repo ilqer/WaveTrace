@@ -6,10 +6,13 @@ import json
 from collections import deque
 
 from wavetrace.Calibration import loadCalibration, imageBaseline as get_image_baseline
-from wavetrace.recognition import modeSession, SegmentVoter, trainPresence, trainWeapon
+from wavetrace.recognition import modeSession, planInferenceInput, SegmentVoter, trainPresence, trainWeapon
 from wavetrace.Frontend import iterWindows
-from wavetrace.Cli import _servingPlan, _sourceFromArgs, calibrateSource, collectSource
+from wavetrace.Cli import calibrateSource, collectSource
+from wavetrace.Source import buildCsiSource, parseTimeSpans
 from wavetrace import RecognitionResult
+from wavetrace.domain.contracts import (DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPLE_RATE_HZ,
+                                        DEFAULT_WINDOW_FRAMES)
 
 _OCC_GRID = 16
 
@@ -106,8 +109,8 @@ class WaveTraceRunner:
             port = getattr(req, "udp_port", 9876)
             self.log(f"[HW] UDP listener on :{port} — nodes push CSI here (PC_IP set in firmware)")
             self.log(f"[HW] Camera: {req.cam_url}")
-            from wavetrace.Source import UdpSource
-            return UdpSource(port=port, timeout_s=60.0)
+            from wavetrace.Source import UdpSource, UdpSourceOptions
+            return UdpSource(UdpSourceOptions(port=port, timeout_seconds=60.0))
 
         # Synthetic path — retained for CLI/test use only.
         self.log("[SIM] Synthetic source (no hardware connected).")
@@ -118,7 +121,7 @@ class WaveTraceRunner:
             weapon="2:5,12:15,22:25,32:35,42:45,52:55", weapon_depth=0.5,
             seed=getattr(req, 'seed', 0),
         )
-        return _sourceFromArgs(args)
+        return buildCsiSource(args)
 
     def startInferenceManaged(self, req):
         source = self._getSource(req)
@@ -144,8 +147,7 @@ class WaveTraceRunner:
         source = self._getSource(req)
         if not self.is_running: return
         self.log(f"Collecting {req.col_stage} dataset (window={req.col_window}, hop={req.col_hop})")
-        from wavetrace.Cli import _parseSpans
-        spans = _parseSpans(req.col_spans)
+        spans = parseTimeSpans(req.col_spans)
         path, ds = collectSource(source, req.calibration, "output/dataset_ui", spans,
                                   stage=req.col_stage, window=req.col_window, hop=req.col_hop,
                                   subtract_ic_baseline=getattr(req, "subtract_ic_baseline", False))
@@ -317,7 +319,7 @@ class WaveTraceRunner:
                 if not (os.path.isdir(cdir) and os.path.exists(mpath)): continue
                 res, glock = loadCalibration(cdir)
                 sess = modeSession(loadMode, mpath)
-                alock, ic, pck = _servingPlan(loadMode, sess.head)
+                alock, ic, pck = planInferenceInput(loadMode, sess.head)
                 classes = [int(c) for c in sess.head.classes_]
                 # Item 10/CAUSE 2B: must serve with the same IC baseline used in training or σ²[p] mismatches.
                 icBase = (res.baseline_mag
@@ -355,7 +357,7 @@ class WaveTraceRunner:
             self.log("Single-node setup detected.")
             result, gainLock = loadCalibration(calib_dir)
             session = modeSession(loadMode, model_path)
-            apply_lock, intercarrier, pick = _servingPlan(loadMode, session.head)
+            apply_lock, intercarrier, pick = planInferenceInput(loadMode, session.head)
             if not use_gain_lock: gainLock = None
             cfg = session.head.config
             # Item 10/CAUSE 2B: mirror training's IC background subtraction at serve time.
@@ -393,7 +395,7 @@ class WaveTraceRunner:
             )
             if _hasLinks:
                 try:
-                    from scripts.run_weapon import loadWeaponLinks
+                    from wavetrace.recognition import loadWeaponLinks
                     weaponEntries = loadWeaponLinks(calib_dir, model_path)
                     for (tag, nid), e in weaponEntries.items():
                         if nid in nodes:
@@ -428,7 +430,7 @@ class WaveTraceRunner:
         try:
             if isMesh:
                 # per-link serving math lives once in run_weapon; presence/count/weapon all share it.
-                from scripts.run_weapon import dwellProbaDetailed, _linkHealth
+                from wavetrace.recognition import dwellProbaDetailed, linkHealth
                 # Use raw UDP ingestion for parseBatchLinks instead of snooper.frames()
                 import socket
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -475,13 +477,13 @@ class WaveTraceRunner:
 
                         grids = [np.abs(f.grid).mean() for f in buffers[key]]
                         nodePower[key[1]] = float(np.mean(grids))
-                        _hz, _miss = _linkHealth(list(buffers[key]))
+                        _hz, _miss = linkHealth(list(buffers[key]))
                         linkStats.append({"tx": key[0], "rx": key[1],
                                            "hz": round(_hz, 1), "miss": round(_miss, 3)})
 
                         # temporal soft vote over the buffer + last window's image/features/ic for the spectrogram
                         lastProbs, image, features, ic, _nw = dwellProbaDetailed(
-                            list(buffers[key]), 100.0, m)
+                            list(buffers[key]), m["session"].head.contract.target_sample_rate_hz, m)
                         if lastProbs is None: continue
                         repImage, repFeatures, repIc = image, features, ic
 
@@ -624,9 +626,9 @@ class WaveTraceRunner:
         import os, glob as _g, socket as _sock, threading, time as _t, collections as _col
 
         try:
-            from wavetrace.groundtruth.CameraLabeler import (YoloSegLabeler,
+            from wavetrace.groundtruth.CameraLabeler import (YoloLabelerOptions, YoloSegLabeler,
                                                               presenceLabelFn, weaponLabelFn)
-            from wavetrace.groundtruth.Webcam import (WebcamCapture, recordLabelsOnline,
+            from wavetrace.groundtruth.Webcam import (WebcamCapture, WebcamOptions, recordLabelsOnline,
                                                        COCO_WEAPON_CLASSES)
             from wavetrace.groundtruth.DatasetBuilder import buildDatasetStacked, saveDataset
             from wavetrace.Source import (parseBatchLinks, resampleUniform, bindUdp,
@@ -639,7 +641,6 @@ class WaveTraceRunner:
             self.is_running = False
             return
 
-        WINDOW, TARGET_FS = 128, 100.0
         camIndex = int(getattr(req, "cam_index", 0))
         duration = float(getattr(req, "duration", 30.0))
         perLink = bool(getattr(req, "per_link", False))
@@ -666,10 +667,11 @@ class WaveTraceRunner:
         self.log(f"[CAM] Nodes: {calNodes}. Loading YOLO-seg model...")
 
         labelFn = weaponLabelFn if req.col_stage == "weapon" else presenceLabelFn
-        yoloWeights = getattr(req, "yolo_weights", "yolov8n-seg.pt") or "yolov8n-seg.pt"
+        yoloWeights = getattr(req, "yolo_weights", None)
         try:
-            labeler = YoloSegLabeler(yoloWeights, weapon_classes=COCO_WEAPON_CLASSES,
-                                     conf=0.35, label_fn=labelFn)
+            labeler = YoloSegLabeler(
+                options=YoloLabelerOptions(weights_path=yoloWeights, weapon_classes=COCO_WEAPON_CLASSES),
+                conf=0.35, label_fn=labelFn)
         except Exception as _ye:
             self.log(f"ERROR: YOLO init failed: {_ye}")
             self._emitInference({"event": "pipeline_done"})
@@ -687,7 +689,7 @@ class WaveTraceRunner:
 
         def _camWorker():
             try:
-                with WebcamCapture(index=camIndex) as cap:
+                with WebcamCapture(WebcamOptions(index=camIndex)) as cap:
                     _cnt = {"n": 0}
                     def _onLabel(lb):
                         _cnt["n"] += 1
@@ -742,7 +744,7 @@ class WaveTraceRunner:
         sess = "cam_s0"
         res = {}
         for nid, frs in perNode.items():
-            rf = resampleUniform(frs, TARGET_FS)
+            rf = resampleUniform(frs, DEFAULT_TARGET_SAMPLE_RATE_HZ)
             for f in rf:
                 f.node_id = nid
             res[nid] = rf
@@ -751,7 +753,7 @@ class WaveTraceRunner:
         presBuilt = []
         for nid in calNodes:
             frs = res.get(nid, [])
-            if len(frs) < WINDOW:
+            if len(frs) < DEFAULT_WINDOW_FRAMES:
                 self.log(f"[CAM] SKIP node {nid}: only {len(frs)} frames")
                 continue
             rec = f"{root}/cam_rec/{sess}/node{nid}"
@@ -768,8 +770,9 @@ class WaveTraceRunner:
         merged = [f for nid in calNodes for f in res.get(nid, [])]
         if merged:
             hmDir = f"{root}/cam_ds/heatmap/{sess}"
-            hmDs = buildDatasetStacked(merged, calibs, labels, window=WINDOW, hop=32,
-                                          session_id=sess, subject_id="cam")
+            hmDs = buildDatasetStacked(merged, calibs, labels, window=DEFAULT_WINDOW_FRAMES,
+                                        hop=DEFAULT_HOP_FRAMES,
+                                        session_id=sess, subject_id="cam")
             saveDataset(hmDs, hmDir)
             nMask = sum(1 for lb in hmDs.labels if getattr(lb, "mask", None) is not None)
             self.log(f"[CAM] heatmap stacked -> {hmDir} "
@@ -780,8 +783,8 @@ class WaveTraceRunner:
             for (tx, rx), frs in perLinkCsi.items():
                 if rx not in calNodes:
                     continue
-                rf = resampleUniform(frs, TARGET_FS)
-                if len(rf) < WINDOW:
+                rf = resampleUniform(frs, DEFAULT_TARGET_SAMPLE_RATE_HZ)
+                if len(rf) < DEFAULT_WINDOW_FRAMES:
                     continue
                 tag = tx.replace(":", "") if tx else "xx"
                 ld = f"{root}/cam_ds/weapon/node{rx}/link{tag}/{sess}"

@@ -4,13 +4,12 @@ Five modes (plan §5 Phase 8): capture / calibrate / collect-data / train / run.
 argparse handler over a testable helper function; `run` is the real-time path (front-end → head →
 publish) and reuses `Frontend.iterWindows` so the served features match training exactly.
 
-CSI source today = synthetic (fixtures) or a saved recording; live serial capture is a Phase-0 seam
+CSI source today = synthetic (wavetrace.Synthetic) or a saved recording; live serial capture is a Phase-0 seam
 (see Source.py). All non-`run` modes are offline.
 """
 
 import argparse
 import sys
-import warnings
 
 import numpy as np
 
@@ -18,7 +17,7 @@ from wavetrace.Calibration import Calibration, imageBaseline, loadCalibration, s
 from wavetrace.Config import ModelConfig
 from wavetrace.Frontend import iterWindows
 from wavetrace.Localize import Localizer, Tracker, saveLocalization
-from wavetrace.Source import RecordingSource, SyntheticSource, loadRecording, saveRecording
+from wavetrace.Source import buildCsiSource, parseTimeSpans, saveRecording
 from wavetrace.groundtruth import (
     buildDataset,
     presenceLabelFn,
@@ -27,24 +26,8 @@ from wavetrace.groundtruth import (
 )
 from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler
 from wavetrace.output import JsonlPublisher
-from wavetrace.recognition import SegmentVoter, modeSession, trainPresence, trainWeapon
+from wavetrace.recognition import SegmentVoter, modeSession, planInferenceInput, trainPresence, trainWeapon
 from wavetrace import RecognitionResult
-
-
-# ----- front-end serving config: how (mode, head) maps to the inference input ----------------------
-
-def _servingPlan(mode: str, head):
-    """Return (apply_lock, intercarrier, pick) for the run loop. `pick(features, image, ic) -> x` is
-    the row fed to predictWindow. Encodes the plan's (mode, backend) wiring table."""
-    if mode == "presence":
-        return True, False, (lambda f, i, ic: f)
-    # weapon: self-describing via head.feature_mode (fallback by backend for pre-P8 models)
-    fm = getattr(head, "feature_mode", None) or ("cnn" if head.config.backend == "cnn" else "ic27")
-    if fm == "cnn":
-        return False, False, (lambda f, i, ic: i.reshape(-1))
-    if fm == "fusion":
-        return True, True, (lambda f, i, ic: np.hstack([ic, f]))
-    return False, True, (lambda f, i, ic: ic)  # ic27 / variance
 
 
 # ----- mode helpers (testable; argparse handlers below just parse + call these) --------------------
@@ -136,7 +119,7 @@ def runInference(source, calib_dir, model_path, mode, publisher, *, vote=False, 
     advisory (O(S)/frame extra — acceptable on the Pi serving side). O(windows)."""
     result, gainLock = loadCalibration(calib_dir)
     session = modeSession(mode, model_path)
-    applyLock, intercarrier, pick = _servingPlan(mode, session.head)
+    applyLock, intercarrier, pick = planInferenceInput(mode, session.head)
     cfg = session.head.config
 
     imgSubc = getattr(result, "image_subcarriers", None)
@@ -195,36 +178,14 @@ def runInference(source, calib_dir, model_path, mode, publisher, *, vote=False, 
 # ----- argparse layer -----------------------------------------------------------------------------
 
 def _sourceFromArgs(args):
-    """Build a CsiSource from CLI args: --recording DIR (replay) or --synthetic (fixtures)."""
-    if args.recording:
-        return RecordingSource(args.recording)
-    if args.synthetic:
-        from fixtures.SyntheticRecording import generatePairedRecording
-        if _parseSpans(args.weapon) and args.weapon_depth <= 0.0:
-            # depth 0 injects no signal -> weapon windows are unlearnable (single-class); warn (B3)
-            warnings.warn("synthetic --weapon spans set but --weapon-depth is 0: weapon windows will "
-                          "carry no signature (pass --weapon-depth > 0)", stacklevel=2)
-        spans = _parseSpans(args.presence)
-        frames, _, _ = generatePairedRecording(
-            numAntennas=args.antennas, numSubcarriers=args.subcarriers, sampleRateHz=args.fs,
-            durationS=args.duration, cameraFps=30.0, presenceSpans=spans or [(0.0, args.duration)],
-            presenceTurbulenceStd=0.10, weaponSpans=_parseSpans(args.weapon),
-            weaponSignatureDepth=args.weapon_depth, seed=args.seed,
-        )
-        return SyntheticSource(frames)
-    raise SystemExit("a source is required: --recording DIR or --synthetic")
-
-
-def _parseSpans(s):
-    """'a:b,c:d' -> [(a,b),(c,d)]; '' -> []."""
-    if not s:
-        return []
-    return [tuple(float(x) for x in part.split(":")) for part in s.split(",")]
+    """Thin alias over `wavetrace.Source.buildCsiSource` kept under this private name so existing
+    direct importers of it are unaffected; new code should import `buildCsiSource`."""
+    return buildCsiSource(args)
 
 
 def _addSourceArgs(p):
     p.add_argument("--recording", help="replay a saved recording directory")
-    p.add_argument("--synthetic", action="store_true", help="generate frames via the fixtures")
+    p.add_argument("--synthetic", action="store_true", help="generate frames in-process (no hardware)")
     p.add_argument("--antennas", type=int, default=2)
     p.add_argument("--subcarriers", type=int, default=32)
     p.add_argument("--fs", type=float, default=100.0)
@@ -315,7 +276,7 @@ def main(argv=None) -> int:
         print(f"calibration -> {path}", file=sys.stderr)
     elif args.mode == "collect-data":
         path, ds = collectSource(_sourceFromArgs(args), args.calibration, args.out,
-                                  _parseSpans(args.label_spans), stage=args.stage,
+                                  parseTimeSpans(args.label_spans), stage=args.stage,
                                   window=args.window, hop=args.hop,
                                   session_id=args.session_id, subject_id=args.subject_id,
                                   frame_average=args.frame_average,

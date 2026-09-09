@@ -17,11 +17,13 @@ node_id.npy (F,) + meta.json. O(F·A·S) to (de)serialize.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import socket
 import struct
 import time
+import warnings
 
 import numpy as np
 
@@ -261,7 +263,7 @@ class CsiSource(ABC):
 
 
 class SyntheticSource(CsiSource):
-    """Replay an in-memory frame list (e.g. from fixtures.SyntheticCsi/SyntheticRecording)."""
+    """Replay an in-memory frame list (e.g. from wavetrace.Synthetic)."""
 
     def __init__(self, frames):
         self._frames = list(frames)
@@ -280,20 +282,48 @@ class RecordingSource(CsiSource):
         return loadRecording(self._dir)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SourceOptions:
+    """Settings shared by every `CsiSource` transport: how long to wait for the next packet with
+    no data before ending the stream, and an optional cap on total frames yielded."""
+
+    timeout_seconds: float = 5.0
+    max_frames: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.max_frames is not None and self.max_frames <= 0:
+            raise ValueError("max_frames must be positive when given")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UdpSourceOptions(SourceOptions):
+    """Settings for `UdpSource` (batched-UDP CSI backhaul)."""
+
+    port: int = 5566
+    tx_mac: str | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not 0 < self.port < 65536:
+            raise ValueError("port must be in (0, 65536)")
+
+
 class UdpSource(CsiSource):
     """Receive batched-UDP CSI (plan §3 backhaul). frames() binds 0.0.0.0:port and yields until
-    timeout_s with no packet (or max_frames). The socket loop is a thin shell over parseBatch."""
+    timeout_seconds elapses with no packet (or max_frames). The socket loop is a thin shell over
+    parseBatch."""
 
-    def __init__(self, port: int = 5566, *, tx_mac=None, timeout_s: float = 5.0,
-                 max_frames=None):
-        self._port = int(port)
-        self._tx_mac = tx_mac
-        self._timeout_s = float(timeout_s)
-        self._max_frames = max_frames
+    def __init__(self, options: UdpSourceOptions = UdpSourceOptions()):
+        self._port = options.port
+        self._tx_mac = options.tx_mac
+        self._timeout_seconds = options.timeout_seconds
+        self._max_frames = options.max_frames
 
     def frames(self):
         """Bind UDP socket and yield CsiFrames; stop on timeout or max_frames."""
-        sock = bindUdp(self._port, timeout=self._timeout_s)
+        sock = bindUdp(self._port, timeout=self._timeout_seconds)
         try:
             count = 0
             while self._max_frames is None or count < self._max_frames:
@@ -310,6 +340,25 @@ class UdpSource(CsiSource):
             sock.close()
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SerialSourceOptions(SourceOptions):
+    """Settings for `SerialReader` (esp-csi over USB serial)."""
+
+    device: str                       # e.g. "/dev/tty.usbserial-…"
+    baud: int = 921600
+    node_id: int = 1
+    tx_mac: str | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.device:
+            raise ValueError("device must be non-empty")
+        if self.baud <= 0:
+            raise ValueError("baud must be positive")
+        if self.node_id < 0:
+            raise ValueError("node_id must be >= 0")
+
+
 class SerialReader(CsiSource):
     """esp-csi CSI over USB serial — one ESP32 = one node = one antenna. A thin pyserial shell over
     `parseCsiLine`; the no-RF-cost bring-up path for 1–2 nodes before the UDP mesh exists.
@@ -320,18 +369,17 @@ class SerialReader(CsiSource):
     the dedicated TX (drops beacons / foreign traffic). `pip install pyserial`; the import + port open
     are deferred to frames() so importing this module never requires pyserial."""
 
-    def __init__(self, port, *, baud: int = 921600, node_id: int = 1, tx_mac=None,
-                 timeout_s: float = 5.0, max_frames=None):
-        self._port = port
-        self._baud = int(baud)
-        self._node = int(node_id)
-        self._tx_mac = tx_mac
-        self._timeout_s = float(timeout_s)
-        self._max_frames = max_frames
+    def __init__(self, options: SerialSourceOptions):
+        self._port = options.device
+        self._baud = options.baud
+        self._node = options.node_id
+        self._tx_mac = options.tx_mac
+        self._timeout_seconds = options.timeout_seconds
+        self._max_frames = options.max_frames
 
     def frames(self):
         """Open the serial port and yield (1, S) CsiFrames tagged with node_id; stop on read timeout
-        (no data within timeout_s) or max_frames. Malformed/filtered lines are skipped silently.
+        (no data within timeout_seconds) or max_frames. Malformed/filtered lines are skipped silently.
 
         Subcarrier-count guard (same as parseBatch): even from the dedicated TX, an RX occasionally
         receives off-format frames (legacy/HT20/HT40 differ in S). The first yielded frame sets S_ref
@@ -340,7 +388,7 @@ class SerialReader(CsiSource):
             import serial  # pyserial
         except ImportError as e:
             raise ImportError("SerialReader needs pyserial: pip install pyserial") from e
-        ser = serial.Serial(self._port, self._baud, timeout=self._timeout_s)
+        ser = serial.Serial(self._port, self._baud, timeout=self._timeout_seconds)
         try:
             count = 0
             sRef = None
@@ -367,6 +415,29 @@ class SerialReader(CsiSource):
             ser.close()
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NexmonSourceOptions(SourceOptions):
+    """Settings for `NexmonSource` (5 GHz nexmon CSI on a Raspberry Pi).
+
+    Exactly one capture mode must be selected: a `pcap_path` to replay, or `live=True` to spawn
+    tcpdump on `iface`."""
+
+    pcap_path: str | None = None
+    iface: str = "wlan0"
+    live: bool = False
+    node_id: int = 100                # >=100 so it never collides with ESP32 ids 1..6
+    bandwidth_mhz: int = 80
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.node_id < 0:
+            raise ValueError("node_id must be >= 0")
+        if self.bandwidth_mhz <= 0:
+            raise ValueError("bandwidth_mhz must be positive")
+        if not self.live and not self.pcap_path:
+            raise ValueError("NexmonSource: set pcap_path or live=True")
+
+
 class NexmonSource(CsiSource):
     """5 GHz CSI from a Raspberry Pi running nexmon_csi (bcm43455c0; Pi 3B+/4B/5, fw 7_45_189).
 
@@ -381,15 +452,14 @@ class NexmonSource(CsiSource):
       pcap_path set  -> replay a captured file (offline dev, no hardware).
       live=True      -> spawn tcpdump on `iface` and parse packets as they arrive."""
 
-    def __init__(self, *, pcap_path=None, iface="wlan0", live=False, node_id=100,
-                 timeout_s=5.0, max_frames=None, bandwidth=80):
-        self._pcap = pcap_path
-        self._iface = str(iface)
-        self._live = bool(live)
-        self._node = int(node_id)
-        self._timeout = float(timeout_s)
-        self._max = max_frames
-        self._bw = int(bandwidth)
+    def __init__(self, options: NexmonSourceOptions):
+        self._pcap = options.pcap_path
+        self._iface = options.iface
+        self._live = options.live
+        self._node = options.node_id
+        self._timeout = options.timeout_seconds
+        self._max = options.max_frames
+        self._bw = options.bandwidth_mhz
 
     def _csiread(self):
         try:
@@ -440,12 +510,11 @@ class NexmonSource(CsiSource):
                 pass
 
     def frames(self):
+        # options.__post_init__ already guarantees live or pcap_path is set, so no third branch.
         if self._live:
             yield from self._decodeLive()
-        elif self._pcap:
-            yield from self._decodeFile()
         else:
-            raise ValueError("NexmonSource: set pcap_path or live=True")
+            yield from self._decodeFile()
 
 
 def saveRecording(frames, out_dir) -> Path:
@@ -481,3 +550,35 @@ def loadRecording(rec_dir):
         fr.node_id = int(node[i])
         fr.grid[:, :] = grid[i]             # zero-copy write into the native buffer
         yield fr
+
+
+def parseTimeSpans(spec: str) -> list[tuple[float, float]]:
+    """'a:b,c:d' -> [(a,b),(c,d)]; '' -> []."""
+    if not spec:
+        return []
+    return [tuple(float(x) for x in part.split(":")) for part in spec.split(",")]
+
+
+def buildCsiSource(options) -> CsiSource:
+    """Build a CsiSource from a small options bag: `options.recording` (replay a saved directory) or
+    `options.synthetic` (generate frames in-process via `wavetrace.Synthetic`, from
+    `.antennas`/`.subcarriers`/`.fs`/`.duration`/`.presence`/`.weapon`/`.weapon_depth`/`.seed`).
+    Duck-typed so both the CLI's argparse `Namespace` and the web dashboard's request options work
+    unchanged."""
+    if options.recording:
+        return RecordingSource(options.recording)
+    if options.synthetic:
+        from wavetrace.Synthetic import generatePairedRecording
+        if parseTimeSpans(options.weapon) and options.weapon_depth <= 0.0:
+            # depth 0 injects no signal -> weapon windows are unlearnable (single-class); warn (B3)
+            warnings.warn("synthetic --weapon spans set but --weapon-depth is 0: weapon windows will "
+                          "carry no signature (pass --weapon-depth > 0)", stacklevel=2)
+        spans = parseTimeSpans(options.presence)
+        frames, _, _ = generatePairedRecording(
+            numAntennas=options.antennas, numSubcarriers=options.subcarriers, sampleRateHz=options.fs,
+            durationS=options.duration, cameraFps=30.0, presenceSpans=spans or [(0.0, options.duration)],
+            presenceTurbulenceStd=0.10, weaponSpans=parseTimeSpans(options.weapon),
+            weaponSignatureDepth=options.weapon_depth, seed=options.seed,
+        )
+        return SyntheticSource(frames)
+    raise SystemExit("a source is required: --recording DIR or --synthetic")

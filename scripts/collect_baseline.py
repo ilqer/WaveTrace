@@ -14,21 +14,21 @@ import os
 import sys
 import time
 
-from wavetrace.Source import UdpSource, RecordingSource, saveRecording
+from wavetrace.Source import RecordingSource, UdpSource, UdpSourceOptions, saveRecording
 from wavetrace.Cli import calibrateSource
 
 
-def detectNodes(port, timeout_s=3.0):
+def detectNodes(port, timeout_seconds=3.0):
     """Briefly listen to detect the active Node IDs in the live UDP stream. Returns sorted list."""
     print("listening for active nodes...")
     detected = collections.Counter()
-    source = UdpSource(port, timeout_s=timeout_s, max_frames=150)
+    source = UdpSource(UdpSourceOptions(port=port, timeout_seconds=timeout_seconds, max_frames=150))
     for fr in source.frames():
         detected[fr.node_id] += 1
     return sorted(detected.keys())
 
 
-def captureAll(n, port, node_ids, timeout_s=20.0, max_capture_s=60.0):
+def captureAll(n, port, node_ids, timeout_seconds=20.0, max_capture_s=60.0):
     """Collect up to n frames PER node in ONE listening pass. Returns {node_id: [frames]} (dominant
     subcarrier width kept per node, since widths can differ across boards/bands).
 
@@ -36,7 +36,7 @@ def captureAll(n, port, node_ids, timeout_s=20.0, max_capture_s=60.0):
     because the per-recv timeout only fires on TOTAL silence: if one node stays quiet while others keep
     streaming, the all-nodes-reached check never trips and the loop would otherwise run forever."""
     frames = {nid: [] for nid in node_ids}
-    source = UdpSource(port, timeout_s=timeout_s, max_frames=None)
+    source = UdpSource(UdpSourceOptions(port=port, timeout_seconds=timeout_seconds, max_frames=None))
     start = time.time()
     lastPrint = start
     for fr in source.frames():

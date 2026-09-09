@@ -29,6 +29,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 from wavetrace.Config import ModelConfig
+from wavetrace.domain.contracts import SCHEMA_VERSION, PipelineContract, derive_pipeline_contract
 
 
 def sklearnPipeline(config: ModelConfig) -> Pipeline:
@@ -57,6 +58,7 @@ class PresenceHead:
         self.config = config
         self._pipe = sklearnPipeline(config)  # presence backends are sklearn-only (P6 lock)
         self._fitted = False
+        self.contract = derive_pipeline_contract(config)  # what this head trains/serves against
 
     @property
     def classes_(self) -> np.ndarray:
@@ -95,7 +97,12 @@ class PresenceHead:
         self._requireFitted()
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump({"config": asdict(self.config), "pipeline": self._pipe}, p)
+        joblib.dump({
+            "config": asdict(self.config),
+            "pipeline": self._pipe,
+            "contract": self.contract.to_dict(),
+            "schema_version": SCHEMA_VERSION,
+        }, p)
         return p
 
     @classmethod
@@ -105,6 +112,10 @@ class PresenceHead:
         head = cls(ModelConfig(**blob["config"]))
         head._pipe = blob["pipeline"]
         head._fitted = True
+        # absent in artifacts saved before PipelineContract existed -> fall back to the same
+        # derivation `save` uses, so every existing model keeps loading unchanged.
+        head.contract = (PipelineContract.from_dict(blob["contract"]) if "contract" in blob
+                          else derive_pipeline_contract(head.config))
         return head
 
     def _requireFitted(self) -> None:

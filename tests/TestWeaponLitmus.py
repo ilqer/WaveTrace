@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from experiments.weapon_litmus import (  # noqa: E402
-    sigma2_per_frame, separation, gather_sigma2, _node_of, _verdict,
+from wavetrace.diagnostics.WeaponSeparation import (  # noqa: E402
+    sigma2_per_frame, separation, gather_sigma2, _node_of, verdict,
 )
 
 
@@ -39,7 +39,7 @@ def test_separation_chance_when_identical():
     b = rng.normal(5.0, 1.0, 500)
     s = separation(a, b)
     assert s["auc"] == pytest.approx(0.5, abs=0.06)
-    assert "NO SEPARATION" in _verdict(s["auc"])
+    assert "NO SEPARATION" in verdict(s["auc"])
 
 
 def test_separation_none_when_one_side_empty():

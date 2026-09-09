@@ -85,9 +85,9 @@ def trainPresence(
         dataset_dirs = [dataset_dirs]
     loaded: list[Dataset] = [loadDataset(d) for d in dataset_dirs]
     X, y, sess, subj = concatDatasets(loaded)
+    meta = loaded[0].meta
 
     if config is None:
-        meta = loaded[0].meta
         # window/hop come from the dataset's front-end cadence so serving (Cli.run) matches training
         config = ModelConfig(stage="presence", k=int(meta["K"]),
                              window=int(meta["window"]), hop=int(meta["hop"]),
@@ -97,6 +97,11 @@ def trainPresence(
     t0 = time.perf_counter()
     head = PresenceHead(config).fit(X, y)
     fitS = time.perf_counter() - t0
+    # the dataset's real per-frame capture width -- stays None (never the NBVI-selected k) for
+    # datasets built before `num_subcarriers` was recorded, so a reader can never mistake one
+    # quantity for the other.
+    if "num_subcarriers" in meta:
+        head.contract = replace(head.contract, subcarrier_width=int(meta["num_subcarriers"]))
 
     classes, counts = np.unique(y, return_counts=True)
     metrics = {
@@ -169,6 +174,9 @@ def trainWeapon(
     t0 = time.perf_counter()
     head.fit(X, y, report=report)  # report fires per epoch on the cnn backend (live UI curves); ignored otherwise
     fitS = time.perf_counter() - t0
+    # see trainPresence: sets the real capture width when known, else leaves it None.
+    if "num_subcarriers" in meta:
+        head.contract = replace(head.contract, subcarrier_width=int(meta["num_subcarriers"]))
 
     classes, counts = np.unique(y, return_counts=True)
     metrics = {

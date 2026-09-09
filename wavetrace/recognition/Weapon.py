@@ -17,6 +17,7 @@ import joblib
 import numpy as np
 
 from wavetrace.Config import ModelConfig
+from wavetrace.domain.contracts import SCHEMA_VERSION, PipelineContract, derive_pipeline_contract
 from wavetrace.recognition.Model import sklearnPipeline
 
 # Column of the 27-block holding the WINDOW MEAN of the per-packet σ²[p] series (µ|σ²|CV, 9 stats each, stat 0 = mean).
@@ -61,6 +62,7 @@ class WeaponHead:
         self._net = None
         self._norm = None          # (mean, std) train normalization
         self._image_shape = None   # (K, window) for reshaping flattened windows
+        self.contract = derive_pipeline_contract(config)  # what this head trains/serves against
 
     @property
     def classes_(self) -> np.ndarray:
@@ -201,7 +203,9 @@ class WeaponHead:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         blob = {"config": asdict(self.config), "variance_feature": self._vf,
-                "feature_mode": self.feature_mode}
+                "feature_mode": self.feature_mode,
+                "contract": self.contract.to_dict(),
+                "schema_version": SCHEMA_VERSION}
         if self._pipe is not None:
             blob["pipeline"] = self._pipe
         elif self.config.backend == "variance":
@@ -219,6 +223,10 @@ class WeaponHead:
         blob = joblib.load(path)
         head = cls(ModelConfig(**blob["config"]), variance_feature=blob["variance_feature"])
         head.feature_mode = blob.get("feature_mode")  # absent in pre-Phase-8 models -> None
+        # absent in artifacts saved before PipelineContract existed -> fall back to the same
+        # derivation `save` uses, so every existing model keeps loading unchanged.
+        head.contract = (PipelineContract.from_dict(blob["contract"]) if "contract" in blob
+                          else derive_pipeline_contract(head.config))
         if "pipeline" in blob:
             head._pipe = blob["pipeline"]
         elif head.config.backend == "variance":

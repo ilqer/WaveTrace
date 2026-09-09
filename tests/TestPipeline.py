@@ -10,17 +10,23 @@ import json
 import numpy as np
 import pytest
 
-from fixtures.SyntheticCsi import generateStream
-from fixtures.SyntheticRecording import generatePairedRecording
+from wavetrace.Synthetic import generateStream
+from wavetrace.Synthetic import generatePairedRecording
 from wavetrace import CsiFrame, Label, RecognitionResult
 from wavetrace.Calibration import Calibration, loadCalibration, saveCalibration
-from wavetrace.Cli import _servingPlan, calibrateSource, collectSource, runInference
+from wavetrace.Cli import calibrateSource, collectSource, runInference
 from wavetrace.Frontend import iterWindows
 from wavetrace.Source import RecordingSource, SyntheticSource, loadRecording, saveRecording
 from wavetrace.groundtruth import buildDataset
 from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler
 from wavetrace.output import JsonlPublisher, resultToDict
-from wavetrace.recognition import InferenceSession, measureLatency, trainPresence, trainWeapon
+from wavetrace.recognition import (
+    InferenceSession,
+    measureLatency,
+    planInferenceInput,
+    trainPresence,
+    trainWeapon,
+)
 
 NUM_ANT, NUM_SUB, FS = 2, 32, 100.0
 
@@ -118,16 +124,16 @@ class _FakeHead:
 def test_serving_plan_table():
     f = np.arange(3.0); i = np.zeros((2, 2)); ic = np.arange(5.0)
     # Presence: features used, lock on, no intercarrier (ic).
-    lock, inter, pick = _servingPlan("presence", _FakeHead("mlp"))
+    lock, inter, pick = planInferenceInput("presence", _FakeHead("mlp"))
     assert (lock, inter) == (True, False) and np.array_equal(pick(f, i, ic), f)
     # Weapon variance/ic27: ic used, lock off.
-    lock, inter, pick = _servingPlan("weapon", _FakeHead("variance", "ic27"))
+    lock, inter, pick = planInferenceInput("weapon", _FakeHead("variance", "ic27"))
     assert (lock, inter) == (False, True) and np.array_equal(pick(f, i, ic), ic)
     # Weapon fusion: hstack(ic, f) used, lock on.
-    lock, inter, pick = _servingPlan("weapon", _FakeHead("mlp", "fusion"))
+    lock, inter, pick = planInferenceInput("weapon", _FakeHead("mlp", "fusion"))
     assert (lock, inter) == (True, True) and np.array_equal(pick(f, i, ic), np.hstack([ic, f]))
     # Weapon CNN: flattened image used, lock off.
-    lock, inter, pick = _servingPlan("weapon", _FakeHead("cnn", "cnn"))
+    lock, inter, pick = planInferenceInput("weapon", _FakeHead("cnn", "cnn"))
     assert (lock, inter) == (False, False) and np.array_equal(pick(f, i, ic), i.reshape(-1))
 
 

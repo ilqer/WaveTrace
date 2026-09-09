@@ -7,6 +7,7 @@ import sys
 import numpy as np
 import pytest
 
+from wavetrace.Source import SerialSourceOptions
 from wavetrace.Source import SerialReader, parseCsiLine, parseBatch
 
 
@@ -120,7 +121,8 @@ def test_serial_reader_yields_node_tagged_frames(monkeypatch):
     good = _make_csi_line([1, 2, 3, 4, 5, 6], mac="aa:bb:cc:dd:ee:ff").encode()  # S=3
     other = _make_csi_line([7, 8, 9, 10], mac="11:22:33:44:55:66").encode()      # filtered out
     holder = _install_fake_serial(monkeypatch, [good, b"garbage line", other, good])
-    reader = SerialReader("/dev/ttyUSB0", node_id=4, tx_mac="aa:bb:cc:dd:ee:ff", baud=921600)
+    reader = SerialReader(SerialSourceOptions(device="/dev/ttyUSB0", node_id=4,
+                                              tx_mac="aa:bb:cc:dd:ee:ff", baud=921600))
 
     frames = list(reader.frames())
     assert len(frames) == 2                       # Matching MAC lines only; garbage/foreign dropped.
@@ -136,7 +138,7 @@ def test_serial_reader_drops_off_format_frames(monkeypatch):
     s3 = _make_csi_line([1, 2, 3, 4, 5, 6]).encode()   # S=3 (sets S_ref)
     s2 = _make_csi_line([7, 8, 9, 10]).encode()         # S=2 is dropped
     _install_fake_serial(monkeypatch, [s3, s2, s3, s2, s3])
-    frames = list(SerialReader("/dev/ttyUSB0").frames())
+    frames = list(SerialReader(SerialSourceOptions(device="/dev/ttyUSB0")).frames())
     assert len(frames) == 3 and all(fr.num_subcarriers == 3 for fr in frames)
     # Frames share one shape; saveRecording can stack them.
     np.stack([np.asarray(fr.grid) for fr in frames])
@@ -145,13 +147,13 @@ def test_serial_reader_drops_off_format_frames(monkeypatch):
 def test_serial_reader_respects_max_frames(monkeypatch):
     line = _make_csi_line([1, 2, 3, 4]).encode()
     _install_fake_serial(monkeypatch, [line] * 10)
-    assert len(list(SerialReader("/dev/ttyUSB0", max_frames=3).frames())) == 3
+    assert len(list(SerialReader(SerialSourceOptions(device="/dev/ttyUSB0", max_frames=3)).frames())) == 3
 
 
 def test_serial_reader_needs_pyserial(monkeypatch):
     monkeypatch.setitem(sys.modules, "serial", None)  # force ImportError on `import serial`
     with pytest.raises(ImportError, match="pyserial"):
-        list(SerialReader("/dev/ttyUSB0").frames())
+        list(SerialReader(SerialSourceOptions(device="/dev/ttyUSB0")).frames())
 
 
 # ---- T7d.2: parseBatch valid --------------------------------------------------------

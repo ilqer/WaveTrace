@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import numpy as np
 
 from collect_weapon import _linkTag
-from run_weapon import _entryFor, _linkHealth
+from run_weapon import _entryFor
+from wavetrace.recognition import linkHealth
 
 
 def test_link_tag_parses_tx_from_dataset_dir():
@@ -30,7 +31,7 @@ def _frames(timestamps):
 
 def test_link_health_clean_stream_no_missing():
     """100 Hz stream reports ~100 Hz delivered and ~0 missing."""
-    hz, miss = _linkHealth(_frames(np.arange(50) * 0.01))
+    hz, miss = linkHealth(_frames(np.arange(50) * 0.01))
     assert abs(hz - 100.0) < 1.0
     assert miss == 0.0
 
@@ -39,10 +40,10 @@ def test_link_health_detects_dropped_frames():
     """Gaps yield nonzero missing fraction."""
     ts = list(np.arange(20) * 0.01)
     del ts[10]; del ts[5]  # two single-frame drops
-    hz, miss = _linkHealth(_frames(ts))
+    hz, miss = linkHealth(_frames(ts))
     assert miss > 0.0
     assert hz > 0.0
 
 
 def test_link_health_too_few_frames():
-    assert _linkHealth(_frames([0.0, 0.01])) == (0.0, 0.0)
+    assert linkHealth(_frames([0.0, 0.01])) == (0.0, 0.0)

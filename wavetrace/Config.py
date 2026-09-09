@@ -1,6 +1,12 @@
-"""Project configuration. Explicit dimensions required."""
+"""Domain configuration for CSI capture and recognition: the shape of a capture geometry, a DSP
+toggle set, and a recognition head's hyperparameters. Explicit dimensions required.
 
-from dataclasses import dataclass, field
+Transport/adapter settings (`SourceOptions` and its subclasses) live beside the sources they
+configure in `wavetrace/Source.py`; delivery settings (`WebServerOptions`) live in `web/`. What
+stays here has one reason to change: the domain's own idea of a capture/signal/model shape,
+independent of how frames arrive or how the dashboard is served."""
+
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,12 +60,3 @@ class ModelConfig:
             raise ValueError("k, window, hop and hidden must be positive")
         if not 0.0 < self.fs_tol < 1.0:
             raise ValueError("fs_tol must be in (0, 1)")
-
-
-@dataclass(frozen=True, slots=True)
-class Config:
-    """Top-level config. Grows as phases land (DSP, model, output)."""
-
-    capture: CaptureConfig
-    signal: SignalConfig = field(default_factory=SignalConfig)
-    model: ModelConfig | None = None  # None until a head is configured (Phase 6+)

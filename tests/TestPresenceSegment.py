@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from wavetrace import PresenceSegmenter, WaveTraceError
-from fixtures.SyntheticCsi import generateStream
+from wavetrace.Synthetic import generateStream
 
 
 def _energy(frame):

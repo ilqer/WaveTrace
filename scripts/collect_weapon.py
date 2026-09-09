@@ -4,8 +4,8 @@ per-node Stage-E weapon model. Standalone from the presence/count scripts: impor
 
 Stage-E uses the INTER-CARRIER feature block (stage="weapon" -> intercarrier dataset, trainWeapon
 feature_mode="ic27"), NOT the amplitude features the presence head uses — the concealed-object signal
-lives in inter-subcarrier structure, not in "is a body moving". Per-(tx->rx)-LINK + TARGET_FS resample,
-pooled into each node's single head (same parity as the presence/count paths).
+lives in inter-subcarrier structure, not in "is a body moving". Per-(tx->rx)-LINK, resampled to the
+shared pipeline rate and pooled into each node's single head (same parity as the presence/count paths).
 
 CUMULATIVE: every run appends its datasets under data/weapon_ds/ and RETRAINS each node on the whole
 pool, so you build subject/position diversity over many runs. Run once per subject AND carry position:
@@ -28,9 +28,7 @@ import time
 from wavetrace.Source import RecordingSource, saveRecording, parseBatchLinks, resampleUniform, bindUdp
 from wavetrace.Cli import collectSource
 from wavetrace.recognition import trainWeapon
-
-TARGET_FS = 100.0   # resample grid; MUST match run_weapon.TARGET_FS so train and serve windows align
-WINDOW = 128        # front-end window (frames); a link shorter than this on the grid emits no window
+from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
 # Cumulative dataset pool lives at <root>/weapon_ds (one subdir tree per run), globbed at train time.
 
 
@@ -92,8 +90,8 @@ def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_su
     link (class 1 if `weapon` else 0). Returns the list of dataset dirs written."""
     out = []
     for key in sorted(k for k in cap if k[1] == nid):
-        fr = resampleUniform(cap.get(key, []), TARGET_FS)
-        if len(fr) < WINDOW:
+        fr = resampleUniform(cap.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
+        if len(fr) < DEFAULT_WINDOW_FRAMES:  # a link shorter than this on the grid emits no window
             continue
         span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
         tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment

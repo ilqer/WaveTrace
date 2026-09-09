@@ -9,6 +9,7 @@ import pytest
 
 from wavetrace.groundtruth import (
     Detection,
+    LabelerOptions,
     VisionLabeler,
     presenceLabelFn,
     weaponLabelFn,
@@ -51,7 +52,7 @@ def test_weapon_class_flags_weapon():
         Detection(0, 0.8, (0.4, 0.3, 0.2, 0.5)),
         Detection(43, 0.7, (0.45, 0.5, 0.05, 0.1)),
     ]
-    lab = VisionLabeler(detector, weapon_classes=(43,), label_fn=weaponLabelFn)
+    lab = VisionLabeler(detector, options=LabelerOptions(weapon_classes=(43,)), label_fn=weaponLabelFn)
     l = lab.label(IMG, 3.0)
     assert l.class_id == 1 and l.name == "weapon"
 

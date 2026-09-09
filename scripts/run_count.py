@@ -20,10 +20,8 @@ import numpy as np
 from wavetrace.Source import parseBatchLinks, resampleUniform, bindUdp
 from wavetrace.Calibration import loadCalibration
 from wavetrace.Frontend import iterWindows
-from wavetrace.recognition import modeSession
+from wavetrace.recognition import countName, modeSession, planInferenceInput
 from wavetrace.recognition.Link import LinkVoter
-from wavetrace.Cli import _servingPlan
-from collect_count import countName  # shared label formatting (count module is internally DRY)
 
 
 def _minWidth(result):
@@ -85,7 +83,7 @@ def loadCountNodes(cal_root, model_root):
             continue
         result, gainLock = loadCalibration(calDir)
         session = modeSession("presence", modelPath)  # count head is a multi-class PresenceHead
-        applyLock, intercarrier, pick = _servingPlan("presence", session.head)
+        applyLock, intercarrier, pick = planInferenceInput("presence", session.head)
         nodes[nid] = dict(
             result=result, lock=gainLock if applyLock else None,
             intercarrier=intercarrier, pick=pick, session=session, cfg=session.head.config,
@@ -119,7 +117,6 @@ def main():
     if args.model is None:
         args.model = f"{args.root}/model_count"
 
-    TARGET_FS = 100.0      # uniform resample grid; MUST match collect_count.TARGET_FS
     CHUNK_S = 1.5          # fuse + print at this cadence
     LINK_TIMEOUT_S = 3.0   # drop a link from the vote if unheard this long
     BUFFER_S = 3.0         # per-link rolling history kept for resampling/windowing
@@ -132,6 +129,9 @@ def main():
     k = len(classes)
     labels = [countName(c, args.max_count) for c in classes]
     clsArr = np.asarray(classes, dtype=np.float64)
+    # the artifact's own resample rate, not a re-declared constant -- every node's head is trained
+    # at the same rate today, so any node's contract stands in for the print banner.
+    sample_rate_hz = next(iter(nodes.values()))["session"].head.contract.target_sample_rate_hz
 
     buffers = collections.defaultdict(collections.deque)  # keyed by (tx_short, rx_node)
     lastSeen = {}
@@ -139,7 +139,8 @@ def main():
 
     sock = bindUdp(args.port, timeout=0.5)
     wsummary = "  ".join(f"N{nid}:w={nodes[nid]['weight']:.2f}" for nid in sorted(nodes))
-    print(f"PEOPLE-COUNT on udp/{args.port} (fs={TARGET_FS:g}Hz, classes={labels}, rx nodes={sorted(nodes)}; "
+    print(f"PEOPLE-COUNT on udp/{args.port} (fs={sample_rate_hz:g}Hz, "
+          f"classes={labels}, rx nodes={sorted(nodes)}; "
           f"vote weights {wsummary}). vary the headcount. Ctrl+C to stop.\n")
 
     nextFuse = time.time() + CHUNK_S
@@ -176,8 +177,9 @@ def main():
                 if now - lastSeen.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
                 m = nodes[key[1]]
-                proba = _lastWindowProba(list(buffers[key]), TARGET_FS, m["result"], m["lock"],
-                                           m["cfg"], m["intercarrier"], m["pick"], m["session"])
+                proba = _lastWindowProba(list(buffers[key]), m["session"].head.contract.target_sample_rate_hz,
+                                          m["result"], m["lock"], m["cfg"], m["intercarrier"],
+                                          m["pick"], m["session"])
                 if proba is None:
                     continue
                 g = _expandProba(proba, m["col_map"], k)

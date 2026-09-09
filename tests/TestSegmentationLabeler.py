@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from wavetrace.groundtruth import (
+    LabelerOptions,
     Segment,
     SegmentationLabeler,
     presenceLabelFn,
@@ -56,7 +57,8 @@ def test_no_segment_is_absent_with_no_mask():
 
 def test_weapon_inside_person_passes_gate():
     seg = _segmenter(Segment(0, 0.9, PERSON), Segment(43, 0.8, WEAPON_IN))
-    lab = SegmentationLabeler(seg, weapon_classes=(43,), overlap_min=0.5, label_fn=weaponLabelFn)
+    lab = SegmentationLabeler(seg, options=LabelerOptions(weapon_classes=(43,)), overlap_min=0.5,
+                              label_fn=weaponLabelFn)
     l = lab.label(IMG, 2.0)
     assert l.class_id == 1 and l.name == "weapon"
     # Supervised on weapon mask, not person mask. Grid mass is localized.
@@ -65,14 +67,15 @@ def test_weapon_inside_person_passes_gate():
 
 def test_weapon_outside_person_rejected_by_gate():
     seg = _segmenter(Segment(0, 0.9, PERSON), Segment(43, 0.95, WEAPON_OUT))
-    lab = SegmentationLabeler(seg, weapon_classes=(43,), overlap_min=0.5, label_fn=weaponLabelFn)
+    lab = SegmentationLabeler(seg, options=LabelerOptions(weapon_classes=(43,)), overlap_min=0.5,
+                              label_fn=weaponLabelFn)
     l = lab.label(IMG, 3.0)
     assert l.class_id == 0 and l.name == "no_weapon"  # High conf, but fails mask-overlap gate.
 
 
 def test_weapon_without_person_rejected():
-    lab = SegmentationLabeler(_segmenter(Segment(43, 0.99, WEAPON_OUT)), weapon_classes=(43,),
-                              label_fn=weaponLabelFn)
+    lab = SegmentationLabeler(_segmenter(Segment(43, 0.99, WEAPON_OUT)),
+                              options=LabelerOptions(weapon_classes=(43,)), label_fn=weaponLabelFn)
     assert lab.label(IMG, 0.0).class_id == 0  # No person to gate against.
 
 

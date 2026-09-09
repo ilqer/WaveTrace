@@ -10,7 +10,7 @@ import os
 import json
 import uvicorn
 
-from wavetrace.Cli import _sourceFromArgs, _parseSpans
+from web.ServerOptions import WebServerOptions
 from web.streamer import WaveTraceRunner
 from web.foxglove import fg_server
 from web.device_ctl import DeviceHub, listSerialPorts
@@ -313,7 +313,7 @@ async def fusion_weights(path: str):
 async def weapon_litmus(root: str = "data", node: int | None = None, per_link: bool = False):
     """Static σ²[p] check: per-node (default) or tx→rx link (per_link=true).
     Rows sorted by AUC desc. Includes histogram bins for PDF overlay."""
-    from experiments.weapon_litmus import gather_sigma2, separation, _verdict, _key_label, json_hist
+    from wavetrace.diagnostics import gather_sigma2, json_hist, key_label, separation, verdict
     try:
         data = gather_sigma2(root, node, per_link=per_link)
         if not data:
@@ -324,18 +324,18 @@ async def weapon_litmus(root: str = "data", node: int | None = None, per_link: b
             return s["auc"] if s else 0.0
 
         out = []
-        for key in sorted(data, key=lambda k: (-_aucOf(k), _key_label(k))):
+        for key in sorted(data, key=lambda k: (-_aucOf(k), key_label(k))):
             c = data[key].get("clear", _npEmpty())
             w = data[key].get("weapon", _npEmpty())
             s = separation(c, w)
-            label = _key_label(key)
+            label = key_label(key)
             if s is None:
                 out.append({"label": label, "ok": False, "reason": "need both clear and weapon captures"})
                 continue
             out.append({"label": label, "auc": round(s["auc"], 3),
                         "lower_when_armed": s["lower_when_armed"], "cohens_d": round(s["cohens_d"], 2),
                         "n_clear": s["n_clear"], "n_weapon": s["n_weapon"],
-                        "verdict": _verdict(s["auc"]),
+                        "verdict": verdict(s["auc"]),
                         "hist": json_hist(c, w) if c.size >= 10 and w.size >= 10 else None})
         return {"rows": out, "per_link": per_link}
     except Exception as e:
@@ -782,6 +782,8 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
 app.mount("/", StaticFiles(directory="web/ui/dist", html=True), name="static")
 
 if __name__ == "__main__":
-    uvicorn.run("web.app:app", host="0.0.0.0", port=8000, reload=True,
-                reload_dirs=["web", "wavetrace"],
-                reload_includes=["*.py"])
+    server_options = WebServerOptions()
+    uvicorn.run("web.app:app", host=server_options.host, port=server_options.port,
+                reload=server_options.reload,
+                reload_dirs=list(server_options.reload_dirs),        # uvicorn wants list, not tuple
+                reload_includes=list(server_options.reload_includes))

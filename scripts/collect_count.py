@@ -3,9 +3,9 @@ count model. Standalone from the presence mesh scripts: imports only library cod
 run_live_mesh / collect_presence, and writes to its own data/model_count root so presence is untouched.
 
 You choose the counts up front with --max-count N: you capture levels 0,1,...,N where the top level N
-means "N or more people". Per-(tx->rx)-LINK + TARGET_FS resample, pooled into each node's single
-multi-class head (same train/serve parity as the presence path). Calibration is shared and reused from
-collect_baseline (data/cal/node{id}) — gain/NBVI are per-node, count-independent.
+means "N or more people". Per-(tx->rx)-LINK, resampled onto the shared pipeline rate, pooled into
+each node's single multi-class head (same train/serve parity as the presence path). Calibration is
+shared and reused from collect_baseline (data/cal/node{id}) — gain/NBVI are per-node, count-independent.
 
     .venv/bin/python scripts/collect_count.py --max-count 3 --sessions 3
 """
@@ -22,17 +22,11 @@ import numpy as np
 
 from wavetrace.Source import RecordingSource, saveRecording, parseBatchLinks, resampleUniform, bindUdp
 from wavetrace.Cli import collectSource
-from wavetrace.recognition import trainPresence
+from wavetrace.recognition import countName, trainPresence
 from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler
+from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
 
 SUBJECT = "u0"
-TARGET_FS = 100.0   # resample grid; MUST match run_count.TARGET_FS so train and serve windows align
-WINDOW = 128        # front-end window (frames); a link shorter than this on the grid emits no window
-
-
-def countName(c, max_count):
-    """Display label for a count class: the top level is the open-ended 'N+' bin."""
-    return f"{c}+" if c >= max_count else str(c)
 
 
 def captureLinks(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
@@ -140,8 +134,8 @@ def main():
             for nid in calNodes:
                 # every (tx->rx) link on this node, resampled on its own grid, pooled into one head
                 for key in sorted(k for k in cap if k[1] == nid):
-                    fr = resampleUniform(cap.get(key, []), TARGET_FS)
-                    if len(fr) < WINDOW:
+                    fr = resampleUniform(cap.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
+                    if len(fr) < DEFAULT_WINDOW_FRAMES:  # a link shorter than this emits no window
                         continue
                     span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
                     tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment

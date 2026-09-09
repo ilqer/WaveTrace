@@ -16,7 +16,7 @@ from wavetrace import (
     hampel,
     unwrap_step,
 )
-from fixtures.SyntheticCsi import generateStream
+from wavetrace.Synthetic import generateStream
 
 
 # --- combined_channel_difference: subtracts common environment ---

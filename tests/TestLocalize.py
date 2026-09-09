@@ -150,7 +150,7 @@ def test_save_localization_roundtrip(tmp_path):
 
 
 def test_localize_source_publishes_track_and_saves_map(tmp_path):
-    from fixtures.SyntheticCsi import generateStream
+    from wavetrace.Synthetic import generateStream
     from wavetrace.Source import SyntheticSource
     from wavetrace.output import JsonlPublisher
     from wavetrace.Cli import localizeSource

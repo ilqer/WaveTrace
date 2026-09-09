@@ -9,21 +9,42 @@ node_id < 100 => 2.4 GHz (ESP32), node_id >= 100 => 5 GHz (nexmon Pi).
 
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
 
 import numpy as np
+
+from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ
+
+
+@dataclass(frozen=True, slots=True)
+class HealthMeterOptions:
+    """Tuning knobs for `NodeHealthMeter` (§1.6: >3 related constructor parameters)."""
+
+    target_sample_rate_hz: float = DEFAULT_TARGET_SAMPLE_RATE_HZ
+    min_sample_rate_fraction: float = 0.8
+    rolling_window_frames: int = 200
+
+    def __post_init__(self) -> None:
+        if self.target_sample_rate_hz <= 0:
+            raise ValueError("target_sample_rate_hz must be positive")
+        if not 0.0 < self.min_sample_rate_fraction <= 1.0:
+            raise ValueError("min_sample_rate_fraction must be in (0, 1]")
+        if self.rolling_window_frames <= 0:
+            raise ValueError("rolling_window_frames must be positive")
 
 
 class NodeHealthMeter:
     """Rolling per-node link health. Feed every CsiFrame via `observe`; read `snapshot()` whenever
-    the UI wants an update (e.g. once per second). O(1) per frame, O(nodes·win) per snapshot."""
+    the UI wants an update (e.g. once per second). O(1) per frame, O(nodes·rolling_window_frames)
+    per snapshot."""
 
-    def __init__(self, *, target_hz=100.0, min_hz_frac=0.8, win=200, gain_ref_by_node=None):
-        self.target_hz = float(target_hz)
-        self.min_hz = float(target_hz) * float(min_hz_frac)
-        self.win = int(win)
-        self._recv = defaultdict(lambda: deque(maxlen=self.win))  # wall recv times
-        self._amp = defaultdict(lambda: deque(maxlen=self.win))   # mean |H| per frame
-        self._cv = defaultdict(lambda: deque(maxlen=self.win))    # cross-subcarrier CV
+    def __init__(self, options: HealthMeterOptions = HealthMeterOptions(), *, gain_ref_by_node=None):
+        self.target_sample_rate_hz = options.target_sample_rate_hz
+        self.min_sample_rate_hz = options.target_sample_rate_hz * options.min_sample_rate_fraction
+        self.rolling_window_frames = options.rolling_window_frames
+        self._recv = defaultdict(lambda: deque(maxlen=self.rolling_window_frames))  # wall recv times
+        self._amp = defaultdict(lambda: deque(maxlen=self.rolling_window_frames))   # mean |H| per frame
+        self._cv = defaultdict(lambda: deque(maxlen=self.rolling_window_frames))    # cross-subcarrier CV
         self._count = defaultdict(int)
         self._last_ts = {}
         self._gain_ref = dict(gain_ref_by_node or {})  # node_id -> calib mean amplitude
@@ -74,13 +95,15 @@ class NodeHealthMeter:
                 "node_id": nid,
                 "band": "5GHz" if nid >= 100 else "2.4GHz",
                 "hz": round(hz, 1),
-                "hz_ok": hz >= self.min_hz,
+                "hz_ok": hz >= self.min_sample_rate_hz,
                 "frames": self._count[nid],
                 "mean_amp": round(meanAmp, 4),
                 "snr_db": round(snrDb, 1),
                 "cv": round(float(np.mean(list(self._cv[nid]))) if self._cv[nid] else 0.0, 4),
                 "gain_drift": gainDrift,
-                "loss_pct": round(max(0.0, (self.target_hz - hz) / self.target_hz * 100.0), 1),
+                "loss_pct": round(
+                    max(0.0, (self.target_sample_rate_hz - hz) / self.target_sample_rate_hz * 100.0), 1
+                ),
                 "subcarriers": self._subc.get(nid, []),
                 "last_ts": round(self._last_ts.get(nid, 0.0), 4),
             })

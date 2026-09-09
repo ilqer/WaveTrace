@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from fixtures.SyntheticCsi import generateStream
-from fixtures.SyntheticRecording import generatePairedRecording
+from wavetrace.Synthetic import generateStream
+from wavetrace.Synthetic import generatePairedRecording
 from wavetrace import CsiFrame
 from wavetrace.Calibration import Calibration
 from wavetrace.Frontend import demuxByNode, iterWindows, iterWindowsStacked

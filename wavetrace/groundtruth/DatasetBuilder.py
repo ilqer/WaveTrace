@@ -148,6 +148,9 @@ def buildDataset(
         "fs": float(fs),
         "K": K,
         "K_img": KImg,
+        # raw per-frame capture width (64/128/192 by band; Source.py's per-link width guard keeps
+        # this uniform across `frames`) -- distinct from K, the NBVI-selected subset of it.
+        "num_subcarriers": int(frames[0].num_subcarriers),
         "subcarriers": [int(s) for s in calibration_result.subcarriers],
         "image_subcarriers": imgSubcList,
         "subtract_ic_baseline": bool(icBaselineArr is not None),
@@ -252,6 +255,9 @@ def buildDatasetStacked(
         "fs": float(fs),
         "K": K,
         "K_img": KImg,
+        # raw per-frame capture width of node0's link, same meaning as buildDataset's; empty
+        # node0Frames (degenerate input) falls back to K rather than indexing an empty list.
+        "num_subcarriers": int(node0Frames[0].num_subcarriers) if node0Frames else K,
         "subcarriers": [int(s) for s in firstCal.subcarriers],
         "image_subcarriers": imgSubcList,
         "window": window,

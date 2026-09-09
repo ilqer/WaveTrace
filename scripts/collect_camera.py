@@ -32,12 +32,12 @@ from wavetrace.Cli import collectSource
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth.DatasetBuilder import buildDatasetStacked, saveDataset
 from wavetrace.recognition import trainPresence
-from wavetrace.groundtruth.CameraLabeler import YoloSegLabeler, presenceLabelFn, weaponLabelFn
-from wavetrace.groundtruth.Webcam import (WebcamCapture, recordLabelsOnline,
+from wavetrace.groundtruth.CameraLabeler import (YoloLabelerOptions, YoloSegLabeler, presenceLabelFn,
+                                                 weaponLabelFn)
+from wavetrace.groundtruth.Webcam import (WebcamCapture, WebcamOptions, recordLabelsOnline,
                                           COCO_WEAPON_CLASSES)
-
-TARGET_FS = 100.0   # resample grid; matches the other collectors so train/serve windows align
-WINDOW = 128
+from wavetrace.domain.contracts import (DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPLE_RATE_HZ,
+                                        DEFAULT_WINDOW_FRAMES)
 
 
 def captureCsi(duration_s, port, node_ids):
@@ -95,8 +95,9 @@ def main():
     print(f"nodes: {calNodes}. loading YOLO-seg (first run downloads weights)...")
 
     labelFn = weaponLabelFn if args.stage == "weapon" else presenceLabelFn
-    labeler = YoloSegLabeler(args.weights or "yolov8n-seg.pt", weapon_classes=weaponClasses,
-                             conf=args.conf, grid=args.grid, label_fn=labelFn)
+    labeler = YoloSegLabeler(
+        options=YoloLabelerOptions(weights_path=args.weights, weapon_classes=weaponClasses),
+        conf=args.conf, grid=args.grid, label_fn=labelFn)
 
     # capture: webcam (online YOLO) runs in a thread while the main thread drains all nodes' CSI
     pos = {"n": 0, "tot": 0, "last": time.monotonic()}
@@ -112,7 +113,7 @@ def main():
     box = {}
     def camWorker():
         try:
-            with WebcamCapture(index=args.cam_index) as cap:
+            with WebcamCapture(WebcamOptions(index=args.cam_index)) as cap:
                 box["labels"] = recordLabelsOnline(cap.read, labeler, args.duration,
                                                      fps=args.fps, onLabel=onLabel)
         except Exception as e:  # camera permission / busy — report after join
@@ -139,7 +140,7 @@ def main():
     # resample each node once onto a uniform grid, keep node_id, reuse for both dataset builds
     res = {}
     for nid, frs in csi.items():
-        rf = resampleUniform(frs, TARGET_FS)
+        rf = resampleUniform(frs, DEFAULT_TARGET_SAMPLE_RATE_HZ)
         for f in rf:
             f.node_id = nid
         res[nid] = rf
@@ -149,8 +150,8 @@ def main():
     presBuilt = []
     for nid in calNodes:
         fr = res.get(nid, [])
-        if len(fr) < WINDOW:
-            print(f"   [SKIP presence] node {nid}: {len(fr)} frames (< {WINDOW})")
+        if len(fr) < DEFAULT_WINDOW_FRAMES:
+            print(f"   [SKIP presence] node {nid}: {len(fr)} frames (< {DEFAULT_WINDOW_FRAMES})")
             continue
         rec = f"{args.root}/cam_rec/{sess}/node{nid}"
         ds = f"{args.root}/cam_ds/{args.stage}/node{nid}/{sess}"
@@ -166,8 +167,9 @@ def main():
     hmDir = f"{args.root}/cam_ds/heatmap/{sess}"
     hmDs = None
     if merged:
-        hmDs = buildDatasetStacked(merged, calibs, labels, window=WINDOW, hop=32,
-                                      session_id=sess, subject_id=args.subject)
+        hmDs = buildDatasetStacked(merged, calibs, labels, window=DEFAULT_WINDOW_FRAMES,
+                                    hop=DEFAULT_HOP_FRAMES,
+                                    session_id=sess, subject_id=args.subject)
         saveDataset(hmDs, hmDir)
         nMask = sum(1 for lb in hmDs.labels if lb.mask)
         print(f"   [OK heatmap]  stacked {len(calNodes)} nodes -> {hmDir} "

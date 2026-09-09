@@ -43,6 +43,22 @@ class InferenceSession:
         return int(self._head.classes_[i]), float(proba[i])
 
 
+def planInferenceInput(mode: str, head) -> tuple[bool, bool, object]:
+    """Return (apply_lock, intercarrier, pick) for the serving loop. `pick(features, image, ic) -> x`
+    is the row fed to `InferenceSession.predictWindow`. Encodes the (mode, backend) wiring table: a
+    presence head always takes the plain feature vector; a weapon head is self-describing via
+    `head.feature_mode` (falls back on `head.config.backend` for models trained before feature_mode
+    was recorded)."""
+    if mode == "presence":
+        return True, False, (lambda f, i, ic: f)
+    fm = getattr(head, "feature_mode", None) or ("cnn" if head.config.backend == "cnn" else "ic27")
+    if fm == "cnn":
+        return False, False, (lambda f, i, ic: i.reshape(-1))
+    if fm == "fusion":
+        return True, True, (lambda f, i, ic: np.hstack([ic, f]))
+    return False, True, (lambda f, i, ic: ic)  # ic27 / variance
+
+
 def modeSession(mode: str, model_path) -> InferenceSession:
     """Mode switch: 'presence' or 'weapon'. O(1)."""
     if mode == "presence":

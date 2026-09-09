@@ -23,9 +23,8 @@ import numpy as np
 from wavetrace.Source import parseBatchLinks, resampleUniform, bindUdp
 from wavetrace.Calibration import loadCalibration
 from wavetrace.Frontend import iterWindows
-from wavetrace.recognition import modeSession
+from wavetrace.recognition import modeSession, planInferenceInput
 from wavetrace.recognition.Link import LinkVoter, accuracyWeights
-from wavetrace.Cli import _servingPlan
 
 
 def _minWidth(result):
@@ -82,7 +81,7 @@ def loadNodeModels(cal_root, model_root, mode="presence"):
             continue
         result, gainLock = loadCalibration(calDir)
         session = modeSession(mode, modelPath)
-        applyLock, intercarrier, pick = _servingPlan(mode, session.head)
+        applyLock, intercarrier, pick = planInferenceInput(mode, session.head)
         classes = list(session.head.classes_)
         nodes[nid] = dict(
             result=result, lock=gainLock if applyLock else None,
@@ -114,7 +113,6 @@ def main():
     if args.model is None:
         args.model = f"{args.root}/model"
 
-    TARGET_FS = 100.0      # uniform resample grid (the locked live cadence the collect scripts assume)
     CHUNK_S = 1.5          # fuse + print at this cadence
     LINK_TIMEOUT_S = 3.0   # drop a link from the vote if unheard this long
     BUFFER_S = 3.0         # per-link rolling history kept for resampling/windowing
@@ -125,6 +123,9 @@ def main():
               f"{args.cal}/node*/. Run collect_baseline.py then collect_presence.py first.")
         return
     presentI = next(iter(nodes.values()))["present_i"]  # ordering validated equal in loadNodeModels
+    # the artifact's own resample rate, not a re-declared constant -- every node's head is trained
+    # at the same rate today, so any node's contract stands in for the print banner.
+    sample_rate_hz = next(iter(nodes.values()))["session"].head.contract.target_sample_rate_hz
 
     # buffers keyed by (tx_short, rx_node); each link served via its RX node's cal+head
     buffers = collections.defaultdict(collections.deque)
@@ -133,8 +134,9 @@ def main():
 
     sock = bindUdp(args.port, timeout=0.5)
     wsummary = "  ".join(f"N{nid}:w={nodes[nid]['weight']:.2f}" for nid in sorted(nodes))
-    print(f"ALL-PAIRS presence on udp/{args.port} (fs={TARGET_FS:g}Hz, rx nodes={sorted(nodes)}; "
-          f"vote weights {wsummary}). move in and out of the links. Ctrl+C to stop.\n")
+    print(f"ALL-PAIRS presence on udp/{args.port} (fs={sample_rate_hz:g}Hz, "
+          f"rx nodes={sorted(nodes)}; vote weights {wsummary}). "
+          "move in and out of the links. Ctrl+C to stop.\n")
 
     nextFuse = time.time() + CHUNK_S
     try:
@@ -170,8 +172,9 @@ def main():
                 if now - lastSeen.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
                 m = nodes[key[1]]  # serve each (tx,rx) link through ITS RX node's cal+head
-                proba = _lastWindowProba(list(buffers[key]), TARGET_FS, m["result"], m["lock"],
-                                           m["cfg"], m["intercarrier"], m["pick"], m["session"])
+                proba = _lastWindowProba(list(buffers[key]), m["session"].head.contract.target_sample_rate_hz,
+                                          m["result"], m["lock"], m["cfg"], m["intercarrier"],
+                                          m["pick"], m["session"])
                 if proba is None:
                     continue
                 pi = m["present_i"]  # index of class 1 in THIS rx-node's head (defensive; orderings equal)
