@@ -1,10 +1,8 @@
 """Domain configuration for CSI capture and recognition: the shape of a capture geometry, a DSP
 toggle set, and a recognition head's hyperparameters. Explicit dimensions required.
 
-Transport/adapter settings (`SourceOptions` and its subclasses) live beside the sources they
-configure in `wavetrace/Source.py`; delivery settings (`WebServerOptions`) live in `web/`. What
-stays here has one reason to change: the domain's own idea of a capture/signal/model shape,
-independent of how frames arrive or how the dashboard is served."""
+Transport/adapter settings (`SourceOptions` and its subclasses) live in `wavetrace/Source.py`;
+delivery settings (`WebServerOptions`) live in `web/`."""
 
 from dataclasses import dataclass
 
@@ -36,12 +34,14 @@ class ModelConfig:
     """Recognition head config.
 
     `stage`: Target (presence/weapon).
-    `backend`: 'mlp' (default), 'svm', 'variance' (weapon baseline), 'cnn' (image-based).
+    `backend`: default `'mlp'`; valid keys are whatever `wavetrace.adapters.recognition` registers.
+    An unregistered `backend` is rejected by `wavetrace.adapters.recognition.get_backend_class`, at
+    head construction/`load()`.
     `k`: NBVI subcarrier count (from calibration)."""
 
     stage: str                      # "presence" | "weapon"
     k: int                          # NBVI subcarrier count -> feature dim = 9*k per node
-    backend: str = "mlp"            # "mlp" (default) | "svm" | "variance" (P7) | "cnn" (P7)
+    backend: str = "mlp"
     window: int = 128               # front-end window (frames), locked P4
     hop: int = 32                   # front-end hop (frames), locked P4
     fs_tol: float = 0.10            # fsOk: max relative live-fs deviation before a window is dropped
@@ -54,8 +54,6 @@ class ModelConfig:
     def __post_init__(self) -> None:
         if self.stage not in ("presence", "weapon"):
             raise ValueError("stage must be 'presence' or 'weapon'")
-        if self.backend not in ("mlp", "svm", "variance", "cnn"):
-            raise ValueError("backend must be one of 'mlp', 'svm', 'variance', 'cnn'")
         if self.k <= 0 or self.window <= 0 or self.hop <= 0 or self.hidden <= 0:
             raise ValueError("k, window, hop and hidden must be positive")
         if not 0.0 < self.fs_tol < 1.0:

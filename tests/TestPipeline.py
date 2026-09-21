@@ -14,7 +14,9 @@ from wavetrace.Synthetic import generateStream
 from wavetrace.Synthetic import generatePairedRecording
 from wavetrace import CsiFrame, Label, RecognitionResult
 from wavetrace.Calibration import Calibration, loadCalibration, saveCalibration
-from wavetrace.Cli import calibrateSource, collectSource, runInference
+from wavetrace.application.calibrate import calibrate_source
+from wavetrace.application.collect import collect_source
+from wavetrace.application.serve import run_inference
 from wavetrace.Frontend import iterWindows
 from wavetrace.Source import RecordingSource, SyntheticSource, loadRecording, saveRecording
 from wavetrace.groundtruth import buildDataset
@@ -98,7 +100,7 @@ def test_calibration_disabled_lock_roundtrips_to_none(tmp_path):
 def test_run_features_match_build_dataset(tmp_path):
     """iterWindows (serving) must yield the SAME features buildDataset (training) stores."""
     frames = _weapon_recording(duration=4.0)
-    calibrateSource(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
+    calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     result, gainLock = loadCalibration(tmp_path / "cal")
     # Training arrays: using raw mags, gainLock=None.
     ds = buildDataset(frames, result, None, ScriptedLabeler([(2.5, 7.5, True)]),
@@ -141,8 +143,8 @@ def test_serving_plan_table():
 
 def test_end_to_end_weapon(tmp_path):
     frames = _weapon_recording()
-    calibrateSource(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
-    _, ds = collectSource(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds",
+    calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
+    _, ds = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds",
                            [(2.5, 7.5)], stage="weapon", window=32, hop=16,
                            session_id="s0", subject_id="u0")
     assert ds.X_intercarrier.shape[1] == 27
@@ -150,7 +152,7 @@ def test_end_to_end_weapon(tmp_path):
 
     buf = io.StringIO()
     with JsonlPublisher(buf, mode="weapon") as pub:
-        results = runInference(SyntheticSource(frames), tmp_path / "cal",
+        results = run_inference(SyntheticSource(frames), tmp_path / "cal",
                                 tmp_path / "m" / "model.joblib", "weapon", pub)
     lines = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
     # N windows generates N valid lines. Serving window count must equal dataset sample count.
@@ -165,7 +167,7 @@ def test_end_to_end_weapon(tmp_path):
 def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
     # Camera label source (GxG masks) flows through collectSource. Mask and tier persist to disk.
     frames = _weapon_recording(duration=4.0)
-    calibrateSource(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
+    calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     grid = 4
 
     def camLabel(t):
@@ -178,7 +180,7 @@ def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
         lab.mask_grid = grid
         return lab
 
-    _, ds = collectSource(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [],
+    _, ds = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [],
                            stage="weapon", window=32, hop=16, labeler=camLabel, tier="concealed")
     from wavetrace.groundtruth import loadDataset
     reloaded = loadDataset(tmp_path / "ds")
@@ -189,15 +191,15 @@ def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
 
 def test_end_to_end_presence(tmp_path):
     frames = _presence_recording()
-    calibrateSource(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
-    _, ds = collectSource(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds",
+    calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
+    _, ds = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds",
                            [(3.0, 7.0)], stage="presence", window=32, hop=16,
                            session_id="s0", subject_id="u0")
     assert ds.X_intercarrier is None and set(np.unique(ds.y)) == {0, 1}
     trainPresence([tmp_path / "ds"], out_dir=tmp_path / "m")
     buf = io.StringIO()
     with JsonlPublisher(buf, mode="presence") as pub:
-        results = runInference(SyntheticSource(frames), tmp_path / "cal",
+        results = run_inference(SyntheticSource(frames), tmp_path / "cal",
                                 tmp_path / "m" / "model.joblib", "presence", pub)
     assert len(results) == ds.y.size
     lines = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
@@ -206,21 +208,21 @@ def test_end_to_end_presence(tmp_path):
 
 def test_run_vote_appends_segment_verdict(tmp_path):
     frames = _weapon_recording()
-    calibrateSource(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
-    collectSource(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [(2.5, 7.5)],
+    calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
+    collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [(2.5, 7.5)],
                    stage="weapon", window=32, hop=16, session_id="s0", subject_id="u0")
     trainWeapon([tmp_path / "ds"], out_dir=tmp_path / "m", feature_mode="ic27")
-    plain = runInference(SyntheticSource(frames), tmp_path / "cal", tmp_path / "m" / "model.joblib",
+    plain = run_inference(SyntheticSource(frames), tmp_path / "cal", tmp_path / "m" / "model.joblib",
                           "weapon", JsonlPublisher(io.StringIO()))
-    voted = runInference(SyntheticSource(frames), tmp_path / "cal", tmp_path / "m" / "model.joblib",
+    voted = run_inference(SyntheticSource(frames), tmp_path / "cal", tmp_path / "m" / "model.joblib",
                           "weapon", JsonlPublisher(io.StringIO()), vote=True)
     assert len(voted) == len(plain) + 1  # one extra soft-vote verdict at the end
 
 
 def test_inference_latency_under_8ms(tmp_path):
     frames = _weapon_recording(duration=4.0)
-    calibrateSource(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
-    collectSource(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [(2.5, 7.5)],
+    calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
+    collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [(2.5, 7.5)],
                    stage="weapon", window=32, hop=16)
     head, _ = trainWeapon([tmp_path / "ds"], out_dir=tmp_path / "m", feature_mode="ic27")
     session = InferenceSession(head=head)

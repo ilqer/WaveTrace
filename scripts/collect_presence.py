@@ -25,7 +25,7 @@ import time
 
 from wavetrace.Source import (UdpSource, UdpSourceOptions, RecordingSource, saveRecording,
                               parseBatchLinks, resampleUniform, bindUdp)
-from wavetrace.Cli import collectSource
+from wavetrace.application.collect import collect_source
 from wavetrace.recognition import trainPresence
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
 
@@ -148,7 +148,7 @@ def main():
                 tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
                 rec, ds = f"{args.root}/sess_{i}/node{nid}/link_{tag}", f"{args.root}/ds_{i}/node{nid}/link_{tag}"
                 saveRecording(e + p, rec)
-                collectSource(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
+                collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
                                stage="presence", session_id=f"sess{i}", subject_id=SUBJECT)
                 dsDirs[nid].append(ds)
                 used += 1

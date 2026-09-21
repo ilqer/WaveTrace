@@ -7,6 +7,7 @@ Phase 6/7 CSI-only training. Deployment stays CSI-only; the camera/scripted/chip
 from wavetrace.groundtruth.Align import AlignmentResult, align, estimateClockOffset
 from wavetrace.groundtruth.CameraLabeler import (
     Detection,
+    FrameDetection,
     Labeler,
     LabelerOptions,
     LocationChipLabeler,
@@ -46,6 +47,7 @@ __all__ = [
     "YoloSegLabeler",
     "Segment",
     "Detection",
+    "FrameDetection",
     "presenceLabelFn",
     "weaponLabelFn",
     "Dataset",

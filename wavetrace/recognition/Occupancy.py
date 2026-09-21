@@ -18,7 +18,7 @@ import numpy as np
 
 @dataclass(frozen=True, slots=True)
 class OccupancyOptions:
-    """Tuning knobs for `OccupancyGrid` / `HeatmapTrack` (§1.6: >3 related constructor parameters).
+    """Tuning knobs for `OccupancyGrid` / `HeatmapTrack`.
 
     `decay`: higher = forget faster. `blur`: 4-neighbour spatial coupling each predict step, i.e.
     motion uncertainty. `measurement_weight_floor`: minimum measurement weight so even

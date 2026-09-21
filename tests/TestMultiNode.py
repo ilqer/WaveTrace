@@ -211,7 +211,7 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     pytest.importorskip("torch")
     import joblib
     from wavetrace.Config import ModelConfig
-    from wavetrace.recognition.Weapon import WeaponHead
+    from wavetrace.adapters.recognition.heads import build_weapon_head, load_weapon_head
 
     K, KImg, W, N = 6, 20, 16, 2
     config = ModelConfig(stage="weapon", k=K, backend="cnn", window=W, hop=8)
@@ -221,19 +221,19 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
 
     # 2-node (N=2 channels) model test.
     X2ch = rng.uniform(0, 1, size=(n, N, KImg, W)).astype(np.float32)
-    head = WeaponHead(config)
+    head = build_weapon_head(config)
     head.fit(X2ch, y, epochs=2)
     proba = head.predict_proba(X2ch)
     assert proba.shape == (n, 2)
 
     p = tmp_path / "wh_multi.joblib"
     head.save(p)
-    head2 = WeaponHead.load(p)
+    head2 = load_weapon_head(p)
     assert np.allclose(head2.predict_proba(X2ch), proba, atol=1e-5)
 
     # Legacy blob test: image_shape is a 2-tuple (K_img, W) for single-channel model. Simulate by stripping it.
     X1ch = rng.uniform(0, 1, size=(n, KImg, W)).astype(np.float32)
-    head1ch = WeaponHead(config)
+    head1ch = build_weapon_head(config)
     head1ch.fit(X1ch, y, epochs=2)
     p1ch = tmp_path / "wh_1ch.joblib"
     head1ch.save(p1ch)
@@ -243,8 +243,8 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     blob["image_shape"] = (KImg, W)  # 2-tuple: legacy file format
     pLegacy = tmp_path / "wh_legacy.joblib"
     joblib.dump(blob, pLegacy)
-    head3 = WeaponHead.load(pLegacy)
-    assert head3._image_shape == (1, KImg, W)
+    head3 = load_weapon_head(pLegacy)
+    assert head3._backend._image_shape == (1, KImg, W)
     assert np.allclose(head3.predict_proba(X1ch), proba1ch, atol=1e-5)
 
 

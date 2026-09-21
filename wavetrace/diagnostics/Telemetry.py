@@ -18,7 +18,7 @@ from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ
 
 @dataclass(frozen=True, slots=True)
 class HealthMeterOptions:
-    """Tuning knobs for `NodeHealthMeter` (§1.6: >3 related constructor parameters)."""
+    """Tuning knobs for `NodeHealthMeter`."""
 
     target_sample_rate_hz: float = DEFAULT_TARGET_SAMPLE_RATE_HZ
     min_sample_rate_fraction: float = 0.8

@@ -17,6 +17,8 @@ import json
 from pathlib import Path
 import sys
 
+from wavetrace.output.Guard import GuardEvent
+
 
 def resultToDict(result, *, mode: str = "") -> dict:
     """RecognitionResult -> the wire schema. bbox/keypoints ride along only when the head is spatial
@@ -45,8 +47,8 @@ class Publisher(ABC):
     def publish(self, result) -> None:
         """Serialize and emit one RecognitionResult. O(1)."""
 
-    def publishEvent(self, event: dict) -> None:
-        """Emit one guard/advisory event dict. Default is a no-op; override to transport it."""
+    def publishEvent(self, event: GuardEvent) -> None:
+        """Emit one guard/advisory event. Default is a no-op; override to transport it."""
 
     def close(self) -> None:
         """Flush/close the transport. No-op by default."""
@@ -76,8 +78,8 @@ class JsonlPublisher(Publisher):
         self._fh.write(json.dumps(resultToDict(result, mode=self.mode)) + "\n")
         self._fh.flush()  # real-time: a downstream tail should see verdicts as they happen
 
-    def publishEvent(self, event: dict) -> None:
-        self._fh.write(json.dumps(event) + "\n")
+    def publishEvent(self, event: GuardEvent) -> None:
+        self._fh.write(json.dumps(event.to_dict()) + "\n")
         self._fh.flush()
 
     def close(self) -> None:

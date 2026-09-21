@@ -1,6 +1,4 @@
-"""Unit tests for web.ServerOptions.WebServerOptions (§1.5 tests/unit/, mirroring
-web/ServerOptions.py). Split out of tests/unit/test_config.py when WebServerOptions moved out of
-wavetrace.Config — its only consumer is web/app.py, so it has nothing to do with the CSI domain."""
+"""Unit tests for web.ServerOptions.WebServerOptions."""
 
 import pytest
 

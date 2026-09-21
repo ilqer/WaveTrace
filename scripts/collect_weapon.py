@@ -26,7 +26,7 @@ import sys
 import time
 
 from wavetrace.Source import RecordingSource, saveRecording, parseBatchLinks, resampleUniform, bindUdp
-from wavetrace.Cli import collectSource
+from wavetrace.application.collect import collect_source
 from wavetrace.recognition import trainWeapon
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
 # Cumulative dataset pool lives at <root>/weapon_ds (one subdir tree per run), globbed at train time.
@@ -99,7 +99,7 @@ def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_su
         ds = f"{root}/weapon_ds/node{nid}/{sess_id}_{cond}_link{tag}"
         saveRecording(fr, rec)
         # spans=[span] -> class 1 over the segment, spans=[] -> class 0; bg_subtract nulls σ²[p]'s quiet-room channel (Item 10/CAUSE 2B)
-        collectSource(RecordingSource(rec), f"{cal_root}/node{nid}", ds,
+        collect_source(RecordingSource(rec), f"{cal_root}/node{nid}", ds,
                        [span] if weapon else [],
                        stage="weapon", session_id=sess_id, subject_id=subject,
                        subtract_ic_baseline=bg_subtract)

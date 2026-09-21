@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from wavetrace.adapters.recognition import DEFAULT_BACKEND_BY_FEATURE_MODE
+from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth.DatasetBuilder import Dataset, loadDataset
 from wavetrace.recognition.Evaluate import leaveOneGroupOut
@@ -95,7 +97,7 @@ def trainPresence(
                              subtract_baseline=bool(meta.get("subtract_baseline", False)))
 
     t0 = time.perf_counter()
-    head = PresenceHead(config).fit(X, y)
+    head = build_presence_head(config).fit(X, y)
     fitS = time.perf_counter() - t0
     # the dataset's real per-frame capture width -- stays None (never the NBVI-selected k) for
     # datasets built before `num_subcarriers` was recorded, so a reader can never mistake one
@@ -114,7 +116,7 @@ def trainPresence(
         "sessions": sorted({str(s) for s in sess}),
         "subjects": sorted({str(s) for s in subj}),
         "train_accuracy": float((head.predict(X) == y).mean()),  # sanity only — see module note
-        "logo": _logoMetrics(X, y, sess, subj, lambda: PresenceHead(config)),  # the HEADLINE number
+        "logo": _logoMetrics(X, y, sess, subj, lambda: build_presence_head(config)),  # the HEADLINE number
         "fit_seconds": round(fitS, 3),
     }
     out = Path(out_dir)
@@ -138,8 +140,10 @@ def trainWeapon(
     - 'fusion': inter-carrier + features (mlp/svm). Overfitting risk.
     - 'cnn': CSI image (cnn).
     Returns (head, metrics)."""
-    if feature_mode not in ("ic27", "fusion", "cnn"):
-        raise ValueError(f"feature_mode must be 'ic27', 'fusion', or 'cnn', got {feature_mode!r}")
+    if feature_mode not in DEFAULT_BACKEND_BY_FEATURE_MODE:
+        raise ValueError(
+            f"feature_mode must be one of {sorted(DEFAULT_BACKEND_BY_FEATURE_MODE)}, got {feature_mode!r}"
+        )
     if isinstance(dataset_dirs, (str, Path)):
         dataset_dirs = [dataset_dirs]
     loaded: list[Dataset] = [loadDataset(d) for d in dataset_dirs]
@@ -156,8 +160,7 @@ def trainWeapon(
     meta = loaded[0].meta
     K = int(meta["K"])
     if config is None:
-        backend = "variance" if feature_mode == "ic27" else "cnn" if feature_mode == "cnn" else "mlp"
-        config = ModelConfig(stage="weapon", k=K, backend=backend,
+        config = ModelConfig(stage="weapon", k=K, backend=DEFAULT_BACKEND_BY_FEATURE_MODE[feature_mode],
                              window=int(meta["window"]), hop=int(meta["hop"]),
                              frame_average=int(meta.get("frame_average", 1)),
                              subtract_baseline=bool(meta.get("subtract_baseline", False)),
@@ -169,7 +172,7 @@ def trainWeapon(
                          subtract_baseline=bool(meta.get("subtract_baseline", False)),
                          subtract_ic_baseline=bool(meta.get("subtract_ic_baseline", False)))
 
-    head = WeaponHead(config)
+    head = build_weapon_head(config)
     head.feature_mode = feature_mode  # self-describing: Cli.run reads it to assemble x at serve time
     t0 = time.perf_counter()
     head.fit(X, y, report=report)  # report fires per epoch on the cnn backend (live UI curves); ignored otherwise
@@ -191,7 +194,7 @@ def trainWeapon(
         "sessions": sorted({str(s) for s in sess}),
         "subjects": sorted({str(s) for s in subj}),
         "train_accuracy": float((head.predict(X) == y).mean()),
-        "logo": _logoMetrics(X, y, sess, subj, lambda: WeaponHead(config)),  # the HEADLINE number
+        "logo": _logoMetrics(X, y, sess, subj, lambda: build_weapon_head(config)),  # the HEADLINE number
         "subtract_ic_baseline": bool(config.subtract_ic_baseline),
         "fit_seconds": round(fitS, 3),
     }

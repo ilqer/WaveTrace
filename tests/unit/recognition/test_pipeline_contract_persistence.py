@@ -11,9 +11,13 @@ from wavetrace import Label
 from wavetrace.Config import ModelConfig
 from wavetrace.domain.contracts import SCHEMA_VERSION, derive_pipeline_contract
 from wavetrace.groundtruth import Dataset, saveDataset
+from wavetrace.adapters.recognition.heads import (
+    build_presence_head,
+    build_weapon_head,
+    load_presence_head,
+    load_weapon_head,
+)
 from wavetrace.recognition import trainPresence, trainWeapon
-from wavetrace.recognition.Model import PresenceHead
-from wavetrace.recognition.Weapon import WeaponHead
 
 
 def _presence_blobs(n=120, k=2, seed=0):
@@ -85,7 +89,7 @@ def _strip_contract_keys(path):
 def test_presence_head_save_writes_contract_and_schema_version(tmp_path):
     config = ModelConfig(stage="presence", k=2, window=64, hop=16)
     X, y = _presence_blobs(k=2)
-    path = PresenceHead(config).fit(X, y).save(tmp_path / "model.joblib")
+    path = build_presence_head(config).fit(X, y).save(tmp_path / "model.joblib")
 
     blob = joblib.load(path)
     assert blob["schema_version"] == SCHEMA_VERSION
@@ -99,11 +103,11 @@ def test_presence_head_save_writes_contract_and_schema_version(tmp_path):
 def test_presence_head_load_falls_back_when_contract_absent(tmp_path):
     config = ModelConfig(stage="presence", k=2)
     X, y = _presence_blobs(k=2)
-    head = PresenceHead(config).fit(X, y)
+    head = build_presence_head(config).fit(X, y)
     path = head.save(tmp_path / "model.joblib")
     _strip_contract_keys(path)  # simulate a pre-PipelineContract artifact on disk in data/
 
-    loaded = PresenceHead.load(path)
+    loaded = load_presence_head(path)
     assert loaded.contract == derive_pipeline_contract(loaded.config)
     assert np.array_equal(loaded.predict(X), head.predict(X))  # backward-compatible: still predicts
 
@@ -113,7 +117,7 @@ def test_presence_head_load_falls_back_when_contract_absent(tmp_path):
 def test_weapon_head_save_writes_contract_and_schema_version(tmp_path):
     config = ModelConfig(stage="weapon", k=12, backend="variance", window=64, hop=8)
     X, y = _weapon_variance_blobs()
-    path = WeaponHead(config).fit(X, y).save(tmp_path / "weapon.joblib")
+    path = build_weapon_head(config).fit(X, y).save(tmp_path / "weapon.joblib")
 
     blob = joblib.load(path)
     assert blob["schema_version"] == SCHEMA_VERSION
@@ -127,11 +131,11 @@ def test_weapon_head_save_writes_contract_and_schema_version(tmp_path):
 def test_weapon_head_load_falls_back_when_contract_absent(tmp_path):
     config = ModelConfig(stage="weapon", k=12, backend="variance")
     X, y = _weapon_variance_blobs()
-    head = WeaponHead(config).fit(X, y)
+    head = build_weapon_head(config).fit(X, y)
     path = head.save(tmp_path / "weapon.joblib")
     _strip_contract_keys(path)  # simulate a pre-PipelineContract artifact on disk in data/
 
-    loaded = WeaponHead.load(path)
+    loaded = load_weapon_head(path)
     assert loaded.contract == derive_pipeline_contract(loaded.config)
     assert np.array_equal(loaded.predict(X), head.predict(X))  # backward-compatible: still predicts
 
@@ -140,17 +144,16 @@ def test_weapon_head_load_falls_back_when_contract_absent(tmp_path):
 
 def test_presence_head_resave_preserves_a_stored_contract_that_diverged_from_derivation(tmp_path):
     """Load an artifact whose stored contract differs from derive_pipeline_contract(config) (as
-    Train.py's capture-width override now produces), re-save it, and confirm the divergent value
-    survives — save() used to call derive_pipeline_contract(self.config) again and silently
-    discard it."""
+    Train.py's capture-width override produces), re-save it, and confirm the divergent value
+    survives."""
     config = ModelConfig(stage="presence", k=2)
     X, y = _presence_blobs(k=2)
-    head = PresenceHead(config).fit(X, y)
+    head = build_presence_head(config).fit(X, y)
     head.contract = replace(head.contract, subcarrier_width=32)  # diverges from config.k == 2
     path = head.save(tmp_path / "model.joblib")
     assert joblib.load(path)["contract"]["subcarrier_width"] == 32
 
-    reloaded = PresenceHead.load(path)
+    reloaded = load_presence_head(path)
     assert reloaded.contract.subcarrier_width == 32
     resaved = reloaded.save(tmp_path / "resaved.joblib")
     assert joblib.load(resaved)["contract"]["subcarrier_width"] == 32
@@ -159,11 +162,11 @@ def test_presence_head_resave_preserves_a_stored_contract_that_diverged_from_der
 def test_weapon_head_resave_preserves_a_stored_contract_that_diverged_from_derivation(tmp_path):
     config = ModelConfig(stage="weapon", k=12, backend="variance")
     X, y = _weapon_variance_blobs()
-    head = WeaponHead(config).fit(X, y)
+    head = build_weapon_head(config).fit(X, y)
     head.contract = replace(head.contract, subcarrier_width=48)  # diverges from config.k == 12
     path = head.save(tmp_path / "weapon.joblib")
 
-    reloaded = WeaponHead.load(path)
+    reloaded = load_weapon_head(path)
     assert reloaded.contract.subcarrier_width == 48
     resaved = reloaded.save(tmp_path / "resaved.joblib")
     assert joblib.load(resaved)["contract"]["subcarrier_width"] == 48
@@ -178,7 +181,7 @@ def test_train_presence_stamps_dataset_capture_width_not_k(tmp_path):
 
     assert head.config.k == 2
     assert head.contract.subcarrier_width == 32
-    reloaded = PresenceHead.load(tmp_path / "models" / "model.joblib")
+    reloaded = load_presence_head(tmp_path / "models" / "model.joblib")
     assert reloaded.contract.subcarrier_width == 32
 
 
@@ -192,7 +195,7 @@ def test_train_presence_leaves_capture_width_none_when_dataset_predates_it(tmp_p
     head, _ = trainPresence([out], tmp_path / "models")
 
     assert head.contract.subcarrier_width is None
-    reloaded = PresenceHead.load(tmp_path / "models" / "model.joblib")
+    reloaded = load_presence_head(tmp_path / "models" / "model.joblib")
     assert reloaded.contract.subcarrier_width is None
 
 
@@ -203,5 +206,5 @@ def test_train_weapon_stamps_dataset_capture_width_not_k(tmp_path):
 
     assert head.config.k == 12
     assert head.contract.subcarrier_width == 48
-    reloaded = WeaponHead.load(tmp_path / "models" / "model.joblib")
+    reloaded = load_weapon_head(tmp_path / "models" / "model.joblib")
     assert reloaded.contract.subcarrier_width == 48

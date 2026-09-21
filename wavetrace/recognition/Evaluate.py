@@ -12,8 +12,6 @@ from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import LeaveOneGroupOut
 
 from wavetrace import PresenceSegmenter
-from wavetrace.Config import ModelConfig
-from wavetrace.recognition.Model import PresenceHead
 
 
 def leaveOneGroupOut(X, y, groups, make_head) -> dict:
@@ -168,11 +166,11 @@ def segmenterBaseline(
 
 
 def evaluatePresence(
-    X_features, y, *, session_ids, subject_ids, config: ModelConfig, X_image=None,
+    X_features, y, *, session_ids, subject_ids, make_head, X_image=None,
     segmenter_kwargs: dict | None = None,
 ) -> dict:
-    """Phase-6 DoD report: LOGO over sessions and subjects + baselines."""
-    make_head = lambda: PresenceHead(config)
+    """Phase-6 DoD report: LOGO over sessions and subjects + baselines. `make_head` returns an
+    unfitted `PresenceHead` (same contract as `evaluateWeapon`'s `make_head`)."""
     report = {
         "session": leaveOneGroupOut(X_features, y, session_ids, make_head),
         "subject": leaveOneGroupOut(X_features, y, subject_ids, make_head),

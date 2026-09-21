@@ -1,7 +1,6 @@
-"""YoloLabelerOptions.weights_path is a plain str | None, kept separate from the model= constructor
-parameter that takes a pre-built network: a setting (which weights file to load) and a collaborator
-(an already-constructed model) are different things and must not share one field dispatched on via
-isinstance. `model=` is what these tests use to bypass the ultralytics import entirely."""
+"""`YoloLabelerOptions.weights_path` is a plain `str | None`, separate from the `model=` constructor
+parameter that takes a pre-built network. `model=` is what these tests use to bypass the
+ultralytics import entirely."""
 
 import numpy as np
 import pytest
@@ -41,9 +40,6 @@ def test_yolo_seg_labeler_model_bypasses_weights_loading():
 
 
 def test_default_weights_are_visible_class_attributes():
-    """The default weights file for each lineage reads directly off the class, not behind a
-    runtime `if None` branch buried in the constructor — a reader can find it without tracing
-    control flow."""
     assert YoloLabeler.DEFAULT_WEIGHTS == "yolov8n.pt"
     assert YoloSegLabeler.DEFAULT_WEIGHTS == "yolov8n-seg.pt"
 
@@ -51,7 +47,7 @@ def test_default_weights_are_visible_class_attributes():
 def test_yolo_labeler_options_weights_path_is_a_plain_string_field():
     options = YoloLabelerOptions(weights_path="custom.pt")
     assert options.weights_path == "custom.pt"
-    assert not hasattr(YoloLabelerOptions(), "model")  # the old object-typed field is gone
+    assert not hasattr(YoloLabelerOptions(), "model")
 
 
 def test_yolo_labeler_options_rejects_negative_person_class():

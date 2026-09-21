@@ -24,8 +24,7 @@ import numpy as np
 
 from wavetrace.diagnostics import gather_sigma2, key_label, separation, verdict
 
-# pre-existing dead code (no caller here or elsewhere) — left in place rather than deleted, per
-# CLAUDE.md §3 ("don't fix unrelated dead code, mention it"); not part of this move.
+# dead code: no caller here or elsewhere. Left in place rather than deleted.
 def _key_nid(key):
     """RX node id for a group key (int node, or (node, tx_tag) link)."""
     return key[0] if isinstance(key, tuple) else key

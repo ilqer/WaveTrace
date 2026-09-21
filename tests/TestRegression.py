@@ -13,14 +13,13 @@ from wavetrace.Synthetic import generatePairedRecording
 from wavetrace.Calibration import Calibration
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth import ScriptedLabeler, buildDataset, presenceLabelFn
-from wavetrace.recognition.Model import PresenceHead
-from wavetrace.recognition.Weapon import WeaponHead
+from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
 
 
 # ----- B2: single-class guard --------------------------------------------------------------------
 
 def test_presence_head_rejects_single_class():
-    head = PresenceHead(ModelConfig(stage="presence", k=2))
+    head = build_presence_head(ModelConfig(stage="presence", k=2))
     X = np.random.default_rng(0).standard_normal((20, 18)).astype(np.float32)
     y = np.zeros(20, dtype=np.int64)  # all "absent"
     with pytest.raises(ValueError, match="single class"):
@@ -28,7 +27,7 @@ def test_presence_head_rejects_single_class():
 
 
 def test_weapon_head_rejects_single_class():
-    head = WeaponHead(ModelConfig(stage="weapon", k=12, backend="variance"))
+    head = build_weapon_head(ModelConfig(stage="weapon", k=12, backend="variance"))
     X = np.random.default_rng(0).standard_normal((20, 27)).astype(np.float32)
     y = np.ones(20, dtype=np.int64)  # all "weapon"
     with pytest.raises(ValueError, match="single class"):

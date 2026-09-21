@@ -27,16 +27,31 @@ import numpy as np
 from wavetrace import Label
 
 
-# ----- label policies: raw detection dict -> (class_id, name) -----------------------------------
+# ----- label policies: FrameDetection -> (class_id, name) ---------------------------------------
 
-def presenceLabelFn(raw: dict, timestamp: float) -> tuple[int, str]:
+def presenceLabelFn(raw: "FrameDetection", timestamp: float) -> tuple[int, str]:
     """Stage A: present/absent from whether a person was detected."""
-    return (1, "present") if raw.get("present") else (0, "absent")
+    return (1, "present") if raw.present else (0, "absent")
 
 
-def weaponLabelFn(raw: dict, timestamp: float) -> tuple[int, str]:
+def weaponLabelFn(raw: "FrameDetection", timestamp: float) -> tuple[int, str]:
     """Stage E: weapon present/absent (binary — the 'yes/no' the head collapses its heatmap to)."""
-    return (1, "weapon") if raw.get("weapon") else (0, "no_weapon")
+    return (1, "weapon") if raw.weapon else (0, "no_weapon")
+
+
+@dataclass(frozen=True, slots=True)
+class FrameDetection:
+    """One `Labeler._detect()` result — the input `Labeler.label()` turns into a core `Label`. Not
+    to be confused with `Detection` (a single object-detector box). Every labeler subclass fills in
+    only the fields it knows; the rest default to absent."""
+
+    present: bool = False
+    weapon: bool = False
+    bbox: tuple | list | None = None
+    keypoints: list = field(default_factory=list)
+    position: tuple | list | None = None
+    mask: list | None = None
+    mask_grid: int = 0
 
 
 class Labeler(ABC):
@@ -50,8 +65,8 @@ class Labeler(ABC):
         self._label_fn = label_fn
 
     @abstractmethod
-    def _detect(self, observation, timestamp: float) -> dict:
-        """Return a raw detection dict {present, weapon, bbox, keypoints, position}."""
+    def _detect(self, observation, timestamp: float) -> FrameDetection:
+        """Return this observation's detection."""
 
     def label(self, observation, timestamp: float) -> Label:
         raw = self._detect(observation, timestamp)
@@ -60,16 +75,14 @@ class Labeler(ABC):
         lab.class_id = classId
         lab.name = name
         lab.timestamp = float(timestamp)
-        box = raw.get("bbox") or raw.get("position")  # person box if present, else weapon location
+        box = raw.bbox or raw.position  # person box if present, else weapon location
         if box is not None:
             lab.bbox = list(box)
-        kp = raw.get("keypoints")
-        if kp:
-            lab.keypoints = list(kp)
-        m = raw.get("mask")
-        if m:  # camera-supervised occupancy grid -> CSI heatmap-head target
-            lab.mask = [float(v) for v in m]
-            lab.mask_grid = int(raw.get("mask_grid") or 0)
+        if raw.keypoints:
+            lab.keypoints = list(raw.keypoints)
+        if raw.mask:  # camera-supervised occupancy grid -> CSI heatmap-head target
+            lab.mask = [float(v) for v in raw.mask]
+            lab.mask_grid = int(raw.mask_grid or 0)
         return lab
 
     def labelStream(self, observations) -> list[Label]:
@@ -84,8 +97,17 @@ class ReplayLabeler(Labeler):
     observation = {"t": ts, "raw": {detection}}. The concrete YOLO/MediaPipe/SAM adapter is a seam:
     subclass and override `_detect` to run the model on a real frame."""
 
-    def _detect(self, observation, timestamp: float) -> dict:
-        return observation.get("raw", observation)
+    def _detect(self, observation, timestamp: float) -> FrameDetection:
+        raw = observation.get("raw", observation)  # map the external dict at this one edge
+        return FrameDetection(
+            present=bool(raw.get("present", False)),
+            weapon=bool(raw.get("weapon", False)),
+            bbox=raw.get("bbox"),
+            keypoints=list(raw.get("keypoints") or []),
+            position=raw.get("position"),
+            mask=raw.get("mask"),
+            mask_grid=int(raw.get("mask_grid") or 0),
+        )
 
 
 @dataclass
@@ -117,10 +139,7 @@ class LabelerOptions:
 class YoloLabelerOptions(LabelerOptions):
     """Adds the Ultralytics network-selection knobs only `YoloLabeler`/`YoloSegLabeler` read:
     `device` (a torch device string, e.g. "cuda"; `None` = ultralytics' own default) and
-    `weights_path` (a weights file for that class to load; `None` = its own `DEFAULT_WEIGHTS`). A
-    pre-built model object — what tests pass to skip the ultralytics import — is a collaborator,
-    not a setting, so it stays a separate `model=` constructor parameter (see `YoloLabeler`)
-    rather than a field here."""
+    `weights_path` (a weights file for that class to load; `None` = its own `DEFAULT_WEIGHTS`)."""
 
     device: str | None = None
     weights_path: str | None = None
@@ -147,18 +166,17 @@ class VisionLabeler(Labeler):
         self._weapon = set(options.weapon_classes)
         self._conf = float(conf)
 
-    def _detect(self, observation, timestamp: float) -> dict:
+    def _detect(self, observation, timestamp: float) -> FrameDetection:
         dets = [d for d in self._detector(observation) if d.conf >= self._conf]
         persons = [d for d in dets if d.cls == self._person]
         best = max(persons, key=lambda d: d.conf) if persons else None
         weapon = any(d.cls in self._weapon for d in dets)
-        return {
-            "present": best is not None,
-            "weapon": weapon,
-            "bbox": list(best.bbox_xywhn) if best is not None else None,
-            "keypoints": list(best.keypoints) if best is not None else [],
-            "position": None,
-        }
+        return FrameDetection(
+            present=best is not None,
+            weapon=weapon,
+            bbox=list(best.bbox_xywhn) if best is not None else None,
+            keypoints=list(best.keypoints) if best is not None else [],
+        )
 
 
 class YoloLabeler(VisionLabeler):
@@ -167,11 +185,10 @@ class YoloLabeler(VisionLabeler):
     already-built model object to bypass the import (what the tests do).
 
     `model`: a ready model object exposing `__call__(image) -> results` — bypasses
-    `options.weights_path` entirely, since a prebuilt model and a weights file are two different
-    things (a collaborator vs. a setting), not one field wearing both hats. `options.weights_path`:
-    a weights path/name (e.g. "yolov8n.pt", "yolov8n-pose.pt") for THIS class to load via
-    ultralytics when `model` isn't given; `None` loads `DEFAULT_WEIGHTS`. Results are converted to
-    `Detection`s with boxes in normalized xywh; pose keypoints (normalized) ride along when present."""
+    `options.weights_path` entirely. `options.weights_path`: a weights path/name (e.g.
+    "yolov8n.pt", "yolov8n-pose.pt") for THIS class to load via ultralytics when `model` isn't
+    given; `None` loads `DEFAULT_WEIGHTS`. Results are converted to `Detection`s with boxes in
+    normalized xywh; pose keypoints (normalized) ride along when present."""
 
     DEFAULT_WEIGHTS = "yolov8n.pt"
 
@@ -297,7 +314,7 @@ class SegmentationLabeler(Labeler):
         self._grid = int(grid)
         self._overlap_min = float(overlap_min)
 
-    def _detect(self, observation, timestamp: float) -> dict:
+    def _detect(self, observation, timestamp: float) -> FrameDetection:
         segs = [s for s in self._seg(observation) if s.conf >= self._conf]
         persons = [s for s in segs if s.cls == self._person]
         best = max(persons, key=lambda s: s.conf) if persons else None
@@ -315,15 +332,13 @@ class SegmentationLabeler(Labeler):
         bbox = None
         if src is not None:
             bbox = src.bbox_xywhn or _maskBboxXywhn(src.mask)
-        return {
-            "present": best is not None,
-            "weapon": weaponSeg is not None,
-            "bbox": list(bbox) if bbox is not None else None,
-            "keypoints": [],
-            "position": None,
-            "mask": maskGrid,
-            "mask_grid": self._grid if maskGrid else 0,
-        }
+        return FrameDetection(
+            present=best is not None,
+            weapon=weaponSeg is not None,
+            bbox=list(bbox) if bbox is not None else None,
+            mask=maskGrid,
+            mask_grid=self._grid if maskGrid else 0,
+        )
 
 
 class YoloSegLabeler(SegmentationLabeler):
@@ -371,7 +386,7 @@ class ThermalLabeler(Labeler):
     is exactly our A→E gate. Needs a thermal model + recordings (absent here); wire by overriding
     `_detect` to run the thermal detector and gate it on the person box."""
 
-    def _detect(self, observation, timestamp: float) -> dict:
+    def _detect(self, observation, timestamp: float) -> FrameDetection:
         raise NotImplementedError(
             "ThermalLabeler is a hardware seam: provide a thermal detector and gate weapon "
             "detections on a person bbox (A→E gate). See plan §5 iii."
@@ -388,9 +403,9 @@ class ScriptedLabeler(Labeler):
         super().__init__(label_fn)
         self._present = sorted((float(s), float(e)) for s, e, p in spans if p)
 
-    def _detect(self, observation, timestamp: float) -> dict:
+    def _detect(self, observation, timestamp: float) -> FrameDetection:
         weapon = any(s <= timestamp < e for s, e in self._present)
-        return {"weapon": weapon, "present": weapon}
+        return FrameDetection(present=weapon, weapon=weapon)
 
     def labelAt(self, timestamp: float) -> Label:
         return self.label(None, timestamp)
@@ -432,14 +447,14 @@ class LocationChipLabeler(Labeler):
             return len(self._t) - 1
         return i if (self._t[i] - timestamp) < (timestamp - self._t[i - 1]) else i - 1
 
-    def _detect(self, observation, timestamp: float) -> dict:
+    def _detect(self, observation, timestamp: float) -> FrameDetection:
         i = self._nearest(timestamp)
         present = self._present[i]
-        return {
-            "weapon": present,
-            "present": present,
-            "position": list(self._pos[i]) if present and self._pos[i] is not None else None,
-        }
+        return FrameDetection(
+            present=present,
+            weapon=present,
+            position=list(self._pos[i]) if present and self._pos[i] is not None else None,
+        )
 
     def labelAt(self, timestamp: float) -> Label:
         return self.label(None, timestamp)

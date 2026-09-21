@@ -153,15 +153,15 @@ def test_localize_source_publishes_track_and_saves_map(tmp_path):
     from wavetrace.Synthetic import generateStream
     from wavetrace.Source import SyntheticSource
     from wavetrace.output import JsonlPublisher
-    from wavetrace.Cli import localizeSource
+    from wavetrace.application.localize import localize_source
 
     frames, _ = generateStream(numAntennas=2, numSubcarriers=32, sampleRateHz=100.0, numFrames=20,
                                perturbationHz=1.0, perturbationDepth=0.3, cfoHz=10.0,
                                noiseStd=0.01, seed=3)
     sink = io.StringIO()
     pub = JsonlPublisher(sink, mode="localize")
-    path, agg = localizeSource(SyntheticSource(frames), tmp_path / "loc", num_antennas=2,
-                                publisher=pub)
+    path, agg = localize_source(SyntheticSource(frames), tmp_path / "loc", num_antennas=2,
+                                 publisher=pub)
     lines = sink.getvalue().strip().splitlines()
     assert len(lines) == 20  # one RecognitionResult per frame, through the wire schema
     rec = json.loads(lines[0])

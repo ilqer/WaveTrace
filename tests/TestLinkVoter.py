@@ -81,9 +81,9 @@ def test_link_fusion_beats_best_single_link():
     pa = np.array([[0.9, 0.1], [0.8, 0.2], [0.2, 0.8], [0.6, 0.4]])  # wrong on 3 -> acc 0.75
     pb = np.array([[0.4, 0.6], [0.9, 0.1], [0.3, 0.7], [0.1, 0.9]])  # wrong on 0 -> acc 0.75
     rep = evaluateLinkFusion({24: (pa, 0.75), 5: (pb, 0.75)}, y)
-    assert rep["per_link_accuracy"] == {24: pytest.approx(0.75), 5: pytest.approx(0.75)}
-    assert rep["fused_accuracy"] == pytest.approx(1.0)  # complementary errors cancel
-    assert rep["n"] == 4 and rep["weights"][24] == pytest.approx(0.5)
+    assert rep.per_link_accuracy == {24: pytest.approx(0.75), 5: pytest.approx(0.75)}
+    assert rep.fused_accuracy == pytest.approx(1.0)  # complementary errors cancel
+    assert rep.sample_count == 4 and rep.weights[24] == pytest.approx(0.5)
 
 
 def test_link_fusion_uniform_when_all_at_chance():
@@ -91,8 +91,8 @@ def test_link_fusion_uniform_when_all_at_chance():
     y = np.array([0, 1])
     p = np.array([[0.7, 0.3], [0.4, 0.6]])
     rep = evaluateLinkFusion({0: (p, 0.5), 1: (p, 0.5)}, y)
-    assert rep["weights"] == {0: 0.0, 1: 0.0}
-    assert rep["fused_accuracy"] == pytest.approx(1.0)  # uniform blend of identical probas = p
+    assert rep.weights == {0: 0.0, 1: 0.0}
+    assert rep.fused_accuracy == pytest.approx(1.0)  # uniform blend of identical probas = p
 
 
 def test_reusable_after_finalize():

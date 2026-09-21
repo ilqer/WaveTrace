@@ -13,9 +13,9 @@ from wavetrace.Calibration import Calibration
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth import buildDataset, loadDataset, saveDataset, weaponLabelFn
 from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler
+from wavetrace.adapters.recognition.heads import build_weapon_head, load_weapon_head
 from wavetrace.recognition import (
     SegmentVoter,
-    WeaponHead,
     binaryRates,
     concatArrays,
     concatDatasets,
@@ -170,31 +170,31 @@ def test_variance_head_learns_threshold_and_direction(tmp_path):
     X = rng.normal(0.0, 0.1, (200, 27)).astype(np.float32)
     y = (np.arange(200) % 2).astype(np.int64)
     X[y == 1, 9] -= 1.0                      # Physics direction: weapon lowers variance.
-    head = WeaponHead(_cfg("variance")).fit(X, y)
+    head = build_weapon_head(_cfg("variance")).fit(X, y)
     assert (head.predict(X) == y).mean() == 1.0
     proba = head.predict_proba(X)
     assert proba.shape == (200, 2) and np.allclose(proba.sum(axis=1), 1.0)
-    loaded = WeaponHead.load(head.save(tmp_path / "v.joblib"))
+    loaded = load_weapon_head(head.save(tmp_path / "v.joblib"))
     assert np.allclose(loaded.predict_proba(X), proba)
 
     X2 = X.copy()
     X2[:, 9] *= -1.0                         # Flipped world: weapon increases variance. Model learns direction.
-    head2 = WeaponHead(_cfg("variance")).fit(X2, y)
+    head2 = build_weapon_head(_cfg("variance")).fit(X2, y)
     assert (head2.predict(X2) == y).mean() == 1.0
 
 
 def test_variance_head_validates():
     with pytest.raises(ValueError, match="not fitted"):
-        WeaponHead(_cfg("variance")).predict(np.zeros((1, 27), np.float32))
+        build_weapon_head(_cfg("variance")).predict(np.zeros((1, 27), np.float32))
     X = np.zeros((9, 27), np.float32)
     with pytest.raises(ValueError, match="binary"):
-        WeaponHead(_cfg("variance")).fit(X, np.arange(9) % 3)
+        build_weapon_head(_cfg("variance")).fit(X, np.arange(9) % 3)
     with pytest.raises(ValueError, match="constant"):
-        WeaponHead(_cfg("variance")).fit(X, np.arange(9) % 2)
+        build_weapon_head(_cfg("variance")).fit(X, np.arange(9) % 2)
 
 
 def test_sklearn_weapon_backend(weapon_data):
-    head = WeaponHead(_cfg("mlp", k=weapon_data["K"])).fit(weapon_data["X_ic"], weapon_data["y"])
+    head = build_weapon_head(_cfg("mlp", k=weapon_data["K"])).fit(weapon_data["X_ic"], weapon_data["y"])
     assert (head.predict(weapon_data["X_ic"]) == weapon_data["y"]).mean() > 0.9
 
 
@@ -203,7 +203,7 @@ def test_weapon_eval_gate_passes_on_synthetic(weapon_data):
     d = weapon_data
     cfg = _cfg("variance", k=d["K"])
     rep = evaluateWeapon(d["X_ic"], d["y"], session_ids=d["sess"], subject_ids=d["subj"],
-                          make_head=lambda: WeaponHead(cfg))
+                          make_head=lambda: build_weapon_head(cfg))
     for split in ("session", "subject"):
         r = rep[split]
         assert r["accuracy"] >= 0.95
@@ -221,7 +221,7 @@ def test_concealment_gap_holds_out_concealed_tier(weapon_data):
     cfg = _cfg("variance", k=d["K"])
     isConcealed = np.asarray(d["sess"]) == "s3"
     rep = evaluateConcealmentGap(
-        d["X_ic"], d["y"], isConcealed, d["subj"], make_head=lambda: WeaponHead(cfg))
+        d["X_ic"], d["y"], isConcealed, d["subj"], make_head=lambda: build_weapon_head(cfg))
 
     assert rep["concealed"]["n"] == int(isConcealed.sum())
     assert {"tpr", "fp_rate", "accuracy"} <= rep["concealed"].keys()
@@ -236,7 +236,7 @@ def test_concealment_gap_needs_both_splits(weapon_data):
     cfg = _cfg("variance", k=d["K"])
     with pytest.raises(ValueError):
         evaluateConcealmentGap(d["X_ic"], d["y"], np.zeros(d["y"].size, bool), d["subj"],
-                                 make_head=lambda: WeaponHead(cfg))
+                                 make_head=lambda: build_weapon_head(cfg))
 
 
 # ----- 7p-c: torch CNN backend ---------------------------------------------------------------------
@@ -245,14 +245,14 @@ def test_cnn_head_trains_roundtrips_deterministic(weapon_data, tmp_path):
     pytest.importorskip("torch")
     d = weapon_data
     X, y = d["X_image"], d["y"]
-    head = WeaponHead(_cfg("cnn", k=d["K"], window=32, seed=3)).fit(X, y, epochs=15)
+    head = build_weapon_head(_cfg("cnn", k=d["K"], window=32, seed=3)).fit(X, y, epochs=15)
     assert (head.predict(X) == y).mean() > 0.85
     proba = head.predict_proba(X)
     assert proba.shape == (y.size, 2) and np.allclose(proba.sum(axis=1), 1.0, atol=1e-5)
     assert np.allclose(head.predict_proba(X), proba)              # Predict is deterministic.
     flat = X.reshape(X.shape[0], -1)                              # predictWindow seam
     assert np.allclose(head.predict_proba(flat), proba, atol=1e-5)
-    loaded = WeaponHead.load(head.save(tmp_path / "cnn.joblib"))
+    loaded = load_weapon_head(head.save(tmp_path / "cnn.joblib"))
     assert np.allclose(loaded.predict_proba(X), proba, atol=1e-6)
 
 
@@ -261,7 +261,7 @@ def test_cnn_head_trains_roundtrips_deterministic(weapon_data, tmp_path):
 def test_weapon_mode_is_standalone(weapon_data, tmp_path):
     # Weapon mode classifies every window independently without presence verdict.
     d = weapon_data
-    head = WeaponHead(_cfg("variance", k=d["K"])).fit(d["X_ic"], d["y"])
+    head = build_weapon_head(_cfg("variance", k=d["K"])).fit(d["X_ic"], d["y"])
     session = modeSession("weapon", head.save(tmp_path / "w.joblib"))
     iWeapon = int(np.flatnonzero(d["y"] == 1)[0])
     iNone = int(np.flatnonzero(d["y"] == 0)[0])

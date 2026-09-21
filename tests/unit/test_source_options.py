@@ -1,8 +1,5 @@
-"""Unit tests for wavetrace.Source's transport options classes (§1.5 tests/unit/, mirroring
-wavetrace/Source.py). Split out of tests/unit/test_config.py when SourceOptions/UdpSourceOptions/
-SerialSourceOptions/NexmonSourceOptions moved out of wavetrace.Config to live beside the sources
-they configure — their only real consumer is wavetrace.Source (plus a handful of scripts and
-web/streamer.py that construct them)."""
+"""Unit tests for wavetrace.Source's transport options classes: SourceOptions, UdpSourceOptions,
+SerialSourceOptions, NexmonSourceOptions."""
 
 import pytest
 

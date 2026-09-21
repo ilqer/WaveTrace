@@ -22,7 +22,7 @@ from wavetrace import Label
 
 @dataclass(frozen=True, slots=True)
 class WebcamOptions:
-    """Capture geometry for `WebcamCapture` (§1.6 options-class treatment)."""
+    """Capture geometry for `WebcamCapture`."""
 
     index: int = 0
     width: int = 1280

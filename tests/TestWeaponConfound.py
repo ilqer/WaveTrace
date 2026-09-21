@@ -2,7 +2,7 @@
 import numpy as np
 
 from wavetrace.recognition.Train import _carryGroups, _logoMetrics
-from wavetrace.recognition.Weapon import WeaponHead
+from wavetrace.adapters.recognition.heads import build_weapon_head
 from wavetrace.Config import ModelConfig
 
 
@@ -30,6 +30,6 @@ def test_logo_metrics_adds_carry_axis_when_separable():
     sess = np.array([f"{s}_{c}_s{i % 2}" for s, c, i in zip(subj, carries, range(n))])
 
     cfg = ModelConfig(stage="weapon", k=12, backend="variance")
-    out = _logoMetrics(X, y, sess, subj, lambda: WeaponHead(cfg))
+    out = _logoMetrics(X, y, sess, subj, lambda: build_weapon_head(cfg))
     assert "carry" in out
     assert set(out["carry"]) >= {"accuracy", "majority_accuracy"}

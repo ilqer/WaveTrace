@@ -6,15 +6,11 @@ what separates "present" from a quiet room. The wrapper API (fit/predict/predict
 deliberately backend-agnostic so the future numpy-only tiny head (ESP32 deployment) and the torch CNN
 (Phase-7 weapon heatmap) drop in unchanged.
 
-Backends (ModelConfig.backend, user-locked: MLP default, SVM selectable):
-  * "mlp" — StandardScaler + MLPClassifier(one small hidden layer). Native predict_proba (the Phase-7
-    soft vote needs calibrated probabilities) and the weight matrices port directly to a numpy-only
-    forward pass on the ESP32.
-  * "svm" — StandardScaler + SVC(probability=True). The classic CSI-sensing literature head
-    (WiFiSenseSurvey CSUR'19), kept for A/B on real recordings; predict_proba = Platt scaling.
-
 Training is OFFLINE; the forward pass is O(1) (fixed-length feature vector, tiny model) and is the
 real-time path Infer.py wraps (<8 ms gate).
+
+The head takes an already-resolved backend (constructor injection): resolving `config.backend`
+against the registry is `wavetrace.adapters.recognition.heads`'s job, not this class's.
 """
 
 from dataclasses import asdict
@@ -22,48 +18,34 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.neural_network import MLPClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
 
 from wavetrace.Config import ModelConfig
 from wavetrace.domain.contracts import SCHEMA_VERSION, PipelineContract, derive_pipeline_contract
 
 
-def sklearnPipeline(config: ModelConfig) -> Pipeline:
-    """Shared sklearn backend builder ('mlp' | 'svm') — used by PresenceHead and WeaponHead (P7).
-
-    StandardScaler is required: the input features live on wildly different scales (mean |H| ~1 vs
-    lag-1 autocorr in [-1, 1]); both backends assume standardized inputs."""
-    if config.backend == "mlp":
-        clf = MLPClassifier(
-            hidden_layer_sizes=(config.hidden,),
-            max_iter=3000,
-            random_state=config.seed,
-        )
-    elif config.backend == "svm":
-        # sklearn 1.9 deprecated SVC(probability=True); documented replacement (sigmoid calibration)
-        clf = CalibratedClassifierCV(SVC(random_state=config.seed), ensemble=False)
-    else:
-        raise ValueError(f"sklearnPipeline supports 'mlp'/'svm', not {config.backend!r}")
-    return Pipeline([("scale", StandardScaler()), ("clf", clf)])
-
-
 class PresenceHead:
-    """Backend-agnostic recognition head (Stage A presence now; same wrapper serves later stages)."""
+    """Backend-agnostic recognition head (Stage A presence now; same wrapper serves later stages).
 
-    def __init__(self, config: ModelConfig):
+    Sklearn-only (P6 lock) — cnn/variance are weapon-only backends (`WeaponHead`)."""
+
+    def __init__(self, config: ModelConfig, backend):
         self.config = config
-        self._pipe = sklearnPipeline(config)  # presence backends are sklearn-only (P6 lock)
+        self._backend = backend
         self._fitted = False
         self.contract = derive_pipeline_contract(config)  # what this head trains/serves against
 
+    @classmethod
+    def restore(cls, config: ModelConfig, backend, contract: PipelineContract) -> "PresenceHead":
+        """Rebuild a fitted head around an already-loaded backend and contract. Resolves nothing."""
+        head = cls(config, backend)
+        head.contract = contract
+        head._fitted = True
+        return head
+
     @property
     def classes_(self) -> np.ndarray:
-        self._requireFitted()
-        return self._pipe.classes_
+        self._require_fitted()
+        return self._backend.classes_
 
     def fit(self, X, y) -> "PresenceHead":
         """Fit on (n, d) float32 features, (n,) int labels. Offline. Returns self."""
@@ -78,46 +60,34 @@ class PresenceHead:
                 f"PresenceHead.fit: training data has a single class {classes.tolist()}; need both "
                 "present and absent windows (check collect-data label spans / presence turbulence)"
             )
-        self._pipe.fit(X, y)
+        self._backend.fit(X, y)
         self._fitted = True
         return self
 
     def predict(self, X) -> np.ndarray:
         """(n, d) -> (n,) class ids. O(1) per row."""
-        self._requireFitted()
-        return self._pipe.predict(np.asarray(X, dtype=np.float32))
+        proba = self.predict_proba(X)
+        return self.classes_[np.argmax(proba, axis=1)]
 
     def predict_proba(self, X) -> np.ndarray:
         """(n, d) -> (n, C) class probabilities, columns ordered by classes_. O(1) per row."""
-        self._requireFitted()
-        return self._pipe.predict_proba(np.asarray(X, dtype=np.float32))
+        self._require_fitted()
+        return self._backend.predict_proba(X)
 
     def save(self, path) -> Path:
         """Persist (joblib) — config stored as a plain dict so loads survive dataclass evolution."""
-        self._requireFitted()
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump({
+        self._require_fitted()
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        blob = {
             "config": asdict(self.config),
-            "pipeline": self._pipe,
             "contract": self.contract.to_dict(),
             "schema_version": SCHEMA_VERSION,
-        }, p)
-        return p
+        }
+        blob.update(self._backend.save())
+        joblib.dump(blob, path)
+        return path
 
-    @classmethod
-    def load(cls, path) -> "PresenceHead":
-        """Round-trip a saved head."""
-        blob = joblib.load(path)
-        head = cls(ModelConfig(**blob["config"]))
-        head._pipe = blob["pipeline"]
-        head._fitted = True
-        # absent in artifacts saved before PipelineContract existed -> fall back to the same
-        # derivation `save` uses, so every existing model keeps loading unchanged.
-        head.contract = (PipelineContract.from_dict(blob["contract"]) if "contract" in blob
-                          else derive_pipeline_contract(head.config))
-        return head
-
-    def _requireFitted(self) -> None:
+    def _require_fitted(self) -> None:
         if not self._fitted:
             raise ValueError("PresenceHead: not fitted (call fit() or load())")

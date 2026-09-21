@@ -10,8 +10,8 @@ import time
 
 import numpy as np
 
+from wavetrace.adapters.recognition.heads import load_presence_head, load_weapon_head
 from wavetrace.recognition.Model import PresenceHead
-from wavetrace.recognition.Weapon import WeaponHead
 
 
 class InferenceSession:
@@ -21,7 +21,7 @@ class InferenceSession:
         if head is not None:
             self._head = head
         else:
-            self._head = (loader or PresenceHead.load)(model_path)
+            self._head = (loader or load_presence_head)(model_path)
         self._row = None  # reused (1, d) input row
 
     @property
@@ -30,10 +30,10 @@ class InferenceSession:
 
     def predictProbaWindow(self, feature_vector) -> np.ndarray:
         """Predict class probabilities. Reuses row buffer. O(1)."""
-        v = np.asarray(feature_vector, dtype=np.float32).ravel()
-        if self._row is None or self._row.shape[1] != v.size:
-            self._row = np.empty((1, v.size), dtype=np.float32)
-        self._row[0, :] = v
+        flattened = np.asarray(feature_vector, dtype=np.float32).ravel()
+        if self._row is None or self._row.shape[1] != flattened.size:
+            self._row = np.empty((1, flattened.size), dtype=np.float32)
+        self._row[0, :] = flattened
         return self._head.predict_proba(self._row)[0]
 
     def predictWindow(self, feature_vector) -> tuple[int, float]:
@@ -44,27 +44,27 @@ class InferenceSession:
 
 
 def planInferenceInput(mode: str, head) -> tuple[bool, bool, object]:
-    """Return (apply_lock, intercarrier, pick) for the serving loop. `pick(features, image, ic) -> x`
-    is the row fed to `InferenceSession.predictWindow`. Encodes the (mode, backend) wiring table: a
-    presence head always takes the plain feature vector; a weapon head is self-describing via
-    `head.feature_mode` (falls back on `head.config.backend` for models trained before feature_mode
-    was recorded)."""
+    """Return (apply_lock, intercarrier, pick) for the serving loop.
+    `pick(features, image, intercarrier) -> x` is the row fed to `InferenceSession.predictWindow`.
+    A presence head always takes the plain feature vector; a weapon head is self-describing via
+    `head.feature_mode` (falls back on `head.default_feature_mode` — the backend's own declared
+    default — for models trained before feature_mode was recorded)."""
     if mode == "presence":
-        return True, False, (lambda f, i, ic: f)
-    fm = getattr(head, "feature_mode", None) or ("cnn" if head.config.backend == "cnn" else "ic27")
-    if fm == "cnn":
-        return False, False, (lambda f, i, ic: i.reshape(-1))
-    if fm == "fusion":
-        return True, True, (lambda f, i, ic: np.hstack([ic, f]))
-    return False, True, (lambda f, i, ic: ic)  # ic27 / variance
+        return True, False, (lambda features, image, intercarrier: features)
+    feature_mode = getattr(head, "feature_mode", None) or head.default_feature_mode
+    if feature_mode == "cnn":
+        return False, False, (lambda features, image, intercarrier: image.reshape(-1))
+    if feature_mode == "fusion":
+        return True, True, (lambda features, image, intercarrier: np.hstack([intercarrier, features]))
+    return False, True, (lambda features, image, intercarrier: intercarrier)  # ic27 / variance
 
 
 def modeSession(mode: str, model_path) -> InferenceSession:
     """Mode switch: 'presence' or 'weapon'. O(1)."""
     if mode == "presence":
-        loader = PresenceHead.load
+        loader = load_presence_head
     elif mode == "weapon":
-        loader = WeaponHead.load
+        loader = load_weapon_head
     else:
         raise ValueError(f"mode must be 'presence' or 'weapon', got {mode!r}")
     return InferenceSession(model_path, loader=loader)
@@ -76,9 +76,9 @@ def measureLatency(session: InferenceSession, feature_vector, iters: int = 200) 
         session.predictWindow(feature_vector)
     samples = np.empty(iters)
     for i in range(iters):
-        t0 = time.perf_counter()
+        start_time = time.perf_counter()
         session.predictWindow(feature_vector)
-        samples[i] = time.perf_counter() - t0
+        samples[i] = time.perf_counter() - start_time
     return {
         "mean_ms": float(samples.mean() * 1e3),
         "p95_ms": float(np.percentile(samples, 95) * 1e3),

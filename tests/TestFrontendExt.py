@@ -175,20 +175,20 @@ def test_iter_windows_parity_image_in_dataset(tmp_path):
 def test_weapon_cnn_kimg_ne_k(tmp_path):
     """CNN trained on (n, KImg, window) with KImg != config.k fits, predicts, round-trips."""
     torch = pytest.importorskip("torch")
-    from wavetrace.recognition.Weapon import WeaponHead
+    from wavetrace.adapters.recognition.heads import build_weapon_head, load_weapon_head
     K, KImg, window = 6, 20, 16
     config = ModelConfig(stage="weapon", k=K, backend="cnn", window=window, hop=8)
     rng = np.random.default_rng(0)
     n = 40
     X = rng.uniform(0, 1, size=(n, KImg, window)).astype(np.float32)
     y = np.array([0] * 20 + [1] * 20, dtype=np.int64)
-    head = WeaponHead(config)
+    head = build_weapon_head(config)
     head.fit(X, y, epochs=2)
     proba = head.predict_proba(X)
     assert proba.shape == (n, 2)
     p = tmp_path / "wh.joblib"
     head.save(p)
-    head2 = WeaponHead.load(p)
+    head2 = load_weapon_head(p)
     assert np.allclose(head2.predict_proba(X), proba, atol=1e-5)
 
 

@@ -15,7 +15,7 @@ from wavetrace.recognition.Evaluate import (
 from wavetrace.recognition.Fusion import fuse
 from wavetrace.recognition.Link import LinkVoter, accuracyWeights, evaluateLinkFusion
 from wavetrace.recognition.Infer import InferenceSession, measureLatency, modeSession, planInferenceInput
-from wavetrace.recognition.Model import PresenceHead, sklearnPipeline
+from wavetrace.recognition.Model import PresenceHead
 from wavetrace.recognition.Resample import acceptFormat, fsOk, resampleUniform
 from wavetrace.recognition.Train import concatArrays, concatDatasets, trainPresence, trainWeapon
 from wavetrace.recognition.Vote import SegmentVoter
@@ -26,7 +26,6 @@ __all__ = [
     "countName",
     "PresenceHead",
     "WeaponHead",
-    "sklearnPipeline",
     "trainPresence",
     "trainWeapon",
     "concatDatasets",

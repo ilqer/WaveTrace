@@ -11,6 +11,11 @@ import pytest
 
 from wavetrace.Synthetic import generateStream
 from wavetrace.Synthetic import generatePairedRecording
+from wavetrace.adapters.recognition.heads import (
+    build_presence_head,
+    build_weapon_head,
+    load_presence_head,
+)
 from wavetrace.Calibration import Calibration
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth import (
@@ -22,7 +27,6 @@ from wavetrace.groundtruth import (
 )
 from wavetrace.recognition import (
     InferenceSession,
-    PresenceHead,
     acceptFormat,
     concatDatasets,
     evaluatePresence,
@@ -122,14 +126,22 @@ def test_model_config_validates():
     assert ModelConfig(stage="presence", k=12).backend == "mlp"  # locked default
     with pytest.raises(ValueError):
         ModelConfig(stage="posture", k=12)          # not a stage
-    with pytest.raises(ValueError):
-        ModelConfig(stage="presence", k=12, backend="rf")  # not a wired backend
     with pytest.raises(ValueError, match="'mlp'/'svm'"):
-        PresenceHead(ModelConfig(stage="presence", k=12, backend="cnn"))  # cnn = weapon-side (P7)
+        build_presence_head(ModelConfig(stage="presence", k=12, backend="cnn"))  # cnn = weapon-side (P7)
     with pytest.raises(ValueError):
         ModelConfig(stage="presence", k=0)
     with pytest.raises(ValueError):
         ModelConfig(stage="presence", k=12, fs_tol=1.5)
+
+
+def test_unregistered_backend_rejected_at_resolution_not_at_config():
+    """An unregistered `backend` name is accepted by `ModelConfig` and rejected only where it is
+    actually resolved: head construction/`load()`, via `get_backend_class`."""
+    config = ModelConfig(stage="presence", k=12, backend="rf")  # accepted; not yet resolved
+    with pytest.raises(ValueError, match="rf"):
+        build_presence_head(config)
+    with pytest.raises(ValueError, match="rf"):
+        build_weapon_head(config)
 
 
 # ----- 6b: PresenceHead + Train -------------------------------------------------------------------
@@ -146,7 +158,7 @@ def _blobs(n=120, d=18, seed=0):
 @pytest.mark.parametrize("backend", ["mlp", "svm"])
 def test_head_fit_predict_shapes(backend):
     X, y = _blobs()
-    head = PresenceHead(ModelConfig(stage="presence", k=2, backend=backend)).fit(X, y)
+    head = build_presence_head(ModelConfig(stage="presence", k=2, backend=backend)).fit(X, y)
     pred = head.predict(X)
     proba = head.predict_proba(X)
     assert pred.shape == (X.shape[0],) and set(pred) <= {0, 1}
@@ -157,16 +169,16 @@ def test_head_fit_predict_shapes(backend):
 
 def test_head_save_load_roundtrip(tmp_path):
     X, y = _blobs()
-    head = PresenceHead(ModelConfig(stage="presence", k=2)).fit(X, y)
+    head = build_presence_head(ModelConfig(stage="presence", k=2)).fit(X, y)
     path = head.save(tmp_path / "m" / "model.joblib")
-    loaded = PresenceHead.load(path)
+    loaded = load_presence_head(path)
     assert loaded.config == head.config
     assert np.array_equal(loaded.predict(X), head.predict(X))
     assert np.allclose(loaded.predict_proba(X), head.predict_proba(X))
 
 
 def test_head_unfitted_raises():
-    head = PresenceHead(ModelConfig(stage="presence", k=2))
+    head = build_presence_head(ModelConfig(stage="presence", k=2))
     with pytest.raises(ValueError, match="not fitted"):
         head.predict(np.zeros((1, 18), np.float32))
 
@@ -190,7 +202,8 @@ def test_eval_gate_head_beats_both_baselines(presence_data):
     """Logo accuracy must beat the majority class and PresenceSegmenter baselines."""
     d = presence_data
     report = evaluatePresence(
-        d["X"], d["y"], session_ids=d["sess"], subject_ids=d["subj"], config=d["config"],
+        d["X"], d["y"], session_ids=d["sess"], subject_ids=d["subj"],
+        make_head=lambda: build_presence_head(d["config"]),
         X_image=d["X_image"],
         segmenter_kwargs={"cv_window": 16, "enter_cv": 0.01, "exit_cv": 0.005},
     )
@@ -227,7 +240,7 @@ def test_segmenter_baseline_flags_turbulent_windows(presence_data):
 
 @pytest.fixture(scope="module")
 def inference_session(presence_data, tmp_path_factory):
-    head = PresenceHead(presence_data["config"]).fit(presence_data["X"], presence_data["y"])
+    head = build_presence_head(presence_data["config"]).fit(presence_data["X"], presence_data["y"])
     path = head.save(tmp_path_factory.mktemp("models") / "model.joblib")
     return InferenceSession(path)
 
@@ -247,7 +260,7 @@ def test_presence_mode_session(presence_data, tmp_path):
     # 'presence' mode: independent human-detection operating mode.
     from wavetrace.recognition import modeSession
     d = presence_data
-    head = PresenceHead(d["config"]).fit(d["X"], d["y"])
+    head = build_presence_head(d["config"]).fit(d["X"], d["y"])
     session = modeSession("presence", head.save(tmp_path / "p.joblib"))
     cls, proba = session.predictWindow(d["X"][d["y"] == 1][0])
     assert cls == 1 and 0.5 <= proba <= 1.0

@@ -1,4 +1,4 @@
-"""Unit tests for wavetrace.domain.contracts.PipelineContract — no I/O, milliseconds (§1.5 tests/unit/)."""
+"""Unit tests for wavetrace.domain.contracts.PipelineContract — no I/O, milliseconds."""
 
 import pytest
 

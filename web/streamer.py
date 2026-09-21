@@ -8,7 +8,8 @@ from collections import deque
 from wavetrace.Calibration import loadCalibration, imageBaseline as get_image_baseline
 from wavetrace.recognition import modeSession, planInferenceInput, SegmentVoter, trainPresence, trainWeapon
 from wavetrace.Frontend import iterWindows
-from wavetrace.Cli import calibrateSource, collectSource
+from wavetrace.application.calibrate import calibrate_source
+from wavetrace.application.collect import collect_source
 from wavetrace.Source import buildCsiSource, parseTimeSpans
 from wavetrace import RecognitionResult
 from wavetrace.domain.contracts import (DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPLE_RATE_HZ,
@@ -137,7 +138,7 @@ class WaveTraceRunner:
         source = self._getSource(req)
         if not self.is_running: return
         self.log(f"Starting Calibration -> {req.cal_out}")
-        path, _ = calibrateSource(source, req.cal_out, baseline_packets=req.baseline_packets, use_gain_lock=req.gainLock)
+        path, _ = calibrate_source(source, req.cal_out, baseline_packets=req.baseline_packets, use_gain_lock=req.gainLock)
         self.log(f"Calibration complete: {path}")
         self._emitInference({"event": "pipeline_done"})
         self.is_running = False
@@ -148,7 +149,7 @@ class WaveTraceRunner:
         if not self.is_running: return
         self.log(f"Collecting {req.col_stage} dataset (window={req.col_window}, hop={req.col_hop})")
         spans = parseTimeSpans(req.col_spans)
-        path, ds = collectSource(source, req.calibration, "output/dataset_ui", spans,
+        path, ds = collect_source(source, req.calibration, "output/dataset_ui", spans,
                                   stage=req.col_stage, window=req.col_window, hop=req.col_hop,
                                   subtract_ic_baseline=getattr(req, "subtract_ic_baseline", False))
         self.log(f"Dataset saved ({ds.y.size} samples) -> {path}")
@@ -202,8 +203,10 @@ class WaveTraceRunner:
             if req.col_stage == "presence":
                 # PresenceHead is sklearn-only (P6 lock, wavetrace/recognition/Model.py) — cnn/variance
                 # are weapon-only backends and don't apply here.
-                backend = req.train_backend if req.train_backend in ("mlp", "svm") else "mlp"
-                if req.train_backend not in ("mlp", "svm"):
+                from wavetrace.adapters.recognition import is_sklearn_backend
+                backend_is_sklearn = is_sklearn_backend(req.train_backend)
+                backend = req.train_backend if backend_is_sklearn else "mlp"
+                if not backend_is_sklearn:
                     self.log(f"Presence only supports mlp/svm backends; ignoring '{req.train_backend}', using mlp.")
                 cfg = None
                 if ds is not None:
@@ -253,7 +256,8 @@ class WaveTraceRunner:
                 from wavetrace.groundtruth import loadDataset
                 k = int(loadDataset(dsDirs[0]).meta["K"])
                 cfg = ModelConfig(stage="weapon", k=k, backend=req.train_backend)
-                fm = "cnn" if req.train_backend == "cnn" else "ic27"
+                from wavetrace.adapters.recognition import get_backend_class
+                fm = get_backend_class(req.train_backend).feature_mode
                 # report streams per-epoch curves to the dashboard (cnn only; ignored by ic27/variance)
                 _, m = trainWeapon(dsDirs, out_dir=req.train_out, config=cfg,
                                     feature_mode=fm, report=report)
@@ -298,7 +302,7 @@ class WaveTraceRunner:
         self.is_running = True
         import os
         from wavetrace.diagnostics import NodeHealthMeter, clusterSync
-        from wavetrace.output.Guard import AlertGuard, DriftMonitor
+        from wavetrace.output.Guard import AlertGuard, DriftMonitor, WeaponAlertEvent
         from wavetrace.recognition.Link import LinkVoter, accuracyWeights
         
         isMesh = os.path.isdir(model_path) and any(os.path.isdir(os.path.join(model_path, d)) for d in os.listdir(model_path) if d.startswith("node"))
@@ -407,9 +411,9 @@ class WaveTraceRunner:
 
         def _lookupEntry(key, _we=weaponEntries, _n=nodes):
             if _we is not None:
-                tx = key[0].replace(":", "") if key[0] else None
-                return _we.get((tx, key[1])) or _we.get((None, key[1]))
-            return _n.get(key[1])
+                tx = key.tx_mac_suffix.replace(":", "") if key.tx_mac_suffix else None
+                return _we.get((tx, key.rx_node_id)) or _we.get((None, key.rx_node_id))
+            return _n.get(key.rx_node_id)
 
         healthMeter = NodeHealthMeter()
         alertGuard = AlertGuard()
@@ -429,7 +433,7 @@ class WaveTraceRunner:
         self.log("Stream started.")
         try:
             if isMesh:
-                # per-link serving math lives once in run_weapon; presence/count/weapon all share it.
+                # per-link serving math lives once in WeaponServing.py; presence/count/weapon all share it.
                 from wavetrace.recognition import dwellProbaDetailed, linkHealth
                 # Use raw UDP ingestion for parseBatchLinks instead of snooper.frames()
                 import socket
@@ -476,9 +480,9 @@ class WaveTraceRunner:
                         if m is None: continue
 
                         grids = [np.abs(f.grid).mean() for f in buffers[key]]
-                        nodePower[key[1]] = float(np.mean(grids))
+                        nodePower[key.rx_node_id] = float(np.mean(grids))
                         _hz, _miss = linkHealth(list(buffers[key]))
-                        linkStats.append({"tx": key[0], "rx": key[1],
+                        linkStats.append({"tx": key.tx_mac_suffix, "rx": key.rx_node_id,
                                            "hz": round(_hz, 1), "miss": round(_miss, 3)})
 
                         # temporal soft vote over the buffer + last window's image/features/ic for the spectrogram
@@ -511,8 +515,8 @@ class WaveTraceRunner:
                     if mode != "count":
                         alertEv = alertGuard.update(now, cls)
                         if alertEv:
-                            _alertActive = alertEv["event"] == "weapon_alert"
-                            asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps({**r, **alertEv})), self.loop)
+                            _alertActive = isinstance(alertEv, WeaponAlertEvent)
+                            asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps({**r, **alertEv.to_dict()})), self.loop)
                         if _posIdx >= 0: _voterTrace.append(float(probs[_posIdx]))
 
                     asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps(r)), self.loop)
@@ -570,8 +574,8 @@ class WaveTraceRunner:
                     if mode != "count":
                         alertEv = alertGuard.update(t, cls)
                         if alertEv:
-                            _alertActive = alertEv["event"] == "weapon_alert"
-                            asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps({**r, **alertEv})), self.loop)
+                            _alertActive = isinstance(alertEv, WeaponAlertEvent)
+                            asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps({**r, **alertEv.to_dict()})), self.loop)
                         if _posIdx >= 0: _voterTrace.append(float(probs[_posIdx]))
 
                     spatialData = None
@@ -634,7 +638,6 @@ class WaveTraceRunner:
             from wavetrace.Source import (parseBatchLinks, resampleUniform, bindUdp,
                                           saveRecording, RecordingSource)
             from wavetrace.Calibration import loadCalibration
-            from wavetrace.Cli import collectSource as _collect_source
         except ImportError as _ie:
             self.log(f"ERROR: missing dependency: {_ie}")
             self._emitInference({"event": "pipeline_done"})
@@ -759,7 +762,7 @@ class WaveTraceRunner:
             rec = f"{root}/cam_rec/{sess}/node{nid}"
             ds = f"{root}/cam_ds/{req.col_stage}/node{nid}/{sess}"
             saveRecording(frs, rec)
-            _collect_source(RecordingSource(rec), f"{req.calibration}/node{nid}", ds, [],
+            collect_source(RecordingSource(rec), f"{req.calibration}/node{nid}", ds, [],
                             stage=req.col_stage, labeler=labels,
                             session_id=sess, subject_id="cam",
                             subtract_ic_baseline=(req.col_stage == "weapon"))
@@ -790,7 +793,7 @@ class WaveTraceRunner:
                 ld = f"{root}/cam_ds/weapon/node{rx}/link{tag}/{sess}"
                 lr = f"{root}/cam_rec/{sess}/link{tag}_node{rx}"
                 saveRecording(rf, lr)
-                _collect_source(RecordingSource(lr), f"{req.calibration}/node{rx}", ld, [],
+                collect_source(RecordingSource(lr), f"{req.calibration}/node{rx}", ld, [],
                                 stage="weapon", labeler=labels,
                                 session_id=sess, subject_id="cam",
                                 subtract_ic_baseline=True)

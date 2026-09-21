@@ -11,6 +11,8 @@ Static priors from `accuracyWeights` of per-link LOGO results, or operator-set.
 NOT wired into Cli — lands with multi-node serving in Phase 0+.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
@@ -19,7 +21,18 @@ def accuracyWeights(balanced_acc: dict) -> dict:
     return {k: max(float(v) - 0.5, 0.0) * 2.0 for k, v in balanced_acc.items()}
 
 
-def evaluateLinkFusion(links, y, *, qualities=None) -> dict:
+@dataclass(frozen=True, slots=True)
+class LinkFusionReport:
+    """Offline measurement of decision-level band fusion (`evaluateLinkFusion`): fused accuracy
+    against each link's own accuracy and the static prior weight it was blended with."""
+
+    fused_accuracy: float
+    per_link_accuracy: dict
+    weights: dict
+    sample_count: int
+
+
+def evaluateLinkFusion(links, y, *, qualities=None) -> LinkFusionReport:
     """Measure decision-level band fusion offline — the ONLY level the 2.4 GHz mesh and the 5 GHz Pi
     combine (different feature spaces never share a tensor, plan §2.9.3). Blend each link's per-window
     class probabilities with accuracy-derived static priors and report fused vs best-single accuracy.
@@ -28,8 +41,8 @@ def evaluateLinkFusion(links, y, *, qualities=None) -> dict:
     balanced_acc is its LOGO balanced accuracy (→ static prior via accuracyWeights; chance→0).
     qualities: optional dict[node_id -> (n,) live quality], e.g. per-window max-proba margin.
 
-    Returns {fused_accuracy, per_link_accuracy, weights, n}. O(n·L·C). If every link is at/below
-    chance (all weights 0) it falls back to a uniform blend so the vote is still defined."""
+    O(n·L·C). If every link is at/below chance (all weights 0) it falls back to a uniform blend so
+    the vote is still defined."""
     y = np.asarray(y, dtype=np.int64)
     ids = list(links)
     weights = accuracyWeights({nid: links[nid][1] for nid in ids})
@@ -42,12 +55,12 @@ def evaluateLinkFusion(links, y, *, qualities=None) -> dict:
             voter.add(nid, links[nid][0][i], quality=q)
         fused[i] = voter.finalize()[0]
     perLink = {nid: float((np.argmax(links[nid][0], axis=1) == y).mean()) for nid in ids}
-    return {
-        "fused_accuracy": float((fused == y).mean()),
-        "per_link_accuracy": perLink,
-        "weights": weights,
-        "n": int(y.size),
-    }
+    return LinkFusionReport(
+        fused_accuracy=float((fused == y).mean()),
+        per_link_accuracy=perLink,
+        weights=weights,
+        sample_count=int(y.size),
+    )
 
 
 class LinkVoter:

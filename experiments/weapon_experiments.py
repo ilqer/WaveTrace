@@ -24,7 +24,7 @@ from sklearn.metrics import roc_auc_score
 
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth import loadDataset
-from wavetrace.recognition.Weapon import WeaponHead
+from wavetrace.adapters.recognition.heads import build_weapon_head
 from wavetrace.recognition.Train import _logoMetrics, trainWeapon
 
 WINDOW, HOP, FS = 128, 32, 100.0
@@ -87,7 +87,7 @@ def exp_per_node(nodes, root):
                                  ("ic27/mlp", "mlp", X_ic),
                                  ("ic27/svm", "svm", X_ic),
                                  ("cnn/image", "cnn", X_im)):
-            s = _session_logo(X, y, sess, subj, lambda b=backend, kk=k: WeaponHead(_cfg(b, kk)))
+            s = _session_logo(X, y, sess, subj, lambda b=backend, kk=k: build_weapon_head(_cfg(b, kk)))
             print(_fmt(name, len(y), s))
         deploy[nid] = dirs  # feeds the canonical ic27 retrain
     return deploy
@@ -105,8 +105,8 @@ def exp_per_link(nodes):
             sess = np.concatenate([d.session_ids for d in dss])
             subj = np.concatenate([d.subject_ids for d in dss])
             k = int(dss[0].meta["K"])
-            sv = _session_logo(X_ic, y, sess, subj, lambda kk=k: WeaponHead(_cfg("variance", kk)))
-            sm = _session_logo(X_ic, y, sess, subj, lambda kk=k: WeaponHead(_cfg("mlp", kk)))
+            sv = _session_logo(X_ic, y, sess, subj, lambda kk=k: build_weapon_head(_cfg("variance", kk)))
+            sm = _session_logo(X_ic, y, sess, subj, lambda kk=k: build_weapon_head(_cfg("mlp", kk)))
             print(_fmt(f"node{nid} link{tag} var", len(y), sv))
             print(_fmt(f"node{nid} link{tag} mlp", len(y), sm))
             if sv:
@@ -155,10 +155,10 @@ def exp_combined(nodes, links, root, save_to):
     k = X.shape[2]
     print(f"   tensor X={X.shape} (n, channels=12, K={k}, window={X.shape[3]})  "
           f"class_counts={dict(zip(*[a.tolist() for a in np.unique(y, return_counts=True)]))}")
-    s = _session_logo(X, y, sess, subj, lambda: WeaponHead(_cfg("cnn", k)))
+    s = _session_logo(X, y, sess, subj, lambda: build_weapon_head(_cfg("cnn", k)))
     print(_fmt("12-link CNN", len(y), s))
     # save a full-data fit for the record
-    head = WeaponHead(_cfg("cnn", k)); head.feature_mode = "cnn"; head.fit(X, y)
+    head = build_weapon_head(_cfg("cnn", k)); head.feature_mode = "cnn"; head.fit(X, y)
     head.save(os.path.join(save_to, "model.joblib"))
     print(f"   saved combined CNN -> {save_to}/model.joblib")
     return s
@@ -169,7 +169,7 @@ def _reliability(X, y, sess):
     """LinkVoter weight = max(session-LOGO acc - 0.5, 0)*2 (same formula run_weapon uses). A link that
     can't beat chance on the TRAINING sessions gets ~0 vote; computed only on train folds (no leak)."""
     s = _session_logo(X, y, sess, np.array(["_"] * len(y)),
-                      lambda: WeaponHead(_cfg("variance", 12)))
+                      lambda: build_weapon_head(_cfg("variance", 12)))
     return max((s["accuracy"] if s else 0.5) - 0.5, 0.0) * 2.0
 
 
@@ -213,7 +213,7 @@ def exp_weighted_fusion(nodes, links):
         Ptr = np.zeros((int(tr.sum()), L))               # per-LINK train probs (for the train threshold)
         Pte = np.zeros((int(te.sum()), L))               # per-LINK test probs
         for i in range(L):
-            head = WeaponHead(_cfg("variance", 12)).fit(IC[tr, i, :], y[tr])
+            head = build_weapon_head(_cfg("variance", 12)).fit(IC[tr, i, :], y[tr])
             W[i] = _reliability(IC[tr, i, :], y[tr], sess[tr])
             Ptr[:, i] = head.predict_proba(IC[tr, i, :])[:, 1]
             Pte[:, i] = head.predict_proba(IC[te, i, :])[:, 1]
@@ -326,7 +326,7 @@ def _fusion_eval(IC, y, sess, links, *, augment=0, seed=0):
             Xtr, ytr = Xtr0, ytr0
         W = np.zeros(L); Ptr = np.zeros((len(ytr), L)); Pte = np.zeros((int(te.sum()), L))
         for i in range(L):
-            head = WeaponHead(_cfg("variance", 12)).fit(Xtr[:, i, :], ytr)
+            head = build_weapon_head(_cfg("variance", 12)).fit(Xtr[:, i, :], ytr)
             W[i] = _reliability(Xtr0[:, i, :], ytr0, str0)   # reliability on ORIGINAL train (no aug leak)
             Ptr[:, i] = head.predict_proba(Xtr[:, i, :])[:, 1]
             Pte[:, i] = head.predict_proba(Xte[:, i, :])[:, 1]

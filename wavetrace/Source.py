@@ -16,7 +16,6 @@ Recording format under out_dir (mirrors saveDataset): grid.npy (F,A,S) complex64
 node_id.npy (F,) + meta.json. O(F·A·S) to (de)serialize.
 """
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -28,6 +27,8 @@ import warnings
 import numpy as np
 
 from wavetrace import CsiFrame
+from wavetrace.application.ports import CsiSource
+from wavetrace.domain.link_key import LinkKey
 
 # esp-csi 25-column CSV header (data = last column, JSON array of ints).
 ESP_CSI_COLUMNS = [
@@ -166,8 +167,8 @@ def macShort(mac: str) -> str:
 
 
 def parseBatchLinks(payload: bytes, *, tx_mac=None) -> dict:
-    """One UDP batch -> dict[(tx_short, rx_node) -> list[CsiFrame]], keeping TX identity so each
-    directed (tx->rx) link is its OWN stream (the all-pairs fusion input). O(n·S).
+    """One UDP batch -> dict[LinkKey -> list[CsiFrame]], keeping TX identity so each directed
+    (tx->rx) link is its OWN stream (the all-pairs fusion input). O(n·S).
 
     Same binary v2 format + timestamp scheme as parseBatch (rx_node = header node; ntp_ms ≈ the last
     frame's wall time; per-frame t reconstructed from local_timestamp; header n bounds parsing).
@@ -186,6 +187,8 @@ def parseBatchLinks(payload: bytes, *, tx_mac=None) -> dict:
         return {}
 
     lastUs = parsed[-1][2]
+    # Bare-tuple keys through the per-record loop (this runs O(records) per UDP batch, ~3000/s);
+    # LinkKey construction is deferred to one pass over the O(links) result below.
     links: dict = {}
     sRef: dict = {}  # per-link width guard
     for txShort, csi, localTsUs in parsed:
@@ -201,7 +204,7 @@ def parseBatchLinks(payload: bytes, *, tx_mac=None) -> dict:
         fr.timestamp = ntpMs / 1000.0 - ((lastUs - localTsUs) & 0xFFFFFFFF) / 1e6
         fr.node_id = nodeId
         links.setdefault(key, []).append(fr)
-    return links
+    return {LinkKey(*key): frames for key, frames in links.items()}
 
 
 def resampleUniform(frames, fs_hz):
@@ -252,14 +255,6 @@ def bindUdp(port, *, timeout=None):
     if timeout is not None:
         sock.settimeout(timeout)
     return sock
-
-
-class CsiSource(ABC):
-    """A stream of CsiFrames feeding the front-end."""
-
-    @abstractmethod
-    def frames(self):
-        """Yield CsiFrame objects in capture order."""
 
 
 class SyntheticSource(CsiSource):
@@ -562,9 +557,7 @@ def parseTimeSpans(spec: str) -> list[tuple[float, float]]:
 def buildCsiSource(options) -> CsiSource:
     """Build a CsiSource from a small options bag: `options.recording` (replay a saved directory) or
     `options.synthetic` (generate frames in-process via `wavetrace.Synthetic`, from
-    `.antennas`/`.subcarriers`/`.fs`/`.duration`/`.presence`/`.weapon`/`.weapon_depth`/`.seed`).
-    Duck-typed so both the CLI's argparse `Namespace` and the web dashboard's request options work
-    unchanged."""
+    `.antennas`/`.subcarriers`/`.fs`/`.duration`/`.presence`/`.weapon`/`.weapon_depth`/`.seed`)."""
     if options.recording:
         return RecordingSource(options.recording)
     if options.synthetic:

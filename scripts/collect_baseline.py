@@ -15,7 +15,7 @@ import sys
 import time
 
 from wavetrace.Source import RecordingSource, UdpSource, UdpSourceOptions, saveRecording
-from wavetrace.Cli import calibrateSource
+from wavetrace.application.calibrate import calibrate_source
 
 
 def detectNodes(port, timeout_seconds=3.0):
@@ -102,8 +102,8 @@ def main():
             print(f"   [SKIP] node {nid}: only {len(fr)} frames (< {args.min_frames}), not calibrated.")
             continue
         saveRecording(fr, f"{args.root}/baseline_raw/node{nid}")
-        calibrateSource(RecordingSource(f"{args.root}/baseline_raw/node{nid}"), f"{args.root}/cal/node{nid}",
-                         baseline_packets=min(2000, len(fr)))
+        calibrate_source(RecordingSource(f"{args.root}/baseline_raw/node{nid}"), f"{args.root}/cal/node{nid}",
+                          baseline_packets=min(2000, len(fr)))
         print(f"   [OK]   node {nid}: {len(fr)} frames, {fr[0].num_subcarriers} subcarriers "
               f"-> {args.root}/cal/node{nid}")
         calibrated.append(nid)

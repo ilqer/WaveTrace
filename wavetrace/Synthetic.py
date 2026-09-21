@@ -1,8 +1,6 @@
-"""Synthetic CSI + paired-label generation. Ships as part of the `wavetrace` package (not a test
-fixture) because `wavetrace.Cli`'s `--synthetic` mode depends on it at runtime — see
-`generatePairedRecording` below, called from `Cli._sourceFromArgs`. This is the only home for
-`generateStream` / `generatePairedRecording`; `fixtures/SyntheticCsi.py` keeps only the raw
-wire-format helpers (`encodeFrame` / `generateRawFrames`) that have no runtime caller.
+"""Synthetic CSI + paired-label generation, used at runtime by `wavetrace.Cli`'s `--synthetic`
+mode (`Cli._sourceFromArgs` calls `generatePairedRecording` below). `fixtures/SyntheticCsi.py`
+holds the raw wire-format helpers (`encodeFrame` / `generateRawFrames`) used only by tests.
 
   - CSI side  → a CsiFrame stream (`generateStream`); frame.timestamp = the TRUE world time on the
                 CSI host clock. Validates the DSP pipeline only — it cannot fake real posture/weapon
@@ -49,37 +47,39 @@ def generateStream(
     / subcarrier-ratio; and complex Gaussian noise."""
     rng = np.random.default_rng(seed)
 
-    amp = rng.uniform(0.5, 1.5, size=(numAntennas, numSubcarriers))
+    amplitude = rng.uniform(0.5, 1.5, size=(numAntennas, numSubcarriers))
     psi = rng.uniform(-np.pi, np.pi, size=(numAntennas, numSubcarriers))
-    h0 = (amp * np.exp(1j * psi)).astype(np.complex64)
+    h0 = (amplitude * np.exp(1j * psi)).astype(np.complex64)
 
     # Per-subcarrier motion sensitivity in [-1, 1]; the difference between two subcarriers
     # carries the periodic motion into angle(s_i · conj(s_j)).
     scale = np.linspace(-1.0, 1.0, numSubcarriers) if numSubcarriers > 1 else np.zeros(1)
     # Per-subcarrier amplitude-modulation depth in [0.5, 1.5]; varies per subcarrier so it survives per-frame mean normalization.
-    ampScale = np.linspace(0.5, 1.5, numSubcarriers) if numSubcarriers > 1 else np.ones(1)
+    amplitude_scale = np.linspace(0.5, 1.5, numSubcarriers) if numSubcarriers > 1 else np.ones(1)
 
     times = np.arange(numFrames) / sampleRateHz
     frames: list[CsiFrame] = []
-    for idx in range(numFrames):
-        t = times[idx]
-        motionPhase = perturbationDepth * scale * np.sin(2 * np.pi * perturbationHz * t)
-        cfoPhase = 2 * np.pi * cfoHz * t  # common-mode, cancels in the subcarrier ratio
-        rot = np.exp(1j * (motionPhase + cfoPhase)).astype(np.complex64)  # (numSubcarriers,)
+    for frame_index in range(numFrames):
+        timestamp_s = times[frame_index]
+        motion_phase = perturbationDepth * scale * np.sin(2 * np.pi * perturbationHz * timestamp_s)
+        cfo_phase = 2 * np.pi * cfoHz * timestamp_s  # common-mode, cancels in the subcarrier ratio
+        phase_rotor = np.exp(1j * (motion_phase + cfo_phase)).astype(np.complex64)  # (numSubcarriers,)
         # |H| envelope: 1 + depth·sens·sin(2π f t); stays positive for sane depths (amplitudeDepth·1.5 < 1)
-        ampEnv = (1.0 + amplitudeDepth * ampScale * np.sin(2 * np.pi * amplitudeHz * t)).astype(np.float32)
+        amplitude_envelope = (
+            1.0 + amplitudeDepth * amplitude_scale * np.sin(2 * np.pi * amplitudeHz * timestamp_s)
+        ).astype(np.float32)
         noise = (
             rng.normal(0.0, noiseStd, (numAntennas, numSubcarriers))
             + 1j * rng.normal(0.0, noiseStd, (numAntennas, numSubcarriers))
         ).astype(np.complex64)
-        grid = (h0 * ampEnv[None, :] * rot[None, :] + noise).astype(np.complex64)
+        grid = (h0 * amplitude_envelope[None, :] * phase_rotor[None, :] + noise).astype(np.complex64)
 
         frame = CsiFrame(numAntennas, numSubcarriers)
-        frame.timestamp = float(t)
+        frame.timestamp = float(timestamp_s)
         frame.grid[:, :] = grid  # zero-copy write into the native buffer
         frames.append(frame)
 
-    groundTruth = {
+    ground_truth = {
         "perturbation_hz": perturbationHz,
         "amplitude_hz": amplitudeHz,
         "amplitude_depth": amplitudeDepth,
@@ -89,12 +89,12 @@ def generateStream(
         "num_antennas": numAntennas,
         "num_subcarriers": numSubcarriers,
     }
-    return frames, groundTruth
+    return frames, ground_truth
 
 
-def _in_spans(t: float, spans) -> bool:
-    """True if t falls in any [start, end) span."""
-    return any(s <= t < e for s, e in spans)
+def _in_spans(timestamp: float, spans) -> bool:
+    """True if timestamp falls in any [start, end) span."""
+    return any(start <= timestamp < end for start, end in spans)
 
 
 def generatePairedRecording(
@@ -157,49 +157,51 @@ def generatePairedRecording(
         seed=seed,
     )
 
-    presence = [(float(s), float(e)) for s, e in presenceSpans]
-    weapon = [(float(s), float(e)) for s, e in weaponSpans]
+    presence = [(float(start), float(end)) for start, end in presenceSpans]
+    weapon = [(float(start), float(end)) for start, end in weaponSpans]
 
     # presence -> signal modulation. Own rng (seed+2) so CSI/camera streams stay intact.
     if presenceTurbulenceStd > 0 and presence:
-        turbRng = np.random.default_rng(None if seed is None else seed + 2)
-        for fr in frames:
-            if _in_spans(fr.timestamp, presence):
-                g = np.asarray(fr.grid)
-                ampJ = turbRng.normal(0.0, presenceTurbulenceStd, g.shape)
-                phJ = turbRng.normal(0.0, presenceTurbulenceStd, g.shape)
-                g *= ((1.0 + ampJ) * np.exp(1j * phJ)).astype(np.complex64)
+        turbulence_rng = np.random.default_rng(None if seed is None else seed + 2)
+        for frame in frames:
+            if _in_spans(frame.timestamp, presence):
+                grid = np.asarray(frame.grid)
+                amplitude_jitter = turbulence_rng.normal(0.0, presenceTurbulenceStd, grid.shape)
+                phase_jitter = turbulence_rng.normal(0.0, presenceTurbulenceStd, grid.shape)
+                grid *= ((1.0 + amplitude_jitter) * np.exp(1j * phase_jitter)).astype(np.complex64)
 
     # weapon -> σ²[p] signature (flatten toward the per-antenna mean magnitude).
     if weaponSignatureDepth > 0 and weapon:
-        d = float(weaponSignatureDepth)
-        for fr in frames:
-            if _in_spans(fr.timestamp, weapon):
-                g = np.asarray(fr.grid)
-                mag = np.abs(g)
-                target = ((1.0 - d) * mag + d * mag.mean(axis=1, keepdims=True)) * (1.0 - 0.15 * d)
+        depth = float(weaponSignatureDepth)
+        for frame in frames:
+            if _in_spans(frame.timestamp, weapon):
+                grid = np.asarray(frame.grid)
+                magnitude = np.abs(grid)
+                target = ((1.0 - depth) * magnitude + depth * magnitude.mean(axis=1, keepdims=True)) * (
+                    1.0 - 0.15 * depth
+                )
                 # rescale magnitude, keep phase; guard near-zero noise cells
-                g *= (target / np.maximum(mag, 1e-9)).astype(np.complex64)
+                grid *= (target / np.maximum(magnitude, 1e-9)).astype(np.complex64)
     # +1 keeps the camera clock's jitter stream independent of the CSI noise stream
     rng = np.random.default_rng(None if seed is None else seed + 1)
-    numCam = int(round(durationS * cameraFps))
+    num_camera_frames = int(round(durationS * cameraFps))
     observations: list[dict] = []
-    for j in range(numCam):
-        trueT = j / cameraFps
+    for j in range(num_camera_frames):
+        true_timestamp_s = j / cameraFps
         jitter = float(rng.normal(0.0, jitterStdS)) if jitterStdS > 0 else 0.0
-        camTs = trueT + clockOffsetS + jitter
-        isPresent = _in_spans(trueT, presence)
-        hasWeapon = _in_spans(trueT, weapon)
+        camera_timestamp_s = true_timestamp_s + clockOffsetS + jitter
+        is_present = _in_spans(true_timestamp_s, presence)
+        has_weapon = _in_spans(true_timestamp_s, weapon)
         raw = {
-            "present": isPresent,
-            "weapon": hasWeapon,
+            "present": is_present,
+            "weapon": has_weapon,
             # coarse person box (normalized) when present, else None
-            "bbox": [0.40, 0.30, 0.20, 0.55] if isPresent else None,
-            "keypoints": [0.5, 0.2, 0.5, 0.5, 0.5, 0.8] if isPresent else [],
+            "bbox": [0.40, 0.30, 0.20, 0.55] if is_present else None,
+            "keypoints": [0.5, 0.2, 0.5, 0.5, 0.5, 0.8] if is_present else [],
             # weapon location ground truth for the location-chip path, else None
-            "position": list(weaponPosition) if hasWeapon else None,
+            "position": list(weaponPosition) if has_weapon else None,
         }
-        observations.append({"t": float(camTs), "true_t": float(trueT), "raw": raw})
+        observations.append({"t": float(camera_timestamp_s), "true_t": float(true_timestamp_s), "raw": raw})
 
     truth = {
         "clock_offset_s": float(clockOffsetS),
@@ -208,7 +210,7 @@ def generatePairedRecording(
         "sample_rate_hz": float(sampleRateHz),
         "duration_s": float(durationS),
         "num_frames": numFrames,
-        "num_camera_frames": numCam,
+        "num_camera_frames": num_camera_frames,
         "presence_spans": presence,
         "weapon_spans": weapon,
         "presence_turbulence_std": float(presenceTurbulenceStd),

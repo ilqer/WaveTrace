@@ -5,7 +5,49 @@ DriftMonitor: slow EMA of raw per-subcarrier |H| vs quiet-room baseline → reca
 Both are pure-Python, O(1)/window and O(S)/frame respectively; zero effect when not instantiated.
 """
 
+from dataclasses import asdict, dataclass, field
+
 import numpy as np
+
+
+@dataclass(frozen=True, slots=True)
+class WeaponAlertEvent:
+    """AlertGuard's inactive -> active transition: n_on consecutive positives, past cooldown."""
+
+    event: str = field(default="weapon_alert", init=False)
+    t: float
+
+    def to_dict(self) -> dict:
+        """The wire dict a JSONL/WebSocket consumer already expects."""
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class AlertClearedEvent:
+    """AlertGuard's active -> inactive transition: n_off consecutive negatives."""
+
+    event: str = field(default="clear", init=False)
+    t: float
+
+    def to_dict(self) -> dict:
+        """The wire dict a JSONL/WebSocket consumer already expects."""
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class RecalibrationAdvisoryEvent:
+    """DriftMonitor's advisory that the EMA baseline has drifted past drift_thresh."""
+
+    event: str = field(default="recalibrate_advisory", init=False)
+    t: float
+    drift: float
+
+    def to_dict(self) -> dict:
+        """The wire dict a JSONL/WebSocket consumer already expects."""
+        return asdict(self)
+
+
+GuardEvent = WeaponAlertEvent | AlertClearedEvent | RecalibrationAdvisoryEvent
 
 
 class AlertGuard:
@@ -13,10 +55,10 @@ class AlertGuard:
 
     State machine:
       inactive: pos_count increments on positive class, resets on other; at n_on AND past cooldown
-        -> {"event": "weapon_alert", "t": t}, go active.  If n_on reached but in cooldown: no event,
-        stay inactive, counter holds its value (fires when cooldown passes).
+        -> WeaponAlertEvent, go active.  If n_on reached but in cooldown: no event, stay inactive,
+        counter holds its value (fires when cooldown passes).
       active: neg_count increments on non-positive; a positive resets it; at n_off
-        -> {"event": "clear", "t": t}, go inactive, reset all counters.
+        -> AlertClearedEvent, go inactive, reset all counters.
     """
 
     def __init__(self, *, n_on: int = 4, n_off: int = 6, cooldown_s: float = 3.0,
@@ -30,8 +72,8 @@ class AlertGuard:
         self._neg_count = 0
         self._last_alert_t = -1e18
 
-    def update(self, t: float, class_id: int) -> dict | None:
-        """Process one window verdict; return an event dict or None."""
+    def update(self, t: float, class_id: int) -> GuardEvent | None:
+        """Process one window verdict; return a guard event or None."""
         if not self._active:
             if class_id == self._pos_cls:
                 self._pos_count += 1
@@ -41,7 +83,7 @@ class AlertGuard:
                 self._active = True
                 self._neg_count = 0
                 self._last_alert_t = t
-                return {"event": "weapon_alert", "t": t}
+                return WeaponAlertEvent(t=t)
         else:
             if class_id == self._pos_cls:
                 self._neg_count = 0
@@ -51,7 +93,7 @@ class AlertGuard:
                     self._active = False
                     self._pos_count = 0
                     self._neg_count = 0
-                    return {"event": "clear", "t": t}
+                    return AlertClearedEvent(t=t)
         return None
 
 
@@ -70,8 +112,8 @@ class DriftMonitor:
         self._frame_count = 0
         self._last_advisory_t = -1e18
 
-    def update(self, t: float, raw_mags: np.ndarray) -> dict | None:
-        """Push one frame's raw per-subcarrier magnitudes; return advisory dict or None."""
+    def update(self, t: float, raw_mags: np.ndarray) -> RecalibrationAdvisoryEvent | None:
+        """Push one frame's raw per-subcarrier magnitudes; return an advisory event or None."""
         mags = np.asarray(raw_mags, dtype=np.float32)
         if self._ema is None:
             self._ema = mags.copy()
@@ -83,5 +125,5 @@ class DriftMonitor:
         driftVal = float(np.median(np.abs(self._ema / np.maximum(self._baseline, 1e-12) - 1.0)))
         if driftVal >= self._drift_thresh and (t - self._last_advisory_t) >= self._cooldown_s:
             self._last_advisory_t = t
-            return {"event": "recalibrate_advisory", "t": t, "drift": driftVal}
+            return RecalibrationAdvisoryEvent(t=t, drift=driftVal)
         return None

@@ -28,7 +28,7 @@ import numpy as np
 from wavetrace.Source import (parseBatchLinks, resampleUniform, bindUdp, saveRecording,
                               RecordingSource)
 from wavetrace.Calibration import loadCalibration
-from wavetrace.Cli import collectSource
+from wavetrace.application.collect import collect_source
 from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth.DatasetBuilder import buildDatasetStacked, saveDataset
 from wavetrace.recognition import trainPresence
@@ -156,7 +156,7 @@ def main():
         rec = f"{args.root}/cam_rec/{sess}/node{nid}"
         ds = f"{args.root}/cam_ds/{args.stage}/node{nid}/{sess}"
         saveRecording(fr, rec)
-        collectSource(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [], stage=args.stage,
+        collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [], stage=args.stage,
                        labeler=labels, session_id=sess, subject_id=args.subject,
                        subtract_ic_baseline=(args.stage == "weapon"))
         presBuilt.append(nid)

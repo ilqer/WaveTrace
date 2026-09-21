@@ -1,6 +1,5 @@
 """Static σ²[p] PDF separation diagnostics — the weapon-detection go/no-go check shared by
-`experiments/weapon_litmus.py`'s CLI and the web dashboard's `/api/weapon/litmus` route (one
-definition instead of two).
+`experiments/weapon_litmus.py`'s CLI and the web dashboard's `/api/weapon/litmus` route.
 
 Checks whether per-packet inter-subcarrier variance σ²[p] separates clear vs weapon (see Yousaf
 Fig 17). If the PDFs overlap, the signal is lost at the radio/geometry level — fix hardware before
@@ -22,8 +21,8 @@ import numpy as np
 
 def sigma2_per_frame(grid):
     """(F,A,S) complex CSI -> (F,) per-frame σ²[p]. Sample variance of antenna-collapsed subcarrier magnitudes."""
-    mag = np.abs(np.asarray(grid)).mean(axis=1)        # (F, S) antenna-collapsed magnitude
-    return mag.var(axis=1, ddof=1)                     # (F,) inter-subcarrier variance per packet
+    magnitude = np.abs(np.asarray(grid)).mean(axis=1)   # (F, S) antenna-collapsed magnitude
+    return magnitude.var(axis=1, ddof=1)                # (F,) inter-subcarrier variance per packet
 
 
 def _node_of(path):
@@ -54,15 +53,15 @@ def gather_sigma2(root, node=None, per_link=False):
     for cond in ("clear", "weapon"):
         for gpath in glob.glob(os.path.join(root, "weapon_rec", "**", cond, "**", "grid.npy"),
                                recursive=True):
-            nid = _node_of(gpath)
-            if nid is None or (node is not None and nid != node):
+            node_id = _node_of(gpath)
+            if node_id is None or (node is not None and node_id != node):
                 continue
-            key = (nid, _link_of(gpath)) if per_link else nid
+            key = (node_id, _link_of(gpath)) if per_link else node_id
             if per_link and key[1] is None:
                 continue
-            s2 = sigma2_per_frame(np.load(gpath))
-            out.setdefault(key, {}).setdefault(cond, []).append(s2)
-    return {key: {c: np.concatenate(v) for c, v in conds.items()}
+            frame_variance = sigma2_per_frame(np.load(gpath))
+            out.setdefault(key, {}).setdefault(cond, []).append(frame_variance)
+    return {key: {condition: np.concatenate(values) for condition, values in conds.items()}
             for key, conds in out.items()}
 
 
@@ -72,29 +71,32 @@ def separation(clear, weapon):
         return None
     from sklearn.metrics import roc_auc_score
     y = np.concatenate([np.zeros(clear.size), np.ones(weapon.size)])
-    x = np.concatenate([clear, weapon])
-    auc = roc_auc_score(y, x)
-    nc, nw = clear.size, weapon.size
-    pooled_sd = np.sqrt(((nc - 1) * clear.var(ddof=1) + (nw - 1) * weapon.var(ddof=1)) / (nc + nw - 2))
-    d = (weapon.mean() - clear.mean()) / pooled_sd if pooled_sd > 0 else 0.0
+    sigma2_values = np.concatenate([clear, weapon])
+    auc = roc_auc_score(y, sigma2_values)
+    clear_count, weapon_count = clear.size, weapon.size
+    pooled_std = np.sqrt(
+        ((clear_count - 1) * clear.var(ddof=1) + (weapon_count - 1) * weapon.var(ddof=1))
+        / (clear_count + weapon_count - 2)
+    )
+    cohens_d = (weapon.mean() - clear.mean()) / pooled_std if pooled_std > 0 else 0.0
     return {
         "auc": max(auc, 1.0 - auc),         # separability, direction-folded
         "lower_when_armed": bool(weapon.mean() < clear.mean()),  # True = matches metal physics
-        "cohens_d": d,
+        "cohens_d": cohens_d,
         "clear_med": float(np.median(clear)), "weapon_med": float(np.median(weapon)),
-        "n_clear": int(nc), "n_weapon": int(nw),
+        "n_clear": int(clear_count), "n_weapon": int(weapon_count),
     }
 
 
 def json_hist(clear, weapon, bins=20):
     """JSON-serializable overlaid σ²[p] histogram for the web litmus card.
     Returns density-normalised heights on a shared edge grid. O(N log N)."""
-    lo = float(min(clear.min(), weapon.min()))
-    hi = float(max(clear.max(), weapon.max()))
-    edges = np.linspace(lo, hi, bins + 1)
-    hc, _ = np.histogram(clear, edges, density=True)
-    hw, _ = np.histogram(weapon, edges, density=True)
-    return {"edges": edges.tolist(), "clear": hc.tolist(), "weapon": hw.tolist()}
+    value_min = float(min(clear.min(), weapon.min()))
+    value_max = float(max(clear.max(), weapon.max()))
+    edges = np.linspace(value_min, value_max, bins + 1)
+    clear_hist, _ = np.histogram(clear, edges, density=True)
+    weapon_hist, _ = np.histogram(weapon, edges, density=True)
+    return {"edges": edges.tolist(), "clear": clear_hist.tolist(), "weapon": weapon_hist.tolist()}
 
 
 def verdict(auc):

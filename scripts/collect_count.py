@@ -21,7 +21,7 @@ import time
 import numpy as np
 
 from wavetrace.Source import RecordingSource, saveRecording, parseBatchLinks, resampleUniform, bindUdp
-from wavetrace.Cli import collectSource
+from wavetrace.application.collect import collect_source
 from wavetrace.recognition import countName, trainPresence
 from wavetrace.groundtruth.CameraLabeler import ScriptedLabeler
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
@@ -145,7 +145,7 @@ def main():
                     # constant-count labeler: every window in this segment gets class_id = c
                     lab = ScriptedLabeler([(span[0], span[1], True)],
                                           label_fn=lambda raw, t, _c=c, _n=label: (_c, _n))
-                    collectSource(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
+                    collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
                                    stage="presence", session_id=f"sess{i}", subject_id=SUBJECT,
                                    labeler=lab)
                     dsDirs[nid].append(ds)

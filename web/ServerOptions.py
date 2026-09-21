@@ -1,5 +1,4 @@
-"""Delivery-layer configuration for the FastAPI/uvicorn dashboard server. Its only consumer is
-`web/app.py`; it has nothing to do with the CSI domain, so it does not live in `wavetrace.Config`."""
+"""Delivery-layer configuration for the FastAPI/uvicorn dashboard server."""
 
 from dataclasses import dataclass
 
@@ -7,7 +6,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class WebServerOptions:
     """Settings for the FastAPI/uvicorn dashboard server (`web/app.py`), including the
-    reload-watcher's own paths/globs so the whole `uvicorn.run(...)` surface is one type."""
+    reload-watcher's own paths/globs."""
 
     host: str = "0.0.0.0"
     port: int = 8000
