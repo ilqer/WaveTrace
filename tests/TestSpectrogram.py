@@ -1,7 +1,4 @@
-"""Spectrogram tests: sliding selected-subcarrier x time CSI image.
-
-Validates emit cadence, output shape, chronological column ordering, and determinism.
-"""
+"""SpectrogramBuilder: a sliding selected-subcarrier x time CSI image."""
 
 import numpy as np
 import pytest

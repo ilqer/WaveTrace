@@ -1,5 +1,3 @@
-"""Webcam labeling core. Offline YOLO stream labeling and throttled frame buffer."""
-
 import threading
 
 from wavetrace.groundtruth.CameraLabeler import (VisionLabeler, Detection, LabelerOptions,
@@ -63,7 +61,6 @@ def test_record_frames_stop_event_returns_empty():
 
 
 def test_record_labels_online_labels_live_and_calls_back():
-    """Online path runs labeler per frame, fires onLabel, returns sorted Labels."""
     lab = VisionLabeler(_stub_detector, label_fn=presenceLabelFn)
     imgs = iter([(2.0, "person"), (1.0, "empty"), (0.5, "person")])
     ticks = {"t": 0.0}

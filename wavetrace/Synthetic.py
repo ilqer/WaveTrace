@@ -1,6 +1,6 @@
-"""Synthetic CSI + paired-label generation, used at runtime by `wavetrace.Cli`'s `--synthetic`
-mode (`Cli._sourceFromArgs` calls `generatePairedRecording` below). `fixtures/SyntheticCsi.py`
-holds the raw wire-format helpers (`encodeFrame` / `generateRawFrames`) used only by tests.
+"""Synthetic CSI and paired labels, behind `wavetrace.Cli`'s `--synthetic` mode. The raw wire-format
+helpers (`encodeFrame` / `generateRawFrames`) live in `fixtures/SyntheticCsi.py` and are used only
+by tests.
 
   - CSI side  → a CsiFrame stream (`generateStream`); frame.timestamp = the TRUE world time on the
                 CSI host clock. Validates the DSP pipeline only — it cannot fake real posture/weapon
@@ -132,16 +132,16 @@ def generatePairedRecording(
     dynamic multipath a human body adds, so present windows carry higher amplitude/phase turbulence
     (std/MAD/waveform-length) than absent ones and a presence head becomes learnable on synthetic
     data. The jitter varies per subcarrier, so it survives a GainLock's per-frame mean normalization.
-    Drawn from its own rng (seed+2) and only when std > 0, so prior seeded streams stay byte-identical
-    (default off). sessionId/subjectId are stamped into `truth` — the group ids the leave-one-
-    session/subject-out eval gate needs.
+    Drawn from its own rng (seed+2) and only when std > 0, so a seeded stream with the default off
+    is unchanged by it. sessionId/subjectId are stamped into `truth` for the leave-one-group-out
+    folds.
 
     weaponSignatureDepth: inside a weapon span each frame's per-antenna magnitude profile is
     FLATTENED toward its cross-subcarrier mean ((1-d)·|H| + d·mean|H|, phase kept) plus a slight bulk
-    attenuation (×(1-0.15d)) — the proxy for a coherent metal reflection, which lowers the
-    inter-subcarrier σ²[p] (the weapon discriminator). Deterministic (no rng draws); default off →
-    seeded streams stay byte-identical. Even more artificial than the presence turbulence (a real
-    metal signature is geometry/orientation-dependent) — plumbing only."""
+    attenuation (×(1-0.15d)): the proxy for a coherent metal reflection, which lowers the
+    inter-subcarrier σ²[p] the weapon head reads. Deterministic, so a seeded stream is unchanged
+    while it is off. A real metal signature depends on geometry and orientation, so this exercises
+    the plumbing rather than the physics."""
     numFrames = int(round(durationS * sampleRateHz))
     frames, _ = generateStream(
         numAntennas=numAntennas,

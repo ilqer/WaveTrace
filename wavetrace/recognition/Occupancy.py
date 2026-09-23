@@ -7,8 +7,8 @@ Two layers:
   * _GridKalman — constant-velocity 2D Kalman in (row, col) grid coordinates, tracking the peak cell.
     Smooths the peak indicator so it doesn't jump between frames (anti-teleport).
 
-Note: we do NOT use Localize.Tracker here — that tracks azimuth+range (AoA, parked per MINDMAP).
-This module tracks grid cell coordinates directly. O(G²) per OccupancyGrid step.
+Not Localize.Tracker: that one tracks azimuth and range, while this tracks grid cells directly.
+O(G²) per OccupancyGrid step.
 """
 
 from dataclasses import dataclass

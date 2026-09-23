@@ -1,10 +1,10 @@
-r"""Pins OccupancyGrid/_GridKalman/HeatmapTrack's behaviour and their options-object validation:
-wavetrace/recognition/__init__.py doesn't export any of the three, and grep found no caller anywhere
-in the codebase (confirmed: `grep -rn "OccupancyGrid(\|HeatmapTrack(\|_GridKalman(" --include='*.py'
-. | grep -v .venv` returns hits only inside Occupancy.py itself). This module is otherwise dead code
--- see REFACTOR_PLAN.md §5 backlog item D5 ("wire it into the heatmap serving path or delete it");
-these tests exist so that decision can be made safely, without also having to characterize
-undocumented behaviour first."""
+"""Pins OccupancyGrid/_GridKalman/HeatmapTrack behaviour and their options-object validation.
+
+None of the three is exported from wavetrace/recognition/__init__.py and nothing outside
+Occupancy.py constructs them, so the module is otherwise dead code. These tests exist so that it can
+be wired into the heatmap serving path or deleted safely, without first having to characterize
+undocumented behaviour.
+"""
 
 import numpy as np
 import pytest
@@ -17,8 +17,6 @@ from wavetrace.recognition.Occupancy import (
     _GridKalman,
 )
 
-
-# ----- OccupancyGrid --------------------------------------------------------------------------------
 
 def test_occupancy_grid_defaults_match_the_previous_constructor_literals():
     grid = OccupancyGrid()
@@ -46,8 +44,6 @@ def test_occupancy_options_rejects_invalid_ranges():
     with pytest.raises(ValueError, match="measurement_weight_floor"):
         OccupancyOptions(measurement_weight_floor=1.5)
 
-
-# ----- _GridKalman -----------------------------------------------------------------------------------
 
 def test_grid_kalman_defaults_match_the_previous_constructor_literals():
     kf = _GridKalman()
@@ -81,8 +77,6 @@ def test_grid_kalman_first_update_passes_through_then_smooths():
     assert r1 == pytest.approx(1.0, abs=0.5) and c1 == pytest.approx(2.0, abs=0.5)
 
 
-# ----- HeatmapTrack ------------------------------------------------------------------------------------
-
 def test_heatmap_track_defaults_and_update_shape():
     track = HeatmapTrack()
     measurement = np.zeros((16, 16), dtype=np.float32)
@@ -94,9 +88,9 @@ def test_heatmap_track_defaults_and_update_shape():
 
 
 def test_heatmap_track_reset_honors_its_own_kalman_options_not_defaults():
-    """Guards against a real regression risk: reset() must reconstruct `_GridKalman` from the
-    options this instance was actually built with, not from `KalmanOptions()` defaults — otherwise
-    a caller's custom tuning silently reverts to the default on every reset()."""
+    """reset() must reconstruct `_GridKalman` from the options this instance was actually built
+    with, not from `KalmanOptions()` defaults -- otherwise a caller's custom tuning silently
+    reverts to the default on every reset()."""
     custom_kalman = KalmanOptions(acceleration_std=7.0, measurement_std=0.5, gate=42.0)
     track = HeatmapTrack(occupancy=OccupancyOptions(grid=4), kalman=custom_kalman)
     assert track._kalman._qa == pytest.approx(7.0 ** 2)

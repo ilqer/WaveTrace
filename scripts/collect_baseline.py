@@ -1,11 +1,7 @@
-"""Step 1 of live bring-up: capture a quiet baseline over UDP and calibrate EVERY mesh node.
+"""Capture a quiet baseline over UDP and calibrate every mesh node.
 
-Per-RX-node models: each ESP32 self-calibrates (its own NBVI subcarriers + gain regime), because the
-boards are not interchangeable — one may run gain=LOCK (in-chip frozen gain) while another runs
-gain=SKIP (host CV normalization). One quiet capture pass feeds all nodes; each gets its own cal dir.
-
-Prereqs: mesh nodes powered + flooding on RD-WIN1, `mesh_verify.py` shows arrivals.
-Produces data/cal/node{id}/ for every detected node.
+Each node needs its own calibration because the boards are not interchangeable: one may run
+gain=LOCK (gain frozen in the chip) while another runs gain=SKIP (the host normalizes instead).
 """
 
 import argparse
@@ -19,7 +15,7 @@ from wavetrace.application.calibrate import calibrate_source
 
 
 def detectNodes(port, timeout_seconds=3.0):
-    """Briefly listen to detect the active Node IDs in the live UDP stream. Returns sorted list."""
+    """Node ids heard in one short listen, sorted."""
     print("listening for active nodes...")
     detected = collections.Counter()
     source = UdpSource(UdpSourceOptions(port=port, timeout_seconds=timeout_seconds, max_frames=150))
@@ -29,12 +25,10 @@ def detectNodes(port, timeout_seconds=3.0):
 
 
 def captureAll(n, port, node_ids, timeout_seconds=20.0, max_capture_s=60.0):
-    """Collect up to n frames PER node in ONE listening pass. Returns {node_id: [frames]} (dominant
-    subcarrier width kept per node, since widths can differ across boards/bands).
-
-    Stops when every node has n frames OR max_capture_s elapses — the wall-clock deadline is essential
-    because the per-recv timeout only fires on TOTAL silence: if one node stays quiet while others keep
-    streaming, the all-nodes-reached check never trips and the loop would otherwise run forever."""
+    """Collect up to n frames per node in one pass. Returns {node_id: [frames]}, each node reduced to
+    its dominant subcarrier width, because widths differ across boards and bands. The wall-clock
+    deadline is needed because the receive timeout only fires on total silence, so one node going
+    quiet while the others stream would otherwise leave the loop running forever."""
     frames = {nid: [] for nid in node_ids}
     source = UdpSource(UdpSourceOptions(port=port, timeout_seconds=timeout_seconds, max_frames=None))
     start = time.time()

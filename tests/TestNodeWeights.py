@@ -1,4 +1,4 @@
-"""Tests for per-node vote weighting. _logoAccuracy reads each node's LOGO balanced accuracy."""
+"""_logoAccuracy reads each node's LOGO balanced accuracy."""
 
 import json
 
@@ -20,7 +20,6 @@ def test_prefers_session_axis(tmp_path):
 
 
 def test_falls_back_to_subject(tmp_path):
-    """No session axis -> use the subject LOGO accuracy."""
     path = _write(tmp_path, {"logo": {"subject": {"accuracy": 0.7}}})
     assert _logoAccuracy(path) == pytest.approx(0.7)
 

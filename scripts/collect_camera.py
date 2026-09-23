@@ -1,18 +1,9 @@
-"""Camera-supervised collection for the WHOLE mesh — capture every ESP's CSI + the MacBook webcam
-together, run YOLO ONLINE (live) to label each frame, and build BOTH datasets from one pass:
+"""Capture every node's CSI and the webcam together, label each camera frame with YOLO as it
+arrives, and build both a per-node presence dataset and an all-node stacked heatmap dataset
+((n, N, K, W) plus the camera's occupancy mask) from the one pass.
 
-  * PRESENCE  — per-RX-node (person -> present/absent), feeds the per-node presence heads + vote.
-  * HEATMAP   — all nodes stacked as channels (n, N, K, W) + the camera's occupancy "where" mask,
-                feeds the camera-supervised HeatmapHead (occupancy grid).
-
-One camera supervises the entire test: its labels are time-aligned to every node's CSI windows.
-
-    .venv/bin/python scripts/collect_camera.py --duration 30 --train          # presence + heatmap, then train both
-    .venv/bin/python scripts/collect_camera.py --stage weapon --duration 30   # open-carry weapon + weapon "where"
-
-Training-only: the deployed detector needs no camera. HONEST SCOPE: a camera can't see a CONCEALED
-weapon (use collect_weapon.py for that) and stock COCO has no firearm class (knife=43; pass a custom
---weights for guns). Presence + occupancy heatmap is the solid, immediate win.
+The camera is for training only. It cannot see a concealed weapon (use collect_weapon.py for that),
+and stock COCO has no firearm class — knife is 43, so a custom --weights is needed for guns.
 """
 
 import argparse
@@ -41,8 +32,7 @@ from wavetrace.domain.contracts import (DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPL
 
 
 def captureCsi(duration_s, port, node_ids):
-    """Drain CSI for `duration_s`, bucketing frames by RX node (every tx link merged into its node).
-    Frames keep node_id + wall-clock timestamps so they stack/align. Returns {rx_node: [frames]}."""
+    """Returns {rx_node: [frames]} for `duration_s` of capture, every tx link merged into its rx node."""
     perNode = collections.defaultdict(list)
     sock = bindUdp(port, timeout=1.0)
     tEnd = time.monotonic() + duration_s
@@ -99,7 +89,6 @@ def main():
         options=YoloLabelerOptions(weights_path=args.weights, weapon_classes=weaponClasses),
         conf=args.conf, grid=args.grid, label_fn=labelFn)
 
-    # capture: webcam (online YOLO) runs in a thread while the main thread drains all nodes' CSI
     pos = {"n": 0, "tot": 0, "last": time.monotonic()}
     def onLabel(lab):
         pos["tot"] += 1
@@ -116,7 +105,7 @@ def main():
             with WebcamCapture(WebcamOptions(index=args.cam_index)) as cap:
                 box["labels"] = recordLabelsOnline(cap.read, labeler, args.duration,
                                                      fps=args.fps, onLabel=onLabel)
-        except Exception as e:  # camera permission / busy — report after join
+        except Exception as e:  # camera permission or busy; reported after the join
             box["error"] = e
 
     print(f"\n>> capturing {args.duration:g}s — keep the subject in camera view and the mesh zone. Press Enter...")
@@ -137,7 +126,6 @@ def main():
     print(f"labeled {nPos}/{len(labels)} frames positive "
           f"({'weapon' if args.stage=='weapon' else 'present'}).")
 
-    # resample each node once onto a uniform grid, keep node_id, reuse for both dataset builds
     res = {}
     for nid, frs in csi.items():
         rf = resampleUniform(frs, DEFAULT_TARGET_SAMPLE_RATE_HZ)
@@ -146,7 +134,6 @@ def main():
         res[nid] = rf
 
     sess = f"{args.subject}_cam_s0"
-    # 1) per-node presence/weapon datasets (class label only)
     presBuilt = []
     for nid in calNodes:
         fr = res.get(nid, [])
@@ -162,7 +149,6 @@ def main():
         presBuilt.append(nid)
         print(f"   [OK presence] node {nid} -> {ds}")
 
-    # 2) all-node stacked heatmap dataset (occupancy "where" mask)
     merged = [f for nid in calNodes for f in res.get(nid, [])]
     hmDir = f"{args.root}/cam_ds/heatmap/{sess}"
     hmDs = None
@@ -193,7 +179,6 @@ def main():
 
 
 def _trainHeatmap(dataset_dir, out_path, grid):
-    """Train the camera-supervised occupancy HeatmapHead from a stacked dataset's Label.masks."""
     from wavetrace.groundtruth import loadDataset
     from wavetrace.recognition.Heatmap import HeatmapHead
     ds = loadDataset(dataset_dir)

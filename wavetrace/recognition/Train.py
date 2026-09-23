@@ -1,8 +1,7 @@
-"""Phase 6b: Offline training driver.
+"""Offline training: load datasets, concatenate them, fit a head, write the model and its metrics.
 
-Loads datasets, concatenates, fits PresenceHead, persists model/metrics. Offline execution.
-
-Train-set accuracy is sanity check only. Headline number uses Evaluate.leaveOneGroupOut (session and subject).
+Train-set accuracy is a sanity check only. The number that counts is leaveOneGroupOut, held out
+over sessions and subjects.
 """
 
 from dataclasses import replace
@@ -15,10 +14,9 @@ import numpy as np
 from wavetrace.adapters.recognition import DEFAULT_BACKEND_BY_FEATURE_MODE
 from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
 from wavetrace.Config import ModelConfig
+from wavetrace.domain.recognition import PresenceHead, WeaponHead
 from wavetrace.groundtruth.DatasetBuilder import Dataset, loadDataset
 from wavetrace.recognition.Evaluate import leaveOneGroupOut
-from wavetrace.recognition.Model import PresenceHead
-from wavetrace.recognition.Weapon import WeaponHead
 
 
 def _carryGroups(sess):
@@ -38,7 +36,7 @@ def _logoMetrics(X, y, sess, subj, make_head) -> dict:
     axes = [("session", sess), ("subject", subj)]
     carry = _carryGroups(sess)
     if carry is not None:
-        axes.append(("carry", carry))  # weapon-only confound axis (diagnosis Item 13)
+        axes.append(("carry", carry))  # weapon only: catches a head that learned the carry pose
     for axis, groups in axes:
         if np.unique(groups).size >= 2:
             rep = leaveOneGroupOut(X, y, groups, make_head)
@@ -90,7 +88,7 @@ def trainPresence(
     meta = loaded[0].meta
 
     if config is None:
-        # window/hop come from the dataset's front-end cadence so serving (Cli.run) matches training
+        # window/hop come from the dataset, so serving frames windows exactly as training did
         config = ModelConfig(stage="presence", k=int(meta["K"]),
                              window=int(meta["window"]), hop=int(meta["hop"]),
                              frame_average=int(meta.get("frame_average", 1)),
@@ -99,9 +97,8 @@ def trainPresence(
     t0 = time.perf_counter()
     head = build_presence_head(config).fit(X, y)
     fitS = time.perf_counter() - t0
-    # the dataset's real per-frame capture width -- stays None (never the NBVI-selected k) for
-    # datasets built before `num_subcarriers` was recorded, so a reader can never mistake one
-    # quantity for the other.
+    # the raw capture width, never the NBVI-selected k; None for datasets saved before
+    # `num_subcarriers` was recorded, so the two can never be confused
     if "num_subcarriers" in meta:
         head.contract = replace(head.contract, subcarrier_width=int(meta["num_subcarriers"]))
 
@@ -166,18 +163,17 @@ def trainWeapon(
                              subtract_baseline=bool(meta.get("subtract_baseline", False)),
                              subtract_ic_baseline=bool(meta.get("subtract_ic_baseline", False)))
     else:
-        # the dataset's front-end cadence dictates serving; enforce it so Cli.run matches training
+        # the dataset's cadence dictates serving, so enforce it here
         config = replace(config, window=int(meta["window"]), hop=int(meta["hop"]),
                          frame_average=int(meta.get("frame_average", 1)),
                          subtract_baseline=bool(meta.get("subtract_baseline", False)),
                          subtract_ic_baseline=bool(meta.get("subtract_ic_baseline", False)))
 
     head = build_weapon_head(config)
-    head.feature_mode = feature_mode  # self-describing: Cli.run reads it to assemble x at serve time
+    head.feature_mode = feature_mode  # serving reads this to assemble the input row
     t0 = time.perf_counter()
-    head.fit(X, y, report=report)  # report fires per epoch on the cnn backend (live UI curves); ignored otherwise
+    head.fit(X, y, report=report)  # report fires per epoch on the cnn backend, ignored elsewhere
     fitS = time.perf_counter() - t0
-    # see trainPresence: sets the real capture width when known, else leaves it None.
     if "num_subcarriers" in meta:
         head.contract = replace(head.contract, subcarrier_width=int(meta["num_subcarriers"]))
 

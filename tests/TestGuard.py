@@ -1,5 +1,3 @@
-"""AlertGuard debounce, cooldown, and DriftMonitor advisory tests."""
-
 import json
 
 import numpy as np
@@ -14,10 +12,7 @@ from wavetrace.output.Guard import (
 )
 
 
-# ---- AlertGuard ------------------------------------------------------------------
-
 def test_alert_guard_fires_after_n_on():
-    """Alert fires exactly at n_on consecutive positives; no event before."""
     guard = AlertGuard(n_on=3, n_off=5, cooldown_s=0.0, positive_class=1)
     assert guard.update(0.0, 1) is None   # count=1
     assert guard.update(0.1, 1) is None   # count=2
@@ -29,13 +24,12 @@ def test_alert_guard_fires_after_n_on():
     # A negative resets the counter
     guard2 = AlertGuard(n_on=3, n_off=5, cooldown_s=0.0)
     guard2.update(0.0, 1)
-    guard2.update(0.1, 0)  # reset
+    guard2.update(0.1, 0)
     guard2.update(0.2, 1)
     assert guard2.update(0.3, 1) is None  # only 2 consecutive, not 3
 
 
 def test_alert_guard_clear_after_n_off():
-    """Clear fires after n_off consecutive negatives following an alert."""
     guard = AlertGuard(n_on=2, n_off=3, cooldown_s=0.0)
     guard.update(0.0, 1)
     guard.update(0.1, 1)  # alert fires
@@ -53,10 +47,8 @@ def test_alert_guard_clear_after_n_off():
 
 
 def test_alert_guard_cooldown_suppresses_second_alert():
-    """Cooldown prevents a second alert within cooldown_s of the first."""
     guard = AlertGuard(n_on=2, n_off=3, cooldown_s=10.0, positive_class=1)
 
-    # First alert at t=1.0
     guard.update(0.9, 1)
     ev1 = guard.update(1.0, 1)  # pos_count=2 → alert, _last_alert_t=1.0
     assert ev1 is not None and ev1.event == "weapon_alert"
@@ -76,10 +68,7 @@ def test_alert_guard_cooldown_suppresses_second_alert():
     assert ev2 is not None and ev2.event == "weapon_alert"
 
 
-# ---- DriftMonitor ----------------------------------------------------------------
-
 def test_drift_monitor_advisory():
-    """No advisory before min_frames; advisory fires once drift >= threshold."""
     baseline = np.ones(16, dtype=np.float32)
     # alpha=1.0 makes EMA = most-recent frame (instant convergence)
     mon = DriftMonitor(baseline, alpha=1.0, drift_thresh=0.4, min_frames=3, cooldown_s=0.0)
@@ -105,14 +94,8 @@ def test_drift_monitor_advisory():
     assert ev3 is None
 
 
-# ---- wire format (JSONL byte-pinning) ---------------------------------------------
-
 def test_guard_events_serialize_to_pinned_jsonl_bytes():
-    """to_dict() -> json.dumps() must reproduce exactly what the pre-DTO dict literals emitted:
-    {"event": "weapon_alert", "t": t}, {"event": "clear", "t": t},
-    {"event": "recalibrate_advisory", "t": t, "drift": drift}, in that key order. A JSONL consumer
-    (the dashboard) reads these bytes; this pins them so the DTO conversion cannot silently change
-    the wire format."""
+    """A JSONL consumer (the dashboard) reads these bytes: key names and order are pinned."""
     assert json.dumps(WeaponAlertEvent(t=1.5).to_dict()) == '{"event": "weapon_alert", "t": 1.5}'
     assert json.dumps(AlertClearedEvent(t=2.25).to_dict()) == '{"event": "clear", "t": 2.25}'
     assert (json.dumps(RecalibrationAdvisoryEvent(t=3.0, drift=0.75).to_dict())

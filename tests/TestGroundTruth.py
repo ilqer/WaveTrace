@@ -1,6 +1,3 @@
-"""Ground-truth pipeline tests (CameraLabeler, Align, DatasetBuilder).
-Validates alignment plumbing and sync-error measurement."""
-
 import json
 
 import numpy as np
@@ -42,8 +39,6 @@ def _calibrate():
     result = cal.finalize()
     return result, cal.gainLock
 
-
-# CameraLabeler tests.
 
 def test_replay_labeler_roundtrips_presence():
     obs = [
@@ -94,8 +89,6 @@ def test_thermal_labeler_is_a_seam():
         ThermalLabeler().label({"raw": {}}, 0.0)
 
 
-# Align (sync-error measurement).
-
 def _window_timestamps(frames, window=32, hop=16):
     """CSI window-END timestamps."""
     return [frames[i].timestamp for i in range(window - 1, len(frames), hop)]
@@ -115,9 +108,9 @@ def test_align_bounds_sync_error_and_pairs_correct():
 
     assert res.stats["dropped"] == 0
     assert abs(res.stats["mean_dt"]) < 0.01
-    # Sync error bounded.
+    # Worst case: half a camera frame plus five sigma of timestamp jitter.
     assert res.stats["max_abs_dt"] < (0.5 / camFps + 5 * 0.002)
-    # Interior windows labeled correctly.
+    # Only windows well inside or well outside the span carry a certain label.
     for wi, lab in res.matched:
         wt = winTs[wi]
         if 1.2 <= wt <= 1.8:
@@ -132,19 +125,18 @@ def test_align_drops_windows_with_no_label_in_tolerance():
         numAntennas=NUM_ANT, numSubcarriers=NUM_SUB, sampleRateHz=FS, durationS=3.0,
         cameraFps=30.0, clockOffsetS=0.0, jitterStdS=0.0, seed=2,
     )
-    obs = [o for o in obs if not (1.0 <= o["true_t"] < 2.0)]  # 1s gap.
+    obs = [o for o in obs if not (1.0 <= o["true_t"] < 2.0)]
     labels = ReplayLabeler(presenceLabelFn).labelStream(obs)
     winTs = _window_timestamps(frames)
     res = align(winTs, labels, tolerance=0.05)
     assert res.stats["dropped"] > 0
     assert res.stats["matched"] > 0
-    assert all(abs(dt) <= 0.05 for dt in res.dts)            # Survivors within tolerance.
+    assert all(abs(dt) <= 0.05 for dt in res.dts)
     droppedTs = [winTs[i] for i in res.dropped]
     assert all(1.0 - 0.05 <= t <= 2.0 + 0.05 for t in droppedTs)  # Gap windows dropped.
 
 
 def test_estimate_clock_offset_recovers_injection():
-    # Constant offset recovered by cross-correlation.
     offset = 0.05
     frames, obs, _ = generatePairedRecording(
         numAntennas=NUM_ANT, numSubcarriers=NUM_SUB, sampleRateHz=FS, durationS=3.0,
@@ -153,7 +145,6 @@ def test_estimate_clock_offset_recovers_injection():
     )
     labels = ReplayLabeler(presenceLabelFn).labelStream(obs)
     winTs = _window_timestamps(frames)
-    # Fine truth grid.
     truthT = np.arange(0.0, 3.0, 1.0 / FS)
     truthC = [1 if 1.0 <= t < 2.0 else 0 for t in truthT]
 
@@ -164,8 +155,6 @@ def test_estimate_clock_offset_recovers_injection():
     assert est == pytest.approx(offset, abs=0.02)
     assert agree > 0.95
 
-
-# DatasetBuilder tests.
 
 def test_dataset_builder_camera_shapes_and_roundtrip(tmp_path):
     result, gain = _calibrate()
@@ -186,7 +175,7 @@ def test_dataset_builder_camera_shapes_and_roundtrip(tmp_path):
     assert ds.X_image.shape == (n, KImg, 32)
     assert ds.t.shape == (n,)
     assert ds.meta["K"] == K and ds.meta["fs"] == pytest.approx(FS, rel=0.05)
-    # Stored sync error is small.
+    # Half a camera frame is the floor on sync error.
     assert ds.meta["sync_error"]["max_abs_dt"] < 0.5 / 30.0 + 0.01
 
     out = saveDataset(ds, tmp_path / "ds")
@@ -200,7 +189,6 @@ def test_dataset_builder_camera_shapes_and_roundtrip(tmp_path):
 
 
 def test_dataset_roundtrips_heatmap_mask(tmp_path):
-    # Camera mask must survive save/load.
     grid = 4
     labels = []
     for i in range(3):
@@ -248,8 +236,8 @@ def test_dataset_builder_scripted_callable_no_drop():
     scripted = ScriptedLabeler([(1.0, 2.0, True)], label_fn=weaponLabelFn)
     ds = buildDataset(frames, result, gain, scripted, window=32, hop=16)
 
-    assert ds.meta["n_dropped"] == 0                     # Nothing dropped.
-    assert set(ds.y.tolist()) == {0, 1}                  # Both classes present.
+    assert ds.meta["n_dropped"] == 0
+    assert set(ds.y.tolist()) == {0, 1}
     for cls, t in zip(ds.y.tolist(), ds.t.tolist()):
         if 1.1 <= t <= 1.9:
             assert cls == 1

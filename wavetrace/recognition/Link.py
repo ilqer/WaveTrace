@@ -1,14 +1,12 @@
-"""T6/P10 — decision-level per-link fusion via weighted probability blending.
+"""Blend one verdict per link into one verdict, weighting each link by prior and live quality.
 
-`LinkVoter`: blend per-link class probabilities with static-prior × live-quality weights.
-Operator importance knob + blockage-recovery mechanism (a blocked link's live quality collapses →
-weight shifts to links still seeing the target, plan §2.9.3) + the only level where the 2.4 GHz
-mesh and 5 GHz Pi link can combine (different feature spaces).
+This is where a blocked link recovers: its live quality collapses, so weight shifts to the links
+still seeing the target. It is also the only level at which the 2.4 GHz mesh and the 5 GHz Pi link
+can combine, since their feature spaces never share a tensor.
 
-Usage: one trained head per link → per-window `add` per link → `finalize`.
-`quality` is caller-supplied (e.g. max(proba) margin or window motion energy).
-Static priors from `accuracyWeights` of per-link LOGO results, or operator-set.
-NOT wired into Cli — lands with multi-node serving in Phase 0+.
+One trained head per link, then `add` per link per window, then `finalize`. `quality` comes from
+the caller (a max-probability margin, window motion energy). Static priors come from
+`accuracyWeights` over per-link LOGO results, or from the operator.
 """
 
 from dataclasses import dataclass
@@ -33,12 +31,11 @@ class LinkFusionReport:
 
 
 def evaluateLinkFusion(links, y, *, qualities=None) -> LinkFusionReport:
-    """Measure decision-level band fusion offline — the ONLY level the 2.4 GHz mesh and the 5 GHz Pi
-    combine (different feature spaces never share a tensor, plan §2.9.3). Blend each link's per-window
-    class probabilities with accuracy-derived static priors and report fused vs best-single accuracy.
+    """Measure band fusion offline: blend each link's per-window class probabilities with
+    accuracy-derived static priors, and report fused accuracy against the best single link.
 
-    links: dict[node_id -> (proba, balanced_acc)] — proba is (n, C) from that link's OWN head, and
-    balanced_acc is its LOGO balanced accuracy (→ static prior via accuracyWeights; chance→0).
+    links: dict[node_id -> (proba, balanced_acc)]. proba is (n, C) from that link's own head, and
+    balanced_acc is its LOGO balanced accuracy, turned into a static prior by accuracyWeights.
     qualities: optional dict[node_id -> (n,) live quality], e.g. per-window max-proba margin.
 
     O(n·L·C). If every link is at/below chance (all weights 0) it falls back to a uniform blend so

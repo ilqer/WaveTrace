@@ -1,6 +1,3 @@
-"""T1/T2/T3 tests (P10): validSubcarriers, image_subcarriers calibration, iterWindows extensions,
-frame_average decimating mean, and image-path baseline subtraction."""
-
 import io
 import json
 import tempfile
@@ -13,7 +10,7 @@ from wavetrace.Synthetic import generateStream
 from wavetrace.Synthetic import generatePairedRecording
 from wavetrace import valid_subcarriers, select_subcarriers_nbvi
 from wavetrace.Calibration import (
-    Calibration, CalibrationResult, imageBaseline, loadCalibration, saveCalibration,
+    Calibration, CalibrationResult, build_image_baseline, loadCalibration, saveCalibration,
 )
 from wavetrace.Config import ModelConfig
 from wavetrace.Frontend import iterWindows
@@ -47,14 +44,12 @@ def _recording(duration=4.0, seed=200):
     return frames
 
 
-# ---- T1h: validSubcarriers C++ binding -----------------------------------------------------------
-
 def test_valid_subcarriers_basic():
     """Gate keeps subcarriers with mean >= gate; result is ascending."""
     rng = np.random.default_rng(0)
     # 4 bad subcarriers out of 32: gi = floor(0.15*32) = 4, so gate = sorted[4] = first normal value
     amp = rng.uniform(0.5, 1.5, size=(50, NUM_SUB)).astype(np.float32)
-    amp[:, [0, 5, 10, 20]] = 0.001  # 4 bad (< 15th percentile threshold)
+    amp[:, [0, 5, 10, 20]] = 0.001
     result = valid_subcarriers(amp)
     assert isinstance(result, list)
     assert 0 not in result and 5 not in result
@@ -62,7 +57,6 @@ def test_valid_subcarriers_basic():
 
 
 def test_valid_subcarriers_edge_cases():
-    """Empty arrays return empty; zero frames return empty."""
     assert valid_subcarriers(np.empty((0, 8), dtype=np.float32)) == []
     assert valid_subcarriers(np.empty((10, 0), dtype=np.float32)) == []
 
@@ -77,8 +71,6 @@ def test_valid_subcarriers_nbvi_subset():
     assert nbvi.issubset(valid), f"NBVI {nbvi} is not a subset of valid {valid}"
 
 
-# ---- T1h: CalibrationResult.image_subcarriers ---------------------------------------------------
-
 def test_calibration_image_subcarriers_populated(tmp_path):
     """finalize() populates image_subcarriers; it should be >= len(subcarriers) (less aggressive)."""
     result, _ = _calibrate()
@@ -88,7 +80,6 @@ def test_calibration_image_subcarriers_populated(tmp_path):
 
 
 def test_calibration_image_subcarriers_roundtrip(tmp_path):
-    """save/load round-trips image_subcarriers correctly."""
     result, _ = _calibrate()
     saveCalibration(result, tmp_path / "cal")
     result2, _ = loadCalibration(tmp_path / "cal")
@@ -108,10 +99,7 @@ def test_calibration_old_meta_fallback(tmp_path):
     assert result2.image_subcarriers == result2.subcarriers
 
 
-# ---- T1h: iterWindows with image_subcarriers ---------------------------------------------------
-
 def test_iter_windows_none_image_subcarriers_byte_identical():
-    """image_subcarriers=None (default) is byte-identical to pre-T1 behavior."""
     frames = _recording(duration=3.0)
     result, _ = _calibrate()
     subc = result.subcarriers
@@ -170,8 +158,6 @@ def test_iter_windows_parity_image_in_dataset(tmp_path):
     assert np.allclose(np.stack(servedImgs), ds.X_image)
 
 
-# ---- T1h: WeaponHead CNN with KImg != config.k -------------------------------------------------
-
 def test_weapon_cnn_kimg_ne_k(tmp_path):
     """CNN trained on (n, KImg, window) with KImg != config.k fits, predicts, round-trips."""
     torch = pytest.importorskip("torch")
@@ -192,10 +178,7 @@ def test_weapon_cnn_kimg_ne_k(tmp_path):
     assert np.allclose(head2.predict_proba(X), proba, atol=1e-5)
 
 
-# ---- T2c: frame_average (temporal decimating mean) -----------------------------------------------
-
 def test_frame_average_1_byte_identical():
-    """frame_average=1 is byte-identical to the default (no frame_average kwarg)."""
     frames = _recording(duration=3.0)
     result, _ = _calibrate()
     subc = result.subcarriers
@@ -242,7 +225,6 @@ def test_frame_average_m4_values():
                                frame_average=M, image_subcarriers=imgSubc))
     assert len(served) > 0
 
-    # Manual: compute locked mags for the first M frames and average them
     from wavetrace import GainLock
     firstGroupMags = []
     for fr in frames[:M]:
@@ -257,7 +239,7 @@ def test_frame_average_m4_values():
     # Image row j = gain-locked mean of imgSubc[j] over the M frames
     assert img.shape[0] == len(imgSubc)
     for j, si in enumerate(imgSubc):
-        # Row index relationship only; parity vs. dataset is checked separately below.
+        # Row indices only; parity against the dataset is checked separately.
         pass
 
 
@@ -269,13 +251,11 @@ def test_frame_average_tail_drop():
     M, W, H = 3, 16, 8  # M=3 so most frame counts leave a tail
 
     served = list(iterWindows(frames, subc, None, window=W, hop=H, frame_average=M))
-    # No crash, and virtual frame count <= F // M.
     F = len(frames)
     assert len(served) <= F // M
 
 
 def test_frame_average_meta_roundtrip(tmp_path):
-    """frame_average is stored in dataset meta and round-trips through ModelConfig."""
     frames = _recording(duration=4.0)
     result, gainLock = _calibrate()
     ds = buildDataset(frames, result, gainLock,
@@ -285,7 +265,7 @@ def test_frame_average_meta_roundtrip(tmp_path):
     # ModelConfig(**old_blob) must work with frame_average absent (defaults to 1)
     cfg = ModelConfig(stage="presence", k=6, frame_average=2)
     assert cfg.frame_average == 2
-    cfg2 = ModelConfig(stage="presence", k=6)  # absent -> default 1
+    cfg2 = ModelConfig(stage="presence", k=6)
     assert cfg2.frame_average == 1
 
 
@@ -312,10 +292,7 @@ def test_frame_average_parity(tmp_path):
     assert np.allclose(np.stack(servedImgs), ds.X_image)
 
 
-# ---- T3d: subtract_baseline (image path only) ---------------------------------------------------
-
 def test_subtract_baseline_off_byte_identical():
-    """subtract_baseline=False (default) leaves output byte-identical."""
     frames = _recording(duration=3.0)
     result, _ = _calibrate()
     subc = result.subcarriers
@@ -336,7 +313,7 @@ def test_subtract_baseline_unlocked_near_zero():
     subc = result.subcarriers
     imgSubc = result.image_subcarriers
 
-    base = imageBaseline(result, locked=False)
+    base = build_image_baseline(result, locked=False)
     imgs = [img.copy() for _, _, img, _ in iterWindows(
         frames[:200], subc, None, window=32, hop=16,
         image_subcarriers=imgSubc, imageBaseline=base)]
@@ -353,7 +330,7 @@ def test_subtract_baseline_locked_near_zero():
     subc = result.subcarriers
     imgSubc = result.image_subcarriers
 
-    base = imageBaseline(result, locked=True)
+    base = build_image_baseline(result, locked=True)
     imgs = [img.copy() for _, _, img, _ in iterWindows(
         frames[:200], subc, gainLock, window=32, hop=16,
         image_subcarriers=imgSubc, imageBaseline=base)]
@@ -370,7 +347,7 @@ def test_subtract_baseline_features_ic_unchanged():
     subc = result.subcarriers
     imgSubc = result.image_subcarriers
     # gainLock=None: avoids frame mutation between the two sequential passes.
-    base = imageBaseline(result, locked=False)
+    base = build_image_baseline(result, locked=False)
 
     nobase = list(iterWindows(frames, subc, None, window=32, hop=16,
                                intercarrier=True, image_subcarriers=imgSubc))
@@ -386,7 +363,6 @@ def test_subtract_baseline_features_ic_unchanged():
 
 
 def test_subtract_baseline_meta_roundtrip(tmp_path):
-    """subtract_baseline is stored in dataset meta and ModelConfig defaults to False."""
     frames = _recording(duration=3.0)
     result, gainLock = _calibrate()
     ds = buildDataset(frames, result, gainLock,
@@ -395,7 +371,7 @@ def test_subtract_baseline_meta_roundtrip(tmp_path):
     assert ds.meta["subtract_baseline"] is True
 
     cfg = ModelConfig(stage="presence", k=6)
-    assert cfg.subtract_baseline is False  # default
+    assert cfg.subtract_baseline is False
     cfg2 = ModelConfig(stage="presence", k=6, subtract_baseline=True)
     assert cfg2.subtract_baseline is True
 
@@ -407,7 +383,7 @@ def test_subtract_baseline_parity(tmp_path):
     subc = result.subcarriers
     imgSubc = result.image_subcarriers
     # gainLock=None: avoids frame mutation (apply() modifies frames in-place) between passes.
-    base = imageBaseline(result, locked=False)
+    base = build_image_baseline(result, locked=False)
 
     ds = buildDataset(frames, result, None,
                        ScriptedLabeler([(0.0, 4.0, True)]), window=32, hop=16,

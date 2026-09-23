@@ -1,15 +1,8 @@
-"""Phase 8 — real-time result publisher.
+"""Where a verdict goes: one RecognitionResult per inference, serialized and sent.
 
-The deployment path emits one RecognitionResult per inference (window verdict, or a per-segment
-vote). `Publisher` is the backend-agnostic sink; `JsonlPublisher` is the zero-dependency default —
-one JSON line per result to stdout or a file, always testable with no broker/server.
-
-Concrete network backends are SEAMS (built when a real consumer exists, behind optional deps):
-  * MqttPublisher  — paho-mqtt; publish each line to a broker topic (pip install wavetrace[mqtt]).
-  * WsPublisher    — websockets; push each line to connected clients (pip install wavetrace[ws]).
-Both would subclass Publisher and reuse `resultToDict` — only the transport differs.
-
-O(1) serialize + publish per result (plan §2.6).
+`Publisher` is the transport-agnostic sink. `JsonlPublisher` is the default: one JSON line per
+result to stdout or a file, with no broker or server to run. A network transport subclasses
+Publisher and reuses `resultToDict`. O(1) per result.
 """
 
 from abc import ABC, abstractmethod
@@ -41,7 +34,7 @@ class Publisher(ABC):
     subclasses without an override do not crash (non-breaking for existing subclasses)."""
 
     def __init__(self, *, mode: str = ""):
-        self.mode = mode  # stamped on every message so a consumer knows presence vs weapon
+        self.mode = mode  # stamped on every message so a consumer knows presence from weapon
 
     @abstractmethod
     def publish(self, result) -> None:
@@ -76,7 +69,7 @@ class JsonlPublisher(Publisher):
 
     def publish(self, result) -> None:
         self._fh.write(json.dumps(resultToDict(result, mode=self.mode)) + "\n")
-        self._fh.flush()  # real-time: a downstream tail should see verdicts as they happen
+        self._fh.flush()  # a downstream tail should see each verdict as it happens
 
     def publishEvent(self, event: GuardEvent) -> None:
         self._fh.write(json.dumps(event.to_dict()) + "\n")

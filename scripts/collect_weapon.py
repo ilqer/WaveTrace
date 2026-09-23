@@ -1,20 +1,10 @@
-"""Independent WEAPON pipeline — capture labeled no-weapon/weapon sessions over UDP and train a
-per-node Stage-E weapon model. Standalone from the presence/count scripts: imports only library code
-(wavetrace.*), writes to its own data/model_weapon root, and reuses the shared calibration (data/cal).
+"""Capture labeled no-weapon/weapon sessions over UDP and train a weapon model per node.
 
-Stage-E uses the INTER-CARRIER feature block (stage="weapon" -> intercarrier dataset, trainWeapon
-feature_mode="ic27"), NOT the amplitude features the presence head uses — the concealed-object signal
-lives in inter-subcarrier structure, not in "is a body moving". Per-(tx->rx)-LINK, resampled to the
-shared pipeline rate and pooled into each node's single head (same parity as the presence/count paths).
-
-CUMULATIVE: every run appends its datasets under data/weapon_ds/ and RETRAINS each node on the whole
-pool, so you build subject/position diversity over many runs. Run once per subject AND carry position:
-
-    .venv/bin/python scripts/collect_weapon.py --subject p1 --carry waist --sessions 3
-    .venv/bin/python scripts/collect_weapon.py --subject p2 --carry chest --sessions 3   # adds to the pool
-
-WEAPON detection is hard and data-hungry: vary SUBJECTS, CARRY POSITIONS and OBJECTS, and judge it by
-LOGO (held-out session/subject), never train accuracy. Static-first: the subject stands STILL.
+The head uses the inter-carrier feature block (stage="weapon", feature_mode="ic27") rather than the
+amplitude features presence uses: a concealed object shows up in inter-subcarrier structure, not in
+body motion, and the subject stands still throughout. Every run appends its datasets to the
+cumulative pool at <root>/weapon_ds and retrains each node on the whole pool, so subject and
+carry-position diversity builds up over many runs.
 """
 
 import argparse
@@ -29,15 +19,13 @@ from wavetrace.Source import RecordingSource, saveRecording, parseBatchLinks, re
 from wavetrace.application.collect import collect_source
 from wavetrace.recognition import trainWeapon
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
-# Cumulative dataset pool lives at <root>/weapon_ds (one subdir tree per run), globbed at train time.
 
 
 def captureLinks(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
-    """Collect up to n frames PER (tx->rx) LINK in ONE pass. Returns {(tx_short, rx_node): [frames]}.
-
-    Per-link so training matches per-link serving (run_weapon). Keeps the dominant subcarrier width per
-    link. Stops when every expected RX node has appeared AND all known links reach n, OR max_capture_s
-    elapses (the recv timeout fires only on TOTAL silence, so the deadline is what stops a quiet link)."""
+    """Collect up to n frames per (tx->rx) link in one pass. Returns {(tx_short, rx_node): [frames]},
+    each link reduced to its dominant subcarrier width. Splitting per link keeps every directed link a
+    single clean stream, which is how run_weapon serves it. The wall-clock deadline is needed because
+    the receive timeout only fires on total silence, so one quiet link would stall the loop."""
     print(f"\n>> {prompt}\n   press Enter to start...", flush=True)
     input()
     if countdown:
@@ -86,8 +74,8 @@ def captureLinks(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
 
 
 def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_subtract=False):
-    """Window every link of node `nid` from one captured condition and persist a labeled dataset per
-    link (class 1 if `weapon` else 0). Returns the list of dataset dirs written."""
+    """Writes one labeled dataset per link of node `nid` (class 1 if `weapon` else 0) and returns
+    their directories."""
     out = []
     for key in sorted(k for k in cap if k[1] == nid):
         fr = resampleUniform(cap.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
@@ -98,7 +86,8 @@ def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_su
         rec = f"{root}/weapon_rec/{sess_id}/{cond}/node{nid}/link_{tag}"
         ds = f"{root}/weapon_ds/node{nid}/{sess_id}_{cond}_link{tag}"
         saveRecording(fr, rec)
-        # spans=[span] -> class 1 over the segment, spans=[] -> class 0; bg_subtract nulls σ²[p]'s quiet-room channel (Item 10/CAUSE 2B)
+        # a span marks class 1 over the segment and no span marks class 0; bg_subtract takes the
+        # quiet-room level out of σ²[p]
         collect_source(RecordingSource(rec), f"{cal_root}/node{nid}", ds,
                        [span] if weapon else [],
                        stage="weapon", session_id=sess_id, subject_id=subject,
@@ -108,15 +97,14 @@ def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_su
 
 
 def _linkTag(ds_dir):
-    """TX link tag from a weapon_ds dir name `<sess>_<cond>_link<tag>` (':'-free tx mac-short)."""
+    """Tx tag of a weapon_ds dir named `<sess>_<cond>_link<tag>`; the tag is a tx mac-short with no ':'."""
     base = os.path.basename(ds_dir)
     return base.split("_link")[-1] if "_link" in base else None
 
 
 def _trainAndReport(ds_dirs, out_dir, label):
-    """Train one weapon head (ic27) on `ds_dirs` -> `out_dir`, print its LOGO line, return True on
-    success. Shared by the per-node and per-link paths so both report identically. `label` names the
-    unit in the log (e.g. 'Node 2' or 'Node 2 link4f9c')."""
+    """Trains one weapon head on `ds_dirs`, prints its LOGO line under `label`, and returns whether
+    it trained."""
     if not ds_dirs:
         print(f"   [SKIP] {label}: no datasets in pool.")
         return False
@@ -132,7 +120,7 @@ def _trainAndReport(ds_dirs, out_dir, label):
     if sess:
         line += (f"  LOGO={sess['accuracy']:.3f} (majority {sess['majority_accuracy']:.3f}, "
                  f"TPR {sess.get('tpr', 0):.3f}, FP {sess.get('fp_rate', 0):.3f})")
-    carry = logo.get("carry")  # confound axis: generalization across carry pose (diagnosis 5E)
+    carry = logo.get("carry")  # does it generalize across carry pose, or ride that confound
     if carry:
         line += f"  carry-LOGO={carry['accuracy']:.3f} (maj {carry['majority_accuracy']:.3f})"
     print(line)
@@ -149,11 +137,11 @@ def main():
     parser.add_argument("--carry", default="na", help="Carry position label, e.g. waist/chest/ankle (default: na)")
     parser.add_argument("--bg-subtract", action=argparse.BooleanOptionalAction, dest="bg_subtract",
                         default=True,
-                        help="Subtract the quiet-room baseline from σ²[p] (Item 10/CAUSE 2B); serving mirrors it. "
+                        help="Subtract the quiet-room baseline from σ²[p]; serving mirrors it. "
                              "Default ON (matches the web frontend); pass --no-bg-subtract to disable.")
     parser.add_argument("--per-link", action="store_true", dest="per_link",
                         help="Train ONE head per (tx->rx) DIRECTION -> model_weapon/node<id>/link<tag>/ "
-                             "instead of pooling a node's directions into one head (WEAPON_NLOS_PLAN §4). "
+                             "instead of pooling a node's directions into one head. "
                              "The signal is per-direction; pooling sign-flips the good NLOS link. "
                              "Bad directions are NOT dropped — run_weapon's LinkVoter zeroes a "
                              "sub-chance link via its own LOGO weight (accuracyWeights).")
@@ -203,7 +191,6 @@ def main():
             if _trainAndReport(dsDirs, f"{args.model}/node{nid}", f"Node {nid}"):
                 trained.append(nid)
             continue
-        # per-link: group this node's datasets by tx tag, one head per (tx->rx) direction
         byTag = collections.defaultdict(list)
         for d in dsDirs:
             tag = _linkTag(d)

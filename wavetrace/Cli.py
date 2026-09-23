@@ -1,11 +1,8 @@
 """The command-line entry point: argparse modes wired to the `wavetrace.application` use-cases.
 
-Six modes: capture / calibrate / collect-data / train / localize / run. `run` is the real-time path
-(front-end -> head -> publish) and reuses `Frontend.iterWindows` so the served features match
-training exactly.
-
-CSI source today = synthetic (wavetrace.Synthetic) or a saved recording. All non-`run` modes are
-offline.
+Six modes: capture / calibrate / collect-data / train / localize / run. `run` is the real-time
+path (front-end -> head -> publish) and reuses `Frontend.iterWindows`, so the features it serves
+are the features the model trained on. Every other mode is offline.
 """
 
 import argparse
@@ -28,7 +25,6 @@ collectSource = collect_source
 runInference = run_inference
 
 
-# ----- argparse layer -----------------------------------------------------------------------------
 
 def _sourceFromArgs(args):
     """Alias of `wavetrace.Source.buildCsiSource`. `tests/TestRegression.py` imports it by this

@@ -1,5 +1,5 @@
-"""Device hardware control: serial discovery, ESP monitor, flashing, Pi SSH capture.
-Streams line-by-line to /ws/device queue with a source tag. Backend limits to one long-running device op per serial port (flashing stops active monitors)."""
+"""Streams device output line by line to the /ws/device queue, tagged with its source.
+One long-running operation per serial port: flashing stops an active monitor on that port."""
 
 import asyncio
 import json
@@ -12,13 +12,12 @@ import time
 import serial
 import serial.tools.list_ports as list_ports
 
-# IDF must be sourced for idf.py to exist; override via env for non-default installs.
+# idf.py only exists once export.sh has been sourced.
 IDF_EXPORT = os.path.expanduser(os.environ.get("IDF_EXPORT", "~/esp/esp-idf/export.sh"))
 FIRMWARE_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "firmware"))
 
 
 def listSerialPorts() -> list[dict]:
-    """Returns serial devices, prioritizing USB ESPs."""
     ports = []
     for p in list_ports.comports():
         dev = p.device
@@ -34,8 +33,6 @@ def listSerialPorts() -> list[dict]:
 
 
 class DeviceHub:
-    """Hub for serial port. Publishes lines to queue from worker threads."""
-
     def __init__(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
         self.loop = loop
         self.queue = queue
@@ -55,7 +52,6 @@ class DeviceHub:
         # called from worker threads → hop back onto the event loop
         asyncio.run_coroutine_threadsafe(self.queue.put(payload), self.loop)
 
-    # ---- serial monitor -------------------------------------------------------------
     def startMonitor(self, port: str, baud: int = 115200) -> dict:
         if port in self._monitors:
             return {"status": "monitoring", "port": port, "baud": baud}
@@ -101,7 +97,6 @@ class DeviceHub:
         return {"status": "stopped", "port": port}
 
     def sendInput(self, proc_id: str, data: str) -> dict:
-        """Sends input to process stdin."""
         if proc_id in self._procs:
             proc = self._procs[proc_id]
             if proc.stdin:
@@ -113,9 +108,7 @@ class DeviceHub:
                     return {"status": "error", "error": str(e)}
         return {"status": "not_found"}
 
-    # ---- subprocess streaming (flash + ssh) -----------------------------------------
     def _stream(self, source: str, proc_id: str, argv: list[str], cwd: str | None = None) -> int:
-        """Runs argv, pumping stdout/stderr to device socket; returns exit code."""
         try:
             proc = subprocess.Popen(
                 argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -133,7 +126,6 @@ class DeviceHub:
         return code
 
     def flash(self, role: str, node_id: int | None, port: str, clean: bool = False) -> None:
-        """Flashes board via firmware/flash.sh with NO_MONITOR."""
         if port in self._monitors:
             self._publish("flash", f"stopping monitor on {port} first", level="system")
             self.stopMonitor(port)
@@ -141,7 +133,7 @@ class DeviceHub:
             self._publish("flash", f"IDF export.sh not found at {IDF_EXPORT}; "
                           f"set IDF_EXPORT env var", level="error")
             return
-        # build the flash.sh invocation per role (tx takes no NODE_ID)
+        # flash.sh takes no NODE_ID for the tx role
         if role == "tx":
             fcmd = f"./flash.sh tx {shlex.quote(port)}"
         else:
@@ -149,7 +141,8 @@ class DeviceHub:
                 self._publish("flash", "node/rx flash needs a NODE_ID", level="error")
                 return
             fcmd = f"./flash.sh {role} {int(node_id)} {shlex.quote(port)}"
-        # NO_MONITOR skips the blocking monitor step; CLEAN=1 wipes sdkconfig+build for a full rebuild.
+        # flash.sh reads both: NO_MONITOR skips its blocking monitor step, CLEAN=1 wipes
+        # sdkconfig and build for a full rebuild.
         cleanEnv = "CLEAN=1 " if clean else ""
         inner = f"source {shlex.quote(IDF_EXPORT)} && {cleanEnv}NO_MONITOR=1 {fcmd}"
         if clean:
@@ -158,7 +151,6 @@ class DeviceHub:
         self._stream("flash", "flash", ["bash", "-lc", inner], cwd=FIRMWARE_DIR)
 
     def runPi(self, host: str, command: str) -> None:
-        """Runs SSH command on Pi and streams output."""
         if not host:
             self._publish("pi", "no Pi host configured", level="error")
             return
@@ -167,7 +159,6 @@ class DeviceHub:
         self._stream("pi", "pi", ["ssh", "-tt", host, command])
 
     def runScript(self, script_name: str, args: str = "") -> None:
-        """Runs local python script from root dir and streams output."""
         if not script_name.endswith(".py"):
             self._publish("script", "Invalid script name", level="error")
             return

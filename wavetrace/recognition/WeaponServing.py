@@ -40,13 +40,13 @@ def dwellProbaDetailed(frames, sample_rate_hz, entry):
     entry — the dict from `loadWeaponLinks` or a mesh node dict; both carry
     result/lock/cfg/intercarrier/pick/session and an optional ic_baseline.
 
-    Resamples to sample_rate_hz, windows the dwell, and returns the TEMPORAL VOTE — the mean
-    class-proba over every window in the buffer (BUFFER_S of history), not just the last
-    (per-crossing aggregation lifted single-window 51% -> 93%). Soft mean (not hard majority) so it
-    composes with the soft cross-link LinkVoter. Also returns the LAST window's (image, features,
-    intercarrier_features) for the web spectrogram, and the window count. Returns
-    (None, None, None, None, 0) if no full window fits. ic_baseline: subtracted from the IC path when
-    this head was trained that way — MUST match training (carried on the entry)."""
+    Resamples to sample_rate_hz, windows the dwell, and returns a temporal vote: the mean class
+    probability over every window in the buffer, not just the last one. Aggregating a whole
+    crossing this way lifted a single window's 51% to 93%. The mean is soft rather than a hard
+    majority so it composes with the soft cross-link LinkVoter. Also returns the last window's
+    (image, features, intercarrier_features) for the web spectrogram, and the window count, or
+    (None, None, None, None, 0) when no full window fits. ic_baseline is subtracted from the
+    inter-carrier path and must match what training used."""
     resampled = resampleUniform(frames, sample_rate_hz)
     config = entry["cfg"]
     if len(resampled) < config.window:
@@ -100,7 +100,7 @@ def loadWeaponLinks(cal_root, model_root):
             session = modeSession("weapon", model_path)
             apply_lock, intercarrier, pick = planInferenceInput("weapon", session.head)
             classes = list(session.head.classes_)
-            # rebuilt from the node's calibration so train/serve subtract the same baseline (Item 10).
+            # rebuilt from the node's calibration, so serving subtracts the baseline training did
             ic_baseline = (result.baseline_mag
                            if getattr(session.head.config, "subtract_ic_baseline", False) else None)
             key = (link_tag, node_id)

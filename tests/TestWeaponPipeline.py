@@ -1,5 +1,3 @@
-"""Weapon pipeline: span-based labeling + ic27 plan."""
-
 from types import SimpleNamespace
 
 import numpy as np

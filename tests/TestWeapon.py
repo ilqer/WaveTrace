@@ -1,7 +1,6 @@
-"""Weapon head, operating modes, soft voting, and tier harness tests.
+"""Weapon head, operating modes, soft voting and the tier harness.
 
-Validates learning/gating pipeline using synthetic weapon signatures (flattening lowers variance).
-Tier verdicts use scripted recordings. CNN tests skip if torch is missing.
+The synthetic weapon signature is a flattening that lowers inter-carrier variance.
 """
 
 import numpy as np
@@ -81,8 +80,6 @@ def _cfg(backend, k=12, **kw):
     return ModelConfig(stage="weapon", k=k, backend=backend, **kw)
 
 
-# ----- 7p-a: weapon-signature synthetic + X_intercarrier ------------------------------------------
-
 def test_weapon_signature_lowers_sigma2(weapon_data):
     # Column 9 is window mean of per-packet inter-carrier variance.
     s2 = weapon_data["X_ic"][:, 9]
@@ -123,7 +120,6 @@ def test_dual_block_build_with_gain_lock():
 
 
 def test_train_weapon_ic27_and_fusion(weapon_data, tmp_path):
-    """trainWeapon ic27 and fusion feature modes produce fitted models with correct feature dims."""
     from wavetrace.recognition import trainWeapon
     d = weapon_data
     K = d["K"]
@@ -162,8 +158,6 @@ def test_intercarrier_roundtrip_and_backcompat(weapon_data, tmp_path):
     assert old.X_intercarrier is None
     assert loadDataset(saveDataset(old, tmp_path / "old")).X_intercarrier is None
 
-
-# ----- 7p-b: variance-threshold + sklearn backends -------------------------------------------------
 
 def test_variance_head_learns_threshold_and_direction(tmp_path):
     rng = np.random.default_rng(0)
@@ -239,8 +233,6 @@ def test_concealment_gap_needs_both_splits(weapon_data):
                                  make_head=lambda: build_weapon_head(cfg))
 
 
-# ----- 7p-c: torch CNN backend ---------------------------------------------------------------------
-
 def test_cnn_head_trains_roundtrips_deterministic(weapon_data, tmp_path):
     pytest.importorskip("torch")
     d = weapon_data
@@ -255,8 +247,6 @@ def test_cnn_head_trains_roundtrips_deterministic(weapon_data, tmp_path):
     loaded = load_weapon_head(head.save(tmp_path / "cnn.joblib"))
     assert np.allclose(loaded.predict_proba(X), proba, atol=1e-6)
 
-
-# ----- 7p-d: the two operating modes (user decision 2026-06-11: independent, no cross-gating) ------
 
 def test_weapon_mode_is_standalone(weapon_data, tmp_path):
     # Weapon mode classifies every window independently without presence verdict.
@@ -275,8 +265,6 @@ def test_mode_session_validates_mode():
     with pytest.raises(ValueError, match="presence.*weapon"):
         modeSession("gate", "irrelevant")
 
-
-# ----- 7p-e: soft segment voting -------------------------------------------------------------------
 
 def test_voter_recovers_segment_label_from_noisy_windows():
     # Weak per-window head. Segment soft vote recovers the correct class.
@@ -329,8 +317,6 @@ def test_voter_correlated_windows_gain_is_nil_and_validation():
     with pytest.raises(ValueError, match="class count"):
         bad.add([0.2, 0.3, 0.5])
 
-
-# ----- 7p-f: tier harness (FP gate) ----------------------------------------------------------------
 
 def test_binary_rates_and_tier_verdict_boundaries():
     cm = np.array([[90, 10], [5, 95]])            # fp 0.10, tpr 0.95

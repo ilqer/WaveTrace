@@ -1,7 +1,6 @@
-"""Phase 5 — ground-truth pipeline (camera-supervised dataset, OFFLINE).
+"""Ground truth: turn a paired (CSI + label source) recording into a labeled dataset.
 
-Turns a paired (CSI + label-source) recording into a serialized labeled dataset {(x_t, label_t)} for
-Phase 6/7 CSI-only training. Deployment stays CSI-only; the camera/scripted/chip label is the teacher.
+The camera, script or chip is only the teacher. What gets deployed reads CSI alone.
 """
 
 from wavetrace.groundtruth.Align import AlignmentResult, align, estimateClockOffset

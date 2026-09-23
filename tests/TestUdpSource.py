@@ -1,5 +1,3 @@
-"""UdpSource tests: parseCsiLine, parseBatch."""
-
 import json
 import struct
 import sys
@@ -45,8 +43,6 @@ def _make_batch_payload(frames_ints, node_id=0, ntp_ms=5000):
     return _bin_batch(rows, node_id=node_id, ntp_ms=ntp_ms)
 
 
-# ---- T7d.1: parseCsiLine -----------------------------------------------------------
-
 def test_parse_csi_line_valid():
     """parseCsiLine returns (csi, local_ts_us, mac) with correct I/Q pairing."""
     # esp-csi stores [imag0, real0, imag1, real1, ...]; csi[k] = complex(real=data[2k+1], imag=data[2k])
@@ -64,7 +60,7 @@ def test_parse_csi_line_valid():
 
 
 def test_parse_csi_line_quoted_real_format():
-    """Regression: Real esp-csi wraps arrays in CSV double-quotes.
+    """Real esp-csi wraps arrays in CSV double-quotes.
     Both quoted and unquoted arrays must parse."""
     quoted = ('CSI_DATA,15562,1a:00:00:00:00:00,-25,11,1,0,1,1,1,0,0,0,0,-96,0,11,2,'
               '2361919,0,47,1,4,0,"[1,2,3,4]"')
@@ -78,16 +74,12 @@ def test_parse_csi_line_filtering():
     """tx_mac filter drops non-matching lines; malformed lines return None."""
     csi_ints = [1, 2, 3, 4]
     line = _make_csi_line(csi_ints, mac="aa:bb:cc:dd:ee:ff")
-    # Matching MAC passes
     assert parseCsiLine(line, tx_mac="AA:BB:CC:DD:EE:FF") is not None  # case-insensitive
-    # Non-matching MAC silently dropped
     assert parseCsiLine(line, tx_mac="11:22:33:44:55:66") is None
     # Malformed line (not 25 cols, not CSI_DATA) returns None, never raises.
     assert parseCsiLine("garbage,line") is None
     assert parseCsiLine("") is None
 
-
-# ---- SerialReader (esp-csi over USB serial) ------------------------------------------
 
 class _FakeSerial:
     """Mock pyserial.Serial. readline() walks a list of byte lines, then returns ''."""
@@ -156,8 +148,6 @@ def test_serial_reader_needs_pyserial(monkeypatch):
         list(SerialReader(SerialSourceOptions(device="/dev/ttyUSB0")).frames())
 
 
-# ---- T7d.2: parseBatch valid --------------------------------------------------------
-
 def test_parse_batch_valid():
     """parseBatch returns CsiFrames with node_id from header and correct NTP timestamps."""
     S = 4
@@ -178,8 +168,6 @@ def test_parse_batch_valid():
         expectedT = ntpMs / 1000.0 - (lastUs - localTs) / 1e6
         assert fr.timestamp == pytest.approx(expectedT, abs=1e-9)
 
-
-# ---- T7d.3: parseBatch error paths --------------------------------------------------
 
 def test_parse_batch_bad_header_and_bad_lines():
     """Bad header raises ValueError; truncated/mixed-width records within a valid batch are skipped."""

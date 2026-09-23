@@ -146,8 +146,17 @@ source_modules = ["wavetrace.*", "web", "scripts"]
 forbidden_modules = ["wavetrace.Cli"]
 
 [[tool.importlinter.contracts]]
-# Backends are resolved only in wavetrace.adapters.recognition.heads; the heads and the domain layer take one injected.
-name = "domain and the recognition heads do not depend on adapters"
+# The heads are pure classifiers: backends are resolved only in wavetrace.adapters.recognition.heads
+# and handed to a head's constructor.
+name = "the domain layer depends on neither adapters nor the recognition package"
 type = "forbidden"
-source_modules = ["wavetrace.domain", "wavetrace.recognition.Model", "wavetrace.recognition.Weapon"]
-forbidden_modules = ["wavetrace.adapters"]
+source_modules = ["wavetrace.domain"]
+forbidden_modules = ["wavetrace.adapters", "wavetrace.recognition"]
+
+[[tool.importlinter.contracts]]
+# One-way only: adapters read the domain's heads, never the training/serving package around them.
+# A two-way dependency here is what previously forced function-local imports.
+name = "adapters do not depend on the recognition package"
+type = "forbidden"
+source_modules = ["wavetrace.adapters"]
+forbidden_modules = ["wavetrace.recognition"]

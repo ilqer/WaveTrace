@@ -1,13 +1,7 @@
-"""Per-node health monitor — the PC-side view of the mesh heartbeats (HEALTH_UDP_PORT=9877).
+"""Live table of the mesh heartbeats arriving on udp/9877.
 
-Each node sends a heartbeat every HEALTH_MS (2 s). This prints a live table so you can see, at a
-glance, which boards are up, their CSI rate, gain state, RSSI, free heap, leader, and clock-sync.
-
-    .venv/bin/python scripts/health_monitor.py          # port 9877
-    .venv/bin/python scripts/health_monitor.py 9877
-
-A node going RED/STALE (no heartbeat > 6 s) is the "not delivering to PC" signal; the on-board USB
-serial log is the complementary health view when a node has no PC link at all."""
+Nodes beat every 2 s, so STALE_S allows three missed beats.
+"""
 
 import collections
 import json
@@ -22,13 +16,13 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("0.0.0.0", PORT))
 sock.settimeout(0.5)
 
-# discovery broadcast: ping every 2s so nodes can find this PC's IP
+# nodes learn this PC's IP from this broadcast
 DISCOVERY_PORT = 9878
 discoverySock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 discoverySock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 lastPing = 0
 
-last = {}   # node -> (recv_time, health dict)
+last = {}
 print(f"health monitor on udp/{PORT}  (Ctrl+C to stop)\n")
 try:
     while True:
@@ -55,7 +49,7 @@ try:
                 f"{h.get('peers',0):>5} {h.get('leader','?'):>6} {h.get('gain','?'):>4} "
                 f"{h.get('agc',0):>3} {h.get('rssi',0):>4} {h.get('heap',0)//1024:>7} "
                 f"{h.get('up_s',0):>5} {'ok' if h.get('synced') else 'no':>3}")
-        print("\033[2J\033[H" + "\n".join(rows), flush=True)  # clear + home, then table
+        print("\033[2J\033[H" + "\n".join(rows), flush=True)  # ansi: clear screen, cursor home
         time.sleep(0.0)
 except KeyboardInterrupt:
     pass

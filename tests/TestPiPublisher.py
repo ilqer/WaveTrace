@@ -1,6 +1,4 @@
-"""Pi node publisher serialization tests.
-Validates that byte outputs parse correctly through the host wire-format parser.
-UDP datagrams must remain byte-exact for wavetrace.Source. Round-tripping catches format drift."""
+"""UDP datagrams must stay byte-exact for wavetrace.Source; round-tripping catches format drift."""
 import os
 import sys
 

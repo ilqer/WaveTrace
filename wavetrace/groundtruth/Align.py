@@ -1,13 +1,11 @@
-"""Phase 5b — timestamp-align camera labels to CSI feature windows + MEASURE sync error (OFFLINE).
+"""Match camera labels to CSI feature windows, and measure how well the two clocks agree.
 
-Each CSI window (timestamp = window END, Q5) is matched to the NEAREST label within `tolerance`
-seconds; windows with no label in tolerance are dropped. Two-pointer O(W+L) over time-sorted inputs.
+Each window (timestamped at its END) takes the nearest label within `tolerance` seconds; a window
+with no label that close is dropped. Two pointers over time-sorted inputs, O(W+L).
 
-The matched-Δt distribution IS the sync-error measurement (Phase-5 DoD). With discrete camera frames
-a constant clock offset between the two streams shows up as the systematic component of mean Δt, so
-this also DETECTS/measures a clock skew (REFERENCE_DIGEST §0B: a small offset = silently wrong
-labels). Δt is defined label.timestamp − window_t, so mean Δt ≈ the label stream's offset relative to
-the CSI clock.
+The spread of matched Δt is the sync-error measurement. Δt is label.timestamp − window_t, so its
+mean is roughly how far the label stream sits from the CSI clock, and a small constant offset
+there means silently wrong labels rather than obviously missing ones.
 """
 
 from dataclasses import dataclass
@@ -64,9 +62,9 @@ def estimateClockOffset(truth_times, truth_classes, labels, *, max_lag=0.2, step
     (truth_times/truth_classes on the CSI clock) by the lag that maximizes class agreement.
 
     Why this and not `align`'s Δt: nearest-timestamp matching always minimizes |Δt|, so a dense label
-    stream's matched Δt stays within ½ a label period regardless of a constant offset — the offset is
-    invisible in Δt and instead silently corrupts label CONTENT (REFERENCE_DIGEST §0B). The honest
-    skew measurement is therefore a CONTENT cross-correlation on a staged calibration sequence: a
+    stream's matched Δt stays within half a label period whatever the constant offset is. The offset
+    is invisible in Δt and corrupts label CONTENT instead. Measuring it honestly therefore needs a
+    content cross-correlation over a staged calibration sequence: a
     label recorded at time `lt` corresponds to CSI time `lt − offset`, so testing candidate `off`
     matches truth sample `tt` against the nearest label at `tt + off`; the `off` with best agreement is
     the offset. Returns (offset_s, agreement∈[0,1]). O(n_lags·(T+L)). Apply −offset before `align`."""

@@ -1,9 +1,7 @@
-"""Label-free in-room adaptation.
+"""Adapt to a new room without labels, and without touching any model weights.
 
-1. refreshNormStats: Update CNN input norm (mean/std) from recent windows. Test-time only, no weight changes.
-2. recalibrate: Re-run quiet-room calibration (gain lock, baseline, NBVI). No weight changes.
-
-For model changes, retrain and upload.
+`refreshNormStats` updates the CNN's input normalization from recent windows; `recalibrate` re-runs
+the quiet-room calibration. Changing the model itself means retraining and uploading.
 """
 
 import numpy as np

@@ -1,16 +1,12 @@
-"""Phase 0 step 6 (REFACTOR_PLAN.md) — times the hot C++ functions through the pybind11 binding
-over fixed synthetic input. `--compare` re-runs the same benchmarks and diffs against a committed
-baseline; later phases (renaming is compile-time only per §0, so 0% cost is expected, but this is
-the instrument that PROVES it) run:
+"""Time the hot C++ functions through the pybind11 binding, over fixed synthetic input.
+
+`--compare` re-runs the same benchmarks and diffs them against a committed baseline:
 
     python benchmarks/bench_native.py --compare benchmarks/baseline.json
 
-Regression budget from REFACTOR_PLAN.md §0 "Performance": 5%, measured on the median (robust to the
-occasional scheduler-jitter outlier that a mean would absorb).
-
-Deterministic input (fixed seed), no I/O in the timed region, one warmup pass per function before
-the timed loop to avoid measuring first-call cache/allocator effects. O(1) per benchmarked call —
-this only characterizes function-level latency, not a throughput/pipeline benchmark.
+The budget is 5%, measured on the median, which shrugs off the scheduler-jitter outlier a mean
+would absorb. Input is deterministic, nothing is timed that does I/O, and each function gets a
+warmup pass so first-call cache and allocator effects stay out of the numbers.
 """
 
 import argparse
@@ -42,15 +38,15 @@ WINDOW_FRAMES = 128
 BATCH_SIZE = 500  # calls timed together per sample
 NUM_BATCHES = 50  # sample points -> 25_000 total calls per function
 WARMUP_BATCHES = 5
-REGRESSION_BUDGET = 0.05  # §0: 5%
+REGRESSION_BUDGET = 0.05
 
 
 def _time_calls(fn, batch_size=BATCH_SIZE, num_batches=NUM_BATCHES, warmup=WARMUP_BATCHES):
     """Median wall-clock seconds per call, timed in batches rather than one perf_counter() pair per
     call. At these functions' sub-microsecond scale, per-call perf_counter() overhead and Python
     dispatch jitter would otherwise dominate the signal — timing `batch_size` calls together and
-    dividing amortizes both, which is what makes the 5% regression budget (§0) meaningful here
-    instead of noise. O(num_batches * batch_size)."""
+    dividing amortizes both, which is what keeps the 5% budget meaningful instead of noise.
+    O(num_batches * batch_size)."""
     for _ in range(warmup):
         for _ in range(batch_size):
             fn()
@@ -117,7 +113,7 @@ def run_benchmarks() -> list[dict]:
 
 def _compare(current: list[dict], baseline_path: Path) -> bool:
     """Print a per-function regression report on min_us (see _summarize for why min, not
-    mean/median). Returns True if every function is within the §0 5% budget."""
+    mean/median). Returns True if every function is within the 5% budget."""
     baseline = {b["name"]: b for b in json.loads(baseline_path.read_text())["benchmarks"]}
     ok = True
     print(f"{'function':<32}{'baseline (us)':>16}{'current (us)':>16}{'delta':>10}")
@@ -141,7 +137,7 @@ def main() -> int:
                      help="where to write the benchmark results (default: benchmarks/baseline.json)")
     ap.add_argument("--compare", default=None,
                      help="diff against this committed baseline instead of writing a new one; "
-                          "exits 1 if any function's median regresses beyond the 5%% budget (§0)")
+                          "exits 1 if any function's median regresses beyond the 5%% budget")
     args = ap.parse_args()
 
     results = run_benchmarks()

@@ -1,17 +1,14 @@
-"""Real-time inference path: load head, classify window, <8ms.
+"""The real-time path: load a head, classify a window, publish. Under 8 ms.
 
-Modes:
-* 'presence': human detection.
-* 'weapon': weapon detection. Classifies every emitted window.
-
-Forward pass is O(1). Input row buffer is reused."""
+'presence' and 'weapon' both classify every emitted window. The forward pass is O(1) and the input
+row buffer is reused between windows."""
 
 import time
 
 import numpy as np
 
 from wavetrace.adapters.recognition.heads import load_presence_head, load_weapon_head
-from wavetrace.recognition.Model import PresenceHead
+from wavetrace.domain.recognition import PresenceHead
 
 
 class InferenceSession:
@@ -47,8 +44,8 @@ def planInferenceInput(mode: str, head) -> tuple[bool, bool, object]:
     """Return (apply_lock, intercarrier, pick) for the serving loop.
     `pick(features, image, intercarrier) -> x` is the row fed to `InferenceSession.predictWindow`.
     A presence head always takes the plain feature vector; a weapon head is self-describing via
-    `head.feature_mode` (falls back on `head.default_feature_mode` — the backend's own declared
-    default — for models trained before feature_mode was recorded)."""
+    `head.feature_mode`, falling back on `head.default_feature_mode` for models saved before that
+    was recorded."""
     if mode == "presence":
         return True, False, (lambda features, image, intercarrier: features)
     feature_mode = getattr(head, "feature_mode", None) or head.default_feature_mode

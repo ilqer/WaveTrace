@@ -1,5 +1,3 @@
-"""LinkVoter probability fusion and accuracy weights tests."""
-
 import numpy as np
 import pytest
 
@@ -16,7 +14,6 @@ def test_accuracy_weights_maps_correctly():
 
 
 def test_single_link_returns_input_proba():
-    """With one link and default weight=1, blend equals the input proba."""
     voter = LinkVoter()
     p = np.array([0.3, 0.7], dtype=np.float32)
     voter.add(0, p)
@@ -26,7 +23,6 @@ def test_single_link_returns_input_proba():
 
 
 def test_two_links_equal_weights_average():
-    """Two links with equal weight and quality → simple average of probas."""
     voter = LinkVoter()
     voter.add(0, np.array([0.8, 0.2]))
     voter.add(1, np.array([0.2, 0.8]))
@@ -36,7 +32,6 @@ def test_two_links_equal_weights_average():
 
 
 def test_static_weights_shift_vote():
-    """Static weight 3:1 in favour of node 1 shifts blend toward node 1's proba."""
     voter = LinkVoter({0: 1.0, 1: 3.0})
     p0 = np.array([0.9, 0.1])
     p1 = np.array([0.1, 0.9])
@@ -68,7 +63,6 @@ def test_c_mismatch_raises():
 
 
 def test_finalize_without_add_raises():
-    """finalize() with no prior add() raises ValueError."""
     with pytest.raises(ValueError):
         LinkVoter().finalize()
 
@@ -96,7 +90,6 @@ def test_link_fusion_uniform_when_all_at_chance():
 
 
 def test_reusable_after_finalize():
-    """finalize() resets all state; subsequent add/finalize is independent."""
     voter = LinkVoter()
     voter.add(0, np.array([0.4, 0.6]))
     cls1, p1 = voter.finalize()

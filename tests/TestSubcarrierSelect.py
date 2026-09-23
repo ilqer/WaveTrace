@@ -1,4 +1,4 @@
-"""Phase 3 (step 3c) — signal/subcarrier-select: NBVI scoring + non-consecutive selection."""
+"""NBVI scoring and non-consecutive subcarrier selection."""
 
 import numpy as np
 import pytest

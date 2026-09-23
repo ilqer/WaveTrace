@@ -1,7 +1,5 @@
-"""Signal preprocess tests: conj-mult, Hampel, unwrap, normalize.
-
-Validates physics logic: CFO/SFO cancellation, spike rejection, phase continuity.
-Uses synthetic data with known ground truth.
+"""Preprocess chain on synthetic data with known ground truth: CFO/SFO cancellation,
+spike rejection and phase continuity.
 """
 
 import numpy as np
@@ -18,8 +16,6 @@ from wavetrace import (
 )
 from wavetrace.Synthetic import generateStream
 
-
-# --- combined_channel_difference: subtracts common environment ---
 
 def test_combined_channel_difference_subtracts_antenna_zero():
     rng = np.random.default_rng(7)
@@ -38,8 +34,6 @@ def test_combined_channel_difference_requires_two_antennas():
     with pytest.raises(FrameError):
         combined_channel_difference(CsiFrame(1, 8), CsiFrame(1, 1))
 
-
-# --- conjugate_multiply: cancels common-mode clock drift ------------------------------------
 
 def test_conjugate_multiply_cross_antenna_cancels_common_offset():
     rng = np.random.default_rng(0)
@@ -80,16 +74,12 @@ def test_conjugate_multiply_single_subcarrier_raises():
         conjugate_multiply(inFrame, CsiFrame(1, 1))
 
 
-# --- Hampel ----------------------------------------------------------------------------------
-
 def test_hampel_passes_normal_replaces_spike():
     window = np.array([1.0, 1.1, 0.9, 1.05, 50.0], dtype=np.float32)
     assert hampel(window, current=50.0, k=5.0) == pytest.approx(1.05)  # outlier -> median
     normal = np.array([1.0, 1.1, 0.9, 1.05, 1.0], dtype=np.float32)
     assert hampel(normal, current=1.0, k=5.0) == pytest.approx(1.0)    # inlier -> unchanged
 
-
-# --- unwrap_step -----------------------------------------------------------------------------
 
 def test_unwrap_step_continuity_and_wrap():
     # Small step: accumulates.
@@ -98,14 +88,10 @@ def test_unwrap_step_continuity_and_wrap():
     assert unwrap_step(-3.0, 3.0, 0.0) == pytest.approx(-6.0 + 2 * np.pi, abs=1e-5)
 
 
-# --- Preprocessor: geometry ------------------------------------------------------------------
-
 def test_preprocessor_output_geometry():
     assert (Preprocessor(3, 64).out_rows, Preprocessor(3, 64).out_cols) == (2, 64)  # cross-antenna
     assert (Preprocessor(1, 64).out_rows, Preprocessor(1, 64).out_cols) == (1, 63)  # cross-subcarrier
 
-
-# --- Preprocessor: matches an independent numpy implementation of the chain ------------------
 
 def _referenceChain(frames, alpha):
     """Numpy reference for A=1 cross-subcarrier chain (Hampel disabled).
@@ -141,11 +127,8 @@ def test_preprocessor_chain_matches_numpy_reference():
     assert np.allclose(got, ref, atol=1e-3)
 
 
-# --- Preprocessor: spike rejection holds phase ----------------------------------------------
-
 def test_preprocessor_rejects_magnitude_spike():
     # Hampel(magnitude) must hold phase steady during a magnitude spike.
-    # Output should stay near 0.
     rng = np.random.default_rng(7)
     A, S, T, f = 2, 4, 30, 15
     h0 = np.exp(1j * rng.uniform(-np.pi, np.pi, (A, S))).astype(np.complex64)
@@ -168,8 +151,6 @@ def test_preprocessor_rejects_magnitude_spike():
     assert abs(cell) < 0.05                                  # spike held -> output stays ~0
     assert abs(outControl[f, 0, 0]) > 10 * abs(cell) + 0.1  # without rejection it glitches
 
-
-# --- Preprocessor: recovers injected motion frequency (cross-subcarrier path) ----------------
 
 def test_preprocessor_recovers_motion_frequency():
     fs, fTrue = 100.0, 0.3

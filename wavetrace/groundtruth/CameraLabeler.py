@@ -1,20 +1,17 @@
-"""Phase 5a — label sources behind one pluggable interface (OFFLINE, no hot path).
+"""Label sources behind one interface: a per-frame observation and a timestamp become a `Label`.
 
-A `Labeler` turns a per-frame observation (+timestamp) into a core `Label`. The *stage target*
-(class_id, name) is decided by a pluggable `label_fn` so the same labeler serves presence (A) and
-weapon (E) with no rework; the raw box/keypoints and the optional weapon `position` are always
-preserved so the later localization / weapon-location-attention work needs no re-run.
+Which target the label names - presence or weapon - is decided by a pluggable `label_fn`, so one
+labeler serves both. The raw box, keypoints and any weapon position are always preserved, so later
+localization work needs no re-run.
 
-Two roles share the interface:
-  * stream labelers (camera-style) — `ReplayLabeler`, `ThermalLabeler`: consume an observation stream
-    with its OWN clock → Labels must be timestamp-Aligned to CSI windows (their clock may be skewed).
-  * time labelers — `ScriptedLabeler`, `LocationChipLabeler`: a function of CSI-clock time (the label
-    is known by construction / from a chip track), evaluated directly at each window timestamp
-    (`__call__(t) -> Label`), so DatasetBuilder needs no alignment for them.
+Two kinds share the interface:
+  * stream labelers (`ReplayLabeler`, `ThermalLabeler`) read an observation stream on their OWN
+    clock, so their labels must be timestamp-aligned to the CSI windows.
+  * time labelers (`ScriptedLabeler`, `LocationChipLabeler`) are functions of CSI-clock time, so
+    DatasetBuilder evaluates them at each window timestamp and needs no alignment.
 
-The concrete vision models (YOLO/MediaPipe/SAM for the open + see-through tiers) and the thermal model
-are documented SEAMS — subclass and override `_detect`; they need a model + recordings not present in
-this environment.
+The concrete vision models (YOLO, MediaPipe, SAM) and the thermal model are seams: subclass and
+override `_detect`. They need a model and recordings that are not in this repo.
 """
 
 from abc import ABC, abstractmethod
@@ -380,24 +377,22 @@ def _yoloToSegments(results) -> list[Segment]:
 
 
 class ThermalLabeler(Labeler):
-    """SEAM — concealed-tier thermal labeler (plan §5 iii, ref jimaging-11-00072). A thermal camera
-    can often see a concealed weapon's cold-metal thermal shadow against body heat, labeling data the
-    RGB camera can't. Their FP trick — accept a weapon detection only INSIDE a detected person bbox —
-    is exactly our A→E gate. Needs a thermal model + recordings (absent here); wire by overriding
-    `_detect` to run the thermal detector and gate it on the person box."""
+    """A thermal camera can see a concealed weapon's cold-metal shadow against body heat, labeling
+    data an RGB camera cannot. Accepting a detection only inside a detected person box keeps the
+    false-positive rate down. Needs a thermal model and recordings that are not here: wire it by
+    overriding `_detect`."""
 
     def _detect(self, observation, timestamp: float) -> FrameDetection:
         raise NotImplementedError(
             "ThermalLabeler is a hardware seam: provide a thermal detector and gate weapon "
-            "detections on a person bbox (A→E gate). See plan §5 iii."
+            "detections on a person bbox."
         )
 
 
 class ScriptedLabeler(Labeler):
-    """Concealed-tier (plan §5 ii): a camera cannot see a concealed weapon, so the label is known by
-    construction (planted weapon). `spans` = iterable of (start, end, present) in the CSI clock; a
-    timestamp inside a present span is labeled weapon. Time-style: call `__call__(t)`/`labelAt(t)`.
-    Default `label_fn` = weaponLabelFn."""
+    """A camera cannot see a concealed weapon, so the label is known by construction: the weapon was
+    planted. `spans` is (start, end, present) on the CSI clock, and a timestamp inside a present
+    span is labeled weapon. Called as `__call__(t)` / `labelAt(t)`."""
 
     def __init__(self, spans, label_fn=weaponLabelFn):
         super().__init__(label_fn)
@@ -422,12 +417,10 @@ class ScriptedLabeler(Labeler):
 
 
 class LocationChipLabeler(Labeler):
-    """Concealed-tier (plan §5 iv, user idea): a BLE/UWB tag on the weapon gives precise time +
-    position ground truth — stronger than a coarse scripted time span. `track` = iterable of
-    (t, present, position) in the CSI clock; nearest-sample lookup yields present/absent + the weapon
-    `position`, stashed on the Label so a later stage can use it as a delay/attention hint to segment
-    the weapon's reflection from the body's (caveat: WiFi delay resolution is coarse + leakage risk →
-    use it as a HINT, not a hard crop; see Phase-7 notes). Time-style: `__call__(t)`/`labelAt(t)`."""
+    """A BLE/UWB tag on the weapon gives precise time and position ground truth, which beats a
+    coarse scripted span. `track` is (t, present, position) on the CSI clock, looked up by nearest
+    sample. The position is stashed on the Label as a hint for separating the weapon's reflection
+    from the body's - a hint only, because WiFi delay resolution is coarse and leaks."""
 
     def __init__(self, track, label_fn=weaponLabelFn):
         samples = sorted(track, key=lambda r: r[0])

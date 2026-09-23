@@ -1,8 +1,8 @@
-"""T5/P10 — production serving guards: AlertGuard debounce + DriftMonitor recalibrate advisory.
+"""Two guards on the serving path: alert debounce, and a drift advisory.
 
-AlertGuard: N-consecutive-positive → alert, M-consecutive-negative → clear (with cooldown).
-DriftMonitor: slow EMA of raw per-subcarrier |H| vs quiet-room baseline → recalibrate advisory.
-Both are pure-Python, O(1)/window and O(S)/frame respectively; zero effect when not instantiated.
+AlertGuard turns N consecutive positives into an alert and M consecutive negatives into a clear,
+with a cooldown in between. DriftMonitor compares a slow EMA of the raw per-subcarrier |H| against
+the quiet-room baseline and advises a recalibration. O(1) per window and O(S) per frame.
 """
 
 from dataclasses import asdict, dataclass, field

@@ -11,7 +11,7 @@ __all__ = ["encodeFrame", "generateRawFrames"]
 
 
 def encodeFrame(realIQ: np.ndarray, imagIQ: np.ndarray) -> np.ndarray:
-    """Pack integer I/Q grids into the ESP32 wire layout that FrameParser decodes (§2.1):
+    """Pack integer I/Q grids into the ESP32 wire layout that FrameParser decodes:
     interleaved bytes [imag, real] per sample, **imaginary first**, as two's-complement int8
     held in uint8. realIQ/imagIQ are int grids in [-128, 127], row-major (antenna x subcarrier).
     The `& 0xFF` reproduces the on-wire unsigned byte, exercising the parser's sign fixup."""

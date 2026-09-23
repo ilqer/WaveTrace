@@ -1,18 +1,7 @@
-"""Step 2 of live bring-up: capture labeled empty/present sessions over UDP and train a presence
-model PER mesh node. Run AFTER collect_baseline.py (needs data/cal/node{id}/ for each node).
+"""Capture labeled empty/present sessions over UDP and train a presence model per mesh node.
 
-Per-RX-node models: one capture pass per condition feeds all nodes; each node's frames are labeled
-and trained independently into data/model/node{id}/. Live, run_live_mesh.py votes across nodes, so a
-node that drops/crashes just lowers the vote weight instead of taking the system down.
-
-Per-LINK training (matches serving): capture splits the stream per (tx->rx) link and each link is
-resampled onto the shared pipeline rate and windowed on its OWN clean grid, then all of a node's
-links are POOLED into that node's single head. This mirrors run_live_mesh (per-link, 100 Hz),
-instead of interleaving both transmitters into one window, and teaches the head the human signal
-common to every link (generalize) rather than the round-robin slot-switching artifact of a merged
-stream.
-
-Each session = part A (zone EMPTY) then part B (you stand + MOVE in the zone).
+Each node is trained on its own, so live a node that drops just lowers the vote weight instead of
+taking the system down. Each session is part A (zone empty) then part B (stand and move in the zone).
 """
 
 import argparse
@@ -33,7 +22,7 @@ SUBJECT = "u0"
 
 
 def detectNodes(port, timeout_seconds=3.0):
-    """Briefly listen to detect the active Node IDs in the live UDP stream. Returns sorted list."""
+    """Node ids heard in one short listen, sorted."""
     print("listening for active nodes...")
     detected = collections.Counter()
     source = UdpSource(UdpSourceOptions(port=port, timeout_seconds=timeout_seconds, max_frames=150))
@@ -43,13 +32,11 @@ def detectNodes(port, timeout_seconds=3.0):
 
 
 def captureAll(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
-    """Collect up to n frames PER (tx->rx) LINK in ONE pass. Returns {(tx_short, rx_node): [frames]}.
-
-    Per-LINK (not per-node) so training matches the per-link serving path (run_live_mesh): each directed
-    link is its own clean single-channel stream instead of both transmitters merged. Keeps the dominant
-    subcarrier width per link. Stops when every expected RX node has appeared AND all known links reach
-    n, OR max_capture_s elapses (the per-recv timeout only fires on TOTAL silence, so the wall-clock
-    deadline is what stops a lone quiet link from stalling the loop forever)."""
+    """Collect up to n frames per (tx->rx) link in one pass. Returns {(tx_short, rx_node): [frames]},
+    each link reduced to its dominant subcarrier width. Splitting per link keeps every directed link a
+    single clean stream instead of both transmitters merged, which is how run_live_mesh serves it. The
+    wall-clock deadline is needed because the receive timeout only fires on total silence, so one quiet
+    link would stall the loop."""
     print(f"\n>> {prompt}\n   press Enter to start...", flush=True)
     input()
     if countdown:
@@ -110,7 +97,6 @@ def main():
     if args.cal is None:
         args.cal = f"{args.root}/cal"
 
-    # nodes with a calibration from collect_baseline, optionally narrowed by --node
     calNodes = sorted(int(os.path.basename(d)[len("node"):])
                        for d in glob.glob(os.path.join(args.cal, "node*"))
                        if os.path.basename(d)[len("node"):].isdigit())
@@ -134,14 +120,12 @@ def main():
         present = captureAll(f"session {i+1}/{args.sessions} — part B: stand and move in the zone.",
                               args.frames, args.port, calNodes)
         for nid in calNodes:
-            # every (tx->rx) link on this node, windowed on its own grid, pooled into one head (same session_id)
             keys = sorted(k for k in set(empty) | set(present) if k[1] == nid)
             used = 0
             for key in keys:
-                # resample separately: a single resample across both would interpolate fake frames across the gap
+                # resampled apart: one resample across both would interpolate frames over the gap
                 e = resampleUniform(empty.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
                 p = resampleUniform(present.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
-                # a link segment shorter than this emits no window
                 if len(e) < DEFAULT_WINDOW_FRAMES or len(p) < DEFAULT_WINDOW_FRAMES:
                     continue  # too short on this grid to emit a window in each class
                 span = (p[0].timestamp, p[-1].timestamp + 1.0)

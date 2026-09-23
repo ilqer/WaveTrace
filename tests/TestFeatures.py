@@ -1,5 +1,3 @@
-"""Feature extraction tests: FFT, nine features, PSD, Doppler, and FeatureExtractor."""
-
 import numpy as np
 import pytest
 
@@ -21,12 +19,10 @@ from wavetrace import (
 )
 
 
-# reconstruct_complex_csi: strips STO ramp, keeps material phase.
-
 def test_reconstruct_complex_csi_removes_linear_ramp_keeps_material():
     k = 30
     idx = np.arange(k)
-    mag = (2.0 + 0.1 * np.sin(idx)).astype(np.float64)        # Nontrivial magnitude.
+    mag = (2.0 + 0.1 * np.sin(idx)).astype(np.float64)
     ramp = 0.5 * idx - 1.2                                    # Linear STO ramp.
     material = 0.3 * np.cos(0.7 * idx)                        # Nonlinear material signature.
     phase = ramp + material
@@ -46,11 +42,9 @@ def test_reconstruct_complex_csi_pure_ramp_becomes_real():
     idx = np.arange(k)
     h = (1.5 * np.exp(1j * (0.3 * idx + 0.7))).astype(np.complex64)  # pure linear ramp, no material
     out = reconstruct_complex_csi(h)
-    assert np.allclose(np.angle(out), 0.0, atol=1e-4)  # nothing left after removing the line
+    assert np.allclose(np.angle(out), 0.0, atol=1e-4)  # nothing left once the line is removed
     assert np.allclose(np.abs(out), 1.5, atol=1e-4)
 
-
-# reflection_null: cancels empty room, leaves object reflection.
 
 def test_reflection_null_cancels_empty_room():
     k = 16
@@ -71,8 +65,6 @@ def test_reflection_null_length_mismatch_raises():
         reflection_null(a, a, a, np.ones(7, dtype=np.complex64))
 
 
-# block_average_decimate: non-overlapping block means.
-
 def test_block_average_decimate_block_means():
     x = np.arange(100, dtype=np.float32)
     out = block_average_decimate(x, 20)
@@ -85,8 +77,6 @@ def test_block_average_decimate_drops_remainder():
     assert out.shape == (5,)  # the trailing 5 samples are dropped
 from wavetrace.Synthetic import generateStream
 
-
-# FFT vs numpy.
 
 def test_fft_matches_numpy():
     rng = np.random.default_rng(0)
@@ -102,8 +92,6 @@ def test_fft_non_power_of_two_raises():
     with pytest.raises(WaveTraceError):
         fft(np.ones(10, dtype=np.complex64))
 
-
-# Nine features match numpy.
 
 def _refNineFeatures(x):
     x = x.astype(np.float64)
@@ -127,15 +115,12 @@ def test_nine_features_match_numpy():
 
 
 def test_nine_features_constant_window():
-    # Constant series -> spread vanishes, mean/max/min equal constant.
     out = nine_features(np.full(32, 3.0, dtype=np.float32))
     mean, std, mx, mn, iqr, skew, lag1, mad, wl = out
     assert mean == pytest.approx(3.0) and mx == pytest.approx(3.0) and mn == pytest.approx(3.0)
     assert std == pytest.approx(0.0) and iqr == pytest.approx(0.0)
     assert mad == pytest.approx(0.0) and wl == pytest.approx(0.0) and skew == pytest.approx(0.0)
 
-
-# Per-packet inter-subcarrier dispersion (weapon discriminator).
 
 def test_inter_carrier_stats_matches_numpy():
     rng = np.random.default_rng(7)
@@ -148,27 +133,25 @@ def test_inter_carrier_stats_matches_numpy():
 def test_inter_carrier_stats_metal_lower_variance():
     # Flat metal -> low variance. Diffuse body -> high variance.
     rng = np.random.default_rng(8)
-    flat = (np.full(52, 5.0) + rng.standard_normal(52) * 0.05).astype(np.float32)     # metal-like
-    diffuse = (5.0 + rng.standard_normal(52) * 2.0).astype(np.float32)                # body-like
+    flat = (np.full(52, 5.0) + rng.standard_normal(52) * 0.05).astype(np.float32)
+    diffuse = (5.0 + rng.standard_normal(52) * 2.0).astype(np.float32)
     _, varFlat = inter_carrier_stats(flat)
     _, varDiffuse = inter_carrier_stats(diffuse)
     assert varFlat < varDiffuse
 
 
 def test_inter_carrier_stats_edge_cases():
-    mean, var = inter_carrier_stats(np.full(30, 2.5, dtype=np.float32))  # constant -> zero variance
+    mean, var = inter_carrier_stats(np.full(30, 2.5, dtype=np.float32))
     assert mean == pytest.approx(2.5) and var == pytest.approx(0.0)
     mean1, var1 = inter_carrier_stats(np.array([4.0], dtype=np.float32))  # single -> no (M-1) blowup
     assert mean1 == pytest.approx(4.0) and var1 == pytest.approx(0.0)
 
 
-# Per-frame inter-subcarrier PHASE dispersion.
-
 def test_inter_carrier_phase_stats_recovers_slope():
     # Linear phase ramp (pure group delay) -> fit recovers slope, residual ~0.
     k = 52
     slopeTrue = 0.2  # rad/subcarrier
-    phase = (slopeTrue * np.arange(k) + 1.3).astype(np.float32)  # ramp + constant offset
+    phase = (slopeTrue * np.arange(k) + 1.3).astype(np.float32)
     # Wrap to [-pi, pi] to exercise unwrap path.
     wrapped = np.angle(np.exp(1j * phase)).astype(np.float32)
     slope, resid = inter_carrier_phase_stats(wrapped)
@@ -193,8 +176,6 @@ def test_inter_carrier_phase_stats_edge_cases():
     assert slope == pytest.approx(0.0) and resid == pytest.approx(0.0)
 
 
-# Streaming inter-subcarrier amplitude extractor.
-
 def test_inter_carrier_extractor_cadence_and_shape():
     W, H = 8, 2
     ice = InterCarrierExtractor(W, H)
@@ -208,7 +189,6 @@ def test_inter_carrier_extractor_cadence_and_shape():
 
 
 def test_inter_carrier_extractor_matches_nine_features():
-    # Windowed extractor equals nine_features over {mu, sigma2, cv}.
     rng = np.random.default_rng(13)
     W, H, K = 16, 4, 52
     frames = (5.0 + rng.standard_normal((W, K)) * 0.5).astype(np.float32)
@@ -228,10 +208,7 @@ def test_inter_carrier_extractor_matches_nine_features():
         assert np.allclose(got[seriesIdx], ref, rtol=1e-4, atol=1e-5)
 
 
-# PSD + Doppler recover injected motion freq.
-
 def _phaseSeries(seed=9):
-    """Differential-phase series from synthetic stream."""
     fs, fTrue = 100.0, 0.3
     frames, gt = generateStream(
         numAntennas=1, numSubcarriers=64, sampleRateHz=fs, numFrames=1024,
@@ -260,8 +237,6 @@ def test_doppler_recovers_motion_frequency():
     assert spread >= 0.0
 
 
-# Streaming FeatureExtractor.
-
 def test_feature_extractor_cadence_and_shape():
     C, W, H = 3, 8, 2
     fe = FeatureExtractor(C, W, H)
@@ -274,7 +249,7 @@ def test_feature_extractor_cadence_and_shape():
 
 
 def test_feature_extractor_matches_nine_features():
-    # Extractor matches nine_features over chronological window.
+    # The window must be read back in chronological order.
     rng = np.random.default_rng(3)
     C, W, H = 2, 16, 4
     data = rng.standard_normal((W, C)).astype(np.float32)  # exactly one full window
@@ -294,10 +269,7 @@ def test_feature_extractor_push_wrong_length_raises():
         fe.push(np.ones(3, dtype=np.float32))
 
 
-# Amplitude features detect modulation.
-
 def test_amplitude_features_detect_modulation():
-    # Amplitude envelope shows up in features.
     fs = 100.0
     kw = dict(numAntennas=1, numSubcarriers=16, sampleRateHz=fs, numFrames=256,
               perturbationHz=0.0, perturbationDepth=0.0, cfoHz=0.0, noiseStd=0.001, seed=4)

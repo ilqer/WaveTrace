@@ -1,9 +1,9 @@
-"""Model explainability for UI.
+"""What the model is paying attention to, for the dashboard.
 
-* STATIC weight (per model): L2 norm of first Conv2d's filters per input channel.
-* DYNAMIC importance (per window): Channel ablation. Zero channel, measure confidence drop.
-
-Also: permutation importance for MLP/SVM, and confusion matrix helper. Offline/UI-cadence only."""
+Two views of a CNN: a static per-channel weight, the L2 norm of the first Conv2d's filters, and a
+per-window importance from ablation - zero a channel and measure the confidence it costs. For
+MLP/SVM there is permutation importance instead. UI cadence only, never the hot path.
+"""
 
 import numpy as np
 

@@ -1,18 +1,14 @@
-"""Phase 6f — timing-jitter guards for the front-end glue (plan §5 Phase 6).
+"""Three guards against irregular frame timing, applied before a window reaches a head.
 
-Real captures arrive with irregular inter-frame spacing (2.4 GHz congestion, queueing): three guards
-make detection robust to residual capture irregularity before windows reach a head:
-  * resampleUniform — linear interp of each series onto a uniform grid (the §2.9 features and the
-    FFT-based Doppler/PSD assume uniform sampling).
-  * fsOk — drop a window whose LIVE estimated fs deviates from nominal beyond tolerance (fs is
-    always estimated from timestamps, never assumed — REFERENCE §4); resampling can't fix a window
-    that is mostly gaps.
-  * acceptFormat — ingest format filter: the dedicated controlled link emits exactly ONE packet
-    format; a stray legacy frame (e.g. 128 B vs 384 B) would silently mis-parse, so reject any other
-    length at ingest (plan §2 "ingest format filter").
+2.4 GHz congestion and queueing make the inter-frame spacing uneven:
+  * resampleUniform - interpolate each series onto a uniform grid, which the features and the
+    FFT-based Doppler/PSD both assume.
+  * fsOk - drop a window whose live fs strays too far from nominal. fs is always measured from the
+    timestamps, and resampling cannot rescue a window that is mostly gaps.
+  * acceptFormat - the controlled link emits exactly one packet format, and a stray legacy frame
+    (128 B against 384 B) would mis-parse silently, so any other length is rejected at ingest.
 
-Per-emit O(n)/window, not per-frame. NOTE (user): Python glue for now — move to C++/a faster
-library on the real-time path later.
+O(n) per emitted window, not per frame.
 """
 
 import numpy as np

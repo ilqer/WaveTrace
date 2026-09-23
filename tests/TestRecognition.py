@@ -1,7 +1,6 @@
-"""Stage A presence head and multi-RX plumbing tests.
+"""Stage A presence head and multi-RX plumbing, on 4 synthetic recordings.
 
-Uses 4 synthetic recordings. Tests leave-one-session-out and leave-one-subject-out accuracy.
-Trained head must beat baselines. Validates learning pipeline logic only.
+Accuracy is measured leave-one-session-out and leave-one-subject-out.
 """
 
 import json
@@ -90,8 +89,6 @@ def presence_data():
     }
 
 
-# ----- 6a: learnable synthetic + group ids --------------------------------------------------------
-
 def test_presence_turbulence_separates_features(presence_data):
     # Present windows must have higher per-subcarrier temporal std (idx 1).
     X, y, K = presence_data["X"], presence_data["y"], presence_data["K"]
@@ -123,11 +120,11 @@ def test_dataset_group_ids_roundtrip(presence_data, tmp_path):
 
 
 def test_model_config_validates():
-    assert ModelConfig(stage="presence", k=12).backend == "mlp"  # locked default
+    assert ModelConfig(stage="presence", k=12).backend == "mlp"
     with pytest.raises(ValueError):
         ModelConfig(stage="posture", k=12)          # not a stage
     with pytest.raises(ValueError, match="'mlp'/'svm'"):
-        build_presence_head(ModelConfig(stage="presence", k=12, backend="cnn"))  # cnn = weapon-side (P7)
+        build_presence_head(ModelConfig(stage="presence", k=12, backend="cnn"))  # cnn is weapon-side only
     with pytest.raises(ValueError):
         ModelConfig(stage="presence", k=0)
     with pytest.raises(ValueError):
@@ -143,8 +140,6 @@ def test_unregistered_backend_rejected_at_resolution_not_at_config():
     with pytest.raises(ValueError, match="rf"):
         build_weapon_head(config)
 
-
-# ----- 6b: PresenceHead + Train -------------------------------------------------------------------
 
 def _blobs(n=120, d=18, seed=0):
     """Two trivially separable feature clusters (per-class mean shift)."""
@@ -196,8 +191,6 @@ def test_train_presence_persists(presence_data, tmp_path):
     assert head.predict(presence_data["X"][:4]).shape == (4,)
 
 
-# ----- 6c: the LOCKED eval gate + baselines -------------------------------------------------------
-
 def test_eval_gate_head_beats_both_baselines(presence_data):
     """Logo accuracy must beat the majority class and PresenceSegmenter baselines."""
     d = presence_data
@@ -236,8 +229,6 @@ def test_segmenter_baseline_flags_turbulent_windows(presence_data):
     assert pred[d["y"] == 1].mean() > pred[d["y"] == 0].mean()
 
 
-# ----- 6d: inference + latency gate ---------------------------------------------------------------
-
 @pytest.fixture(scope="module")
 def inference_session(presence_data, tmp_path_factory):
     head = build_presence_head(presence_data["config"]).fit(presence_data["X"], presence_data["y"])
@@ -269,10 +260,8 @@ def test_presence_mode_session(presence_data, tmp_path):
 def test_infer_latency_under_8ms(presence_data, inference_session):
     stats = measureLatency(inference_session, presence_data["X"][0], iters=200)
     assert stats["mean_ms"] < 8.0
-    assert stats["p95_ms"] < 8.0  # DoD: per-window inference < 8 ms
+    assert stats["p95_ms"] < 8.0  # per-window inference budget
 
-
-# ----- 6e: multi-RX feature-level fusion ----------------------------------------------------------
 
 def test_fuse_concat_shape_and_order():
     a = np.arange(9, dtype=np.float32)
@@ -294,8 +283,6 @@ def test_fuse_validates():
     with pytest.raises(ValueError, match="out"):
         fuse([np.zeros(9, np.float32)], out=np.empty(10, np.float32))
 
-
-# ----- 6f: timing-jitter guards -------------------------------------------------------------------
 
 def test_resample_uniform_recovers_jittered_series():
     rng = np.random.default_rng(0)

@@ -1,17 +1,4 @@
-"""Phase 6b — PresenceHead: the first CSI-only model (Stage A), behind a backend-agnostic wrapper.
-
-The head consumes the Phase-5 `X_features` (n, 9·K) — §2.9 nine features per NBVI subcarrier on
-gain-locked amplitudes; a present human's dynamic multipath raises std/MAD/waveform-length, which is
-what separates "present" from a quiet room. The wrapper API (fit/predict/predict_proba/save/load) is
-deliberately backend-agnostic so the future numpy-only tiny head (ESP32 deployment) and the torch CNN
-(Phase-7 weapon heatmap) drop in unchanged.
-
-Training is OFFLINE; the forward pass is O(1) (fixed-length feature vector, tiny model) and is the
-real-time path Infer.py wraps (<8 ms gate).
-
-The head takes an already-resolved backend (constructor injection): resolving `config.backend`
-against the registry is `wavetrace.adapters.recognition.heads`'s job, not this class's.
-"""
+"""Is a person in the room? One verdict per window of CSI features."""
 
 from dataclasses import asdict
 from pathlib import Path
@@ -24,19 +11,19 @@ from wavetrace.domain.contracts import SCHEMA_VERSION, PipelineContract, derive_
 
 
 class PresenceHead:
-    """Backend-agnostic recognition head (Stage A presence now; same wrapper serves later stages).
+    """Classifies one (9*K,) gain-locked feature row through an injected backend.
 
-    Sklearn-only (P6 lock) — cnn/variance are weapon-only backends (`WeaponHead`)."""
+    Fitting is offline; a forward pass is O(1) in a fixed-length row."""
 
     def __init__(self, config: ModelConfig, backend):
         self.config = config
         self._backend = backend
         self._fitted = False
-        self.contract = derive_pipeline_contract(config)  # what this head trains/serves against
+        self.contract = derive_pipeline_contract(config)
 
     @classmethod
     def restore(cls, config: ModelConfig, backend, contract: PipelineContract) -> "PresenceHead":
-        """Rebuild a fitted head around an already-loaded backend and contract. Resolves nothing."""
+        """Rebuild a fitted head around an already-loaded backend and contract."""
         head = cls(config, backend)
         head.contract = contract
         head._fitted = True
@@ -55,7 +42,7 @@ class PresenceHead:
             raise ValueError(f"fit expects X (n, d) and y (n,), got {X.shape} / {y.shape}")
         classes = np.unique(y)
         if classes.size < 2:
-            # a 1-class dataset silently fits a model that can only predict that class (the all-one-verdict bug)
+            # a 1-class dataset fits a model that can only ever answer that class
             raise ValueError(
                 f"PresenceHead.fit: training data has a single class {classes.tolist()}; need both "
                 "present and absent windows (check collect-data label spans / presence turbulence)"

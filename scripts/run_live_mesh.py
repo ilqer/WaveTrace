@@ -1,13 +1,9 @@
-"""Live ALL-PAIRS presence: every (tx->rx) link served through its RX node's own cal+head; vote.
+"""Live presence over every (tx->rx) link, each served through its rx node's own cal and head.
 
-Max-info path. Splits the batched-UDP stream into per-(tx,rx)-link streams (parseBatchLinks), and
-serves EACH link through the calibration + presence head of its RX node — gain is an RX property
-(gain=LOCK vs gain=SKIP differ per board), so calibration/normalization is per-RX-node, while the
-features stay per-link to keep all N(N-1) views. LinkVoter blends every live link weighted by the
-head's decision margin, so a blocked/confused link down-weights itself and a node that drops just
-removes its links from the vote (redundancy). Ctrl+C to stop.
-
-    .venv/bin/python scripts/run_live_mesh.py
+Gain is a property of the receiver (gain=LOCK on one board, gain=SKIP on another), so calibration is
+per rx node, while the features stay per link to keep all N(N-1) views. LinkVoter blends every live
+link weighted by its head's decision margin, so a blocked link down-weights itself and a node that
+drops just removes its links from the vote.
 """
 
 import argparse
@@ -34,8 +30,7 @@ def _minWidth(result):
 
 
 def _lastWindowProba(frames, fs, result, gainLock, cfg, intercarrier, pick, session):
-    """Resample one node's frames to fs, window them, return the LAST window's class-proba or None
-    (None when there aren't enough frames to fill a window)."""
+    """Last window's class probabilities, or None when there are too few frames to fill a window."""
     res = resampleUniform(frames, fs)
     if len(res) < cfg.window:
         return None
@@ -50,8 +45,8 @@ def _lastWindowProba(frames, fs, result, gainLock, cfg, intercarrier, pick, sess
 
 
 def _logoAccuracy(metrics_path):
-    """A node head's HONEST (LOGO) balanced accuracy — session axis preferred, subject as fallback.
-    None when the model was trained without a foldable group (no validated number exists)."""
+    """LOGO balanced accuracy of a node head; session axis preferred, subject as fallback. None when
+    the model was trained without a foldable group, so no validated number exists."""
     try:
         with open(metrics_path) as f:
             logo = json.load(f).get("logo", {})
@@ -65,9 +60,8 @@ def _logoAccuracy(metrics_path):
 
 
 def loadNodeModels(cal_root, model_root, mode="presence"):
-    """Discover per-RX-node calibrations + heads -> {node_id: dict(...)}. Each node serves alone.
-    Each node carries a static vote `weight` from its validated LOGO balanced accuracy (via
-    accuracyWeights: chance->0, perfect->1), so a more reliable node counts more in the live vote."""
+    """Per rx-node calibration and head, each carrying a static vote `weight` rescaled from its LOGO
+    balanced accuracy so that chance maps to 0 and perfect to 1."""
     nodes = {}
     accs = {}
     for model_dir in sorted(glob.glob(os.path.join(model_root, "node*"))):
@@ -89,11 +83,11 @@ def loadNodeModels(cal_root, model_root, mode="presence"):
             min_width=_minWidth(result), present_i=classes.index(1) if 1 in classes else -1,
         )
         accs[nid] = _logoAccuracy(os.path.join(model_dir, "metrics.json"))
-    # Reliability prior from LOGO balanced accuracy; a node with no foldable group defaults to weight 1.0.
+    # a node with no LOGO number keeps weight 1.0
     weights = accuracyWeights({nid: a for nid, a in accs.items() if a is not None})
     for nid in nodes:
         nodes[nid]["weight"] = weights.get(nid, 1.0)
-    # Heads must share class ordering to blend raw proba vectors; hard-fail rather than silently fuse garbage.
+    # blending raw proba vectors is only valid when the heads share a class ordering
     orders = {tuple(int(c) for c in m["session"].head.classes_) for m in nodes.values()}
     if len(orders) > 1:
         raise ValueError(f"per-node heads disagree on class ordering {orders}; retrain consistently")
@@ -123,11 +117,11 @@ def main():
               f"{args.cal}/node*/. Run collect_baseline.py then collect_presence.py first.")
         return
     presentI = next(iter(nodes.values()))["present_i"]  # ordering validated equal in loadNodeModels
-    # the artifact's own resample rate, not a re-declared constant -- every node's head is trained
-    # at the same rate today, so any node's contract stands in for the print banner.
+    # read off a head's own contract rather than re-declared here; every head is trained at the same
+    # rate today, so any one of them stands in for the banner
     sample_rate_hz = next(iter(nodes.values()))["session"].head.contract.target_sample_rate_hz
 
-    # buffers keyed by (tx_short, rx_node); each link served via its RX node's cal+head
+    # keyed by (tx_short, rx_node)
     buffers = collections.defaultdict(collections.deque)
     lastSeen = {}
     linkIds = {}  # stable int id per link for LinkVoter
@@ -163,7 +157,7 @@ def main():
                     while buf and buf[0].timestamp < cutoff:
                         buf.popleft()
 
-            # static reliability x live margin (LinkVoter multiplies them); uniform fallback keeps the vote defined.
+            # LinkVoter multiplies static reliability by live margin; uniform when nothing is weighted
             linkStatic = {lid: nodes[k[1]]["weight"] for k, lid in linkIds.items()}
             static = linkStatic if any(w > 0 for w in linkStatic.values()) else None
             voter = LinkVoter(static)
@@ -171,13 +165,13 @@ def main():
             for key in sorted(buffers):
                 if now - lastSeen.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
-                m = nodes[key[1]]  # serve each (tx,rx) link through ITS RX node's cal+head
+                m = nodes[key[1]]
                 proba = _lastWindowProba(list(buffers[key]), m["session"].head.contract.target_sample_rate_hz,
                                           m["result"], m["lock"], m["cfg"], m["intercarrier"],
                                           m["pick"], m["session"])
                 if proba is None:
                     continue
-                pi = m["present_i"]  # index of class 1 in THIS rx-node's head (defensive; orderings equal)
+                pi = m["present_i"]
                 pPresent = float(proba[pi]) if pi >= 0 else 0.0
                 quality = abs(pPresent - 0.5) * 2.0  # decision margin -> 0 (unsure) .. 1 (confident)
                 voter.add(linkIds[key], proba, quality=quality)
@@ -189,7 +183,7 @@ def main():
             try:
                 _cls, blended = voter.finalize()
             except ValueError:
-                # all active links belong to node(s) validated at/below chance (weight 0) -> no vote
+                # every live link belongs to a node weighted 0, so there is no vote to take
                 print("\r(live links present, but all from chance-level nodes)   ", end="", flush=True)
                 continue
             pPresent = float(blended[presentI]) if presentI >= 0 else 0.0

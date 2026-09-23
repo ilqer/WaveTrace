@@ -30,8 +30,8 @@ def _build_net(torch, hidden: int, num_classes: int, in_channels: int = 1):
 class CnnBackend:
     """A trained `torch.nn.Sequential` plus its input normalization and image shape.
 
-    `_as_images` tolerates 2-D/3-D/4-D input and a pre-P10 2-tuple `image_shape` (prepends the
-    channel axis, C=1) so artifacts saved before multi-node images existed keep loading."""
+    `_as_images` takes 2-D, 3-D or 4-D input, and a 2-tuple `image_shape` from an artifact saved
+    before multi-node images existed, prepending C=1 so those artifacts keep loading."""
 
     feature_mode = "cnn"
 
@@ -106,7 +106,6 @@ class CnnBackend:
             return torch.softmax(logits, dim=1).numpy()
 
     def save(self) -> dict:
-        # image_shape is always a 3-tuple (C, K, W) from P10; pre-P10 blobs may have a 2-tuple.
         return {
             "state": {k: v.cpu().numpy() for k, v in self._net.state_dict().items()},
             "norm": self._normalization_stats,
@@ -121,7 +120,7 @@ class CnnBackend:
         backend._classes = blob["classes"]
         backend._normalization_stats = blob["norm"]
         raw_shape = tuple(blob["image_shape"])
-        # pre-P10 blobs store a 2-tuple (K, W); prepend C=1 to get the canonical 3-tuple
+        # older blobs store a 2-tuple (K, W); prepend C=1 for the canonical 3-tuple
         backend._image_shape = raw_shape if len(raw_shape) == 3 else (1,) + raw_shape
         in_channels = backend._image_shape[0]
         net = _build_net(torch, config.hidden, int(backend._classes.size), in_channels=in_channels)

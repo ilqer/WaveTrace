@@ -1,13 +1,9 @@
-"""Core types + synthetic-CSI DSP checks."""
-
 import numpy as np
 import pytest
 
 from wavetrace import CsiFrame, FrameError, Label, RecognitionResult
 from wavetrace.Synthetic import generateStream
 
-
-# --- core types -------------------------------------------------------------------------
 
 def test_csiframe_shape_and_dtype():
     frame = CsiFrame(num_antennas=3, num_subcarriers=64)
@@ -21,9 +17,8 @@ def test_csiframe_shape_and_dtype():
 
 def test_csiframe_grid_is_zero_copy():
     frame = CsiFrame(num_antennas=2, num_subcarriers=8)
-    frame.grid[1, 5] = 3.0 - 2.0j           # write through the view
+    frame.grid[1, 5] = 3.0 - 2.0j
     assert frame.grid[1, 5] == 3.0 - 2.0j   # a fresh view sees the same buffer
-    # Confirm shared memory.
     view = frame.grid
     view[0, 0] = 7.0 + 1.0j
     assert frame.grid[0, 0] == 7.0 + 1.0j
@@ -74,13 +69,11 @@ def test_label_fields():
     assert list(label.bbox) == pytest.approx([0.0, 0.0, 1.0, 1.0])
 
 
-# DSP perturbation recovery.
-
 def _recoverPerturbationHz(frames, sampleRateHz, scLo, scHi, fLo, fHi):
     """Reference recovery of motion frequency via cross-subcarrier differential phase -> Hann -> FFT.
     CFO cancels in conjugate product."""
     s = np.array([f.grid[0, scHi] * np.conj(f.grid[0, scLo]) for f in frames])
-    sig = np.unwrap(np.angle(s))  # §2.3: undo 2pi jumps from the static phase offset
+    sig = np.unwrap(np.angle(s))  # undo the 2pi jumps from the static phase offset
     sig = sig - sig.mean()
     n = len(sig)
     x = sig * np.hanning(n)
@@ -101,5 +94,5 @@ def test_perturbation_recovered_by_reference_fft():
         perturbationHz=fTrue, perturbationDepth=0.5, cfoHz=4.0, noiseStd=0.01, seed=7,
     )
     recovered = _recoverPerturbationHz(frames, fs, scLo=0, scHi=63, fLo=0.1, fHi=2.0)
-    # Recover injected frequency despite CFO and noise.
+    # CFO and noise must not shift the recovered frequency.
     assert recovered == pytest.approx(gt["perturbation_hz"], abs=0.05)

@@ -1,7 +1,6 @@
-"""SegmentationLabeler tests: pretrained-segmentation teacher for the CSI heatmap head.
-
-A STUB segmenter provides pixel masks to test policy (presence/weapon, mask-overlap gate, grid occupancy)
-without model dependencies. YoloSegLabeler uses identical policy.
+"""A STUB segmenter supplies the pixel masks, so the policy (presence/weapon, mask-overlap
+gate, grid occupancy) is tested without model dependencies. YoloSegLabeler uses the same
+policy.
 """
 
 import numpy as np
@@ -98,6 +97,6 @@ def test_non_callable_segmenter_rejected():
 
 
 def _grid_sum(mask, lab):
-    """Occupancy-grid mass of a mask at the labeler's grid resolution (test helper)."""
+    """Occupancy-grid mass of a mask at the labeler's grid resolution."""
     from wavetrace.groundtruth.CameraLabeler import _maskToGrid
     return sum(_maskToGrid(mask, lab._grid))

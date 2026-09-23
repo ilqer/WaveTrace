@@ -1,9 +1,3 @@
-"""Regression tests:
-  B2: Single-class training set must raise an error.
-  B3: Zero-depth synthetic weapon spans must warn.
-  B5: buildDataset must accept a generator of frames.
-"""
-
 import warnings
 
 import numpy as np
@@ -15,8 +9,6 @@ from wavetrace.Config import ModelConfig
 from wavetrace.groundtruth import ScriptedLabeler, buildDataset, presenceLabelFn
 from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
 
-
-# ----- B2: single-class guard --------------------------------------------------------------------
 
 def test_presence_head_rejects_single_class():
     head = build_presence_head(ModelConfig(stage="presence", k=2))
@@ -34,8 +26,6 @@ def test_weapon_head_rejects_single_class():
         head.fit(X, y)
 
 
-# ----- B3: zero-depth synthetic weapon warning ---------------------------------------------------
-
 def test_synthetic_weapon_zero_depth_warns():
     from wavetrace.Cli import _sourceFromArgs
 
@@ -46,8 +36,6 @@ def test_synthetic_weapon_zero_depth_warns():
     with pytest.warns(UserWarning, match="weapon-depth"):
         _sourceFromArgs(args)
 
-
-# ----- B5: buildDataset accepts a generator -----------------------------------------------------
 
 def test_build_dataset_accepts_generator():
     frames, _, _ = generatePairedRecording(

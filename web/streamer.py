@@ -5,7 +5,7 @@ import numpy as np
 import json
 from collections import deque
 
-from wavetrace.Calibration import loadCalibration, imageBaseline as get_image_baseline
+from wavetrace.Calibration import loadCalibration, build_image_baseline
 from wavetrace.recognition import modeSession, planInferenceInput, SegmentVoter, trainPresence, trainWeapon
 from wavetrace.Frontend import iterWindows
 from wavetrace.application.calibrate import calibrate_source
@@ -19,7 +19,7 @@ _OCC_GRID = 16
 
 
 def _occupancyFallback(image: np.ndarray, G: int = _OCC_GRID) -> np.ndarray:
-    """Returns per-subcarrier variance of image scaled to GxG [0,1]. Tiles if K < G² to avoid zero-padding black bars."""
+    """Tiles the variance when K < G², because zero-padding it would show as black bars."""
     var = image.var(axis=1).astype(np.float32)  # (K,)
     g2 = G * G
     if var.size < g2:
@@ -35,7 +35,6 @@ def _occupancyFallback(image: np.ndarray, G: int = _OCC_GRID) -> np.ndarray:
 
 
 def _heatmapGrid(head, image: np.ndarray) -> np.ndarray:
-    """Uses trained HeatmapHead or fallback."""
     if head is None:
         return _occupancyFallback(image)
     try:
@@ -46,13 +45,12 @@ def _heatmapGrid(head, image: np.ndarray) -> np.ndarray:
 
 
 def _classLabel(mode: str, c: int) -> str:
-    """Returns string class label for mode."""
     c = int(c)
     if mode == "presence":
         return {0: "empty", 1: "present"}.get(c, str(c))
     if mode == "weapon":
         return {0: "no weapon", 1: "weapon"}.get(c, str(c))
-    return str(c)  # count / other: numeric class id
+    return str(c)
 
 
 class ArgsMock:
@@ -67,7 +65,7 @@ class FrameSnooper:
         self._source = source
         self.latest_grid = None
         self.latest_frame = None
-        # node_id -> latest mean |CSI|; each UDP/mesh frame is single-antenna, so power is per RX board.
+        # each UDP/mesh frame carries one antenna, so this power is per RX board
         self.node_power: dict[int, float] = {}
         self._meter = health_meter
 
@@ -113,7 +111,6 @@ class WaveTraceRunner:
             from wavetrace.Source import UdpSource, UdpSourceOptions
             return UdpSource(UdpSourceOptions(port=port, timeout_seconds=60.0))
 
-        # Synthetic path — retained for CLI/test use only.
         self.log("[SIM] Synthetic source (no hardware connected).")
         args = ArgsMock(
             synthetic=True, recording=None, antennas=req.antennas,
@@ -166,7 +163,6 @@ class WaveTraceRunner:
 
         datasetPath = getattr(req, "train_data", "output/dataset_ui")
         import os, glob as _glob
-        # Support cumulative pool: if datasetPath contains saved dataset subdirs, use all of them
         _sub = sorted(_glob.glob(os.path.join(datasetPath, "*")))
         dsDirs = [d for d in _sub if os.path.isdir(d) and os.path.exists(os.path.join(d, "X_features.npy"))]
         if not dsDirs:
@@ -194,15 +190,13 @@ class WaveTraceRunner:
                 "type": "epoch",
                 "epoch": epoch,
                 "loss": float(m.get("loss", 0.0)),
-                "loss_std": float(m.get("loss_std", 0.0)),  # within-epoch batch spread -> curve band
+                "loss_std": float(m.get("loss_std", 0.0)),  # within-epoch batch spread; the client draws it as a band
                 "accuracy": float(m.get("acc", m.get("accuracy", 0.0))),
             })
             self.log(f"Epoch {epoch}: loss={m.get('loss', 0):.4f}")
 
         try:
             if req.col_stage == "presence":
-                # PresenceHead is sklearn-only (P6 lock, wavetrace/recognition/Model.py) — cnn/variance
-                # are weapon-only backends and don't apply here.
                 from wavetrace.adapters.recognition import is_sklearn_backend
                 backend_is_sklearn = is_sklearn_backend(req.train_backend)
                 backend = req.train_backend if backend_is_sklearn else "mlp"
@@ -222,7 +216,6 @@ class WaveTraceRunner:
                 m = self._trainHeatmap(datasetPath, req, report)
                 self._emitTrain({"type": "done", "metrics": m})
             elif getattr(req, "per_link", False):
-                # Per-link weapon: one head per node*/link*/ dataset subdir
                 nOk = 0
                 for _nd in sorted(_glob.glob(os.path.join(datasetPath, "node*"))):
                     _nidS = os.path.basename(_nd)[4:]
@@ -258,7 +251,7 @@ class WaveTraceRunner:
                 cfg = ModelConfig(stage="weapon", k=k, backend=req.train_backend)
                 from wavetrace.adapters.recognition import get_backend_class
                 fm = get_backend_class(req.train_backend).feature_mode
-                # report streams per-epoch curves to the dashboard (cnn only; ignored by ic27/variance)
+                # only the cnn backend calls report; ic27 and variance ignore it
                 _, m = trainWeapon(dsDirs, out_dir=req.train_out, config=cfg,
                                     feature_mode=fm, report=report)
                 self._emitTrain({"type": "done", "metrics": m})
@@ -273,7 +266,6 @@ class WaveTraceRunner:
             self.is_running = False
 
     def _trainHeatmap(self, dataset_path: str, req, report) -> dict:
-        """Train the camera-supervised G×G heatmap head from datasets with Label.mask."""
         from wavetrace.groundtruth import loadDataset
         from wavetrace.recognition.Heatmap import HeatmapHead
         from wavetrace.Config import ModelConfig
@@ -307,7 +299,7 @@ class WaveTraceRunner:
         
         isMesh = os.path.isdir(model_path) and any(os.path.isdir(os.path.join(model_path, d)) for d in os.listdir(model_path) if d.startswith("node"))
 
-        # Determine internal mode for session loading (count uses presence head)
+        # count reuses the presence head
         loadMode = "presence" if mode == "count" else mode
 
         if isMesh:
@@ -325,7 +317,7 @@ class WaveTraceRunner:
                 sess = modeSession(loadMode, mpath)
                 alock, ic, pck = planInferenceInput(loadMode, sess.head)
                 classes = [int(c) for c in sess.head.classes_]
-                # Item 10/CAUSE 2B: must serve with the same IC baseline used in training or σ²[p] mismatches.
+                # serve with the same IC baseline used in training, or σ²[p] does not match
                 icBase = (res.baseline_mag
                            if getattr(sess.head.config, "subtract_ic_baseline", False) else None)
                 nodes[nid] = dict(
@@ -364,9 +356,9 @@ class WaveTraceRunner:
             apply_lock, intercarrier, pick = planInferenceInput(loadMode, session.head)
             if not use_gain_lock: gainLock = None
             cfg = session.head.config
-            # Item 10/CAUSE 2B: mirror training's IC background subtraction at serve time.
+            # mirror training's IC background subtraction at serve time
             _icBase = result.baseline_mag if getattr(cfg, "subtract_ic_baseline", False) else None
-            _imgBase = get_image_baseline(result, locked=(apply_lock and gainLock is not None)) if use_baseline else None
+            _imgBase = build_image_baseline(result, locked=(apply_lock and gainLock is not None)) if use_baseline else None
             globalClasses = session.head.classes_
             _posIdx = list(globalClasses).index(1) if 1 in globalClasses else -1
             try:
@@ -376,7 +368,6 @@ class WaveTraceRunner:
             except: _antWeights = None
             nodes = {0: dict(result=result, lock=gainLock, intercarrier=intercarrier, pick=pick, session=session, cfg=cfg)}
 
-        # ---- Gap 2: trained heatmap head (replaces _occupancyFallback when present) ----
         _modelDir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
         _hmPath = os.path.join(_modelDir, "heatmap.joblib")
         heatmapHead = None
@@ -388,7 +379,6 @@ class WaveTraceRunner:
             except Exception as _hmE:
                 self.log(f"[HM] WARNING: heatmap load failed ({_hmE}); using fallback")
 
-        # ---- Gap 3: per-link weapon entries (auto-detected from node*/link*/ dirs) ------
         weaponEntries = None
         if isMesh and mode == "weapon":
             _nodeDirs = [os.path.join(model_path, b) for b in os.listdir(model_path)
@@ -425,7 +415,7 @@ class WaveTraceRunner:
 
         import collections
         from wavetrace.Source import parseBatchLinks
-        buffers = collections.defaultdict(lambda: collections.deque(maxlen=300))  # ~3s at 100Hz (#17)
+        buffers = collections.defaultdict(lambda: collections.deque(maxlen=300))  # ~3 s at 100 Hz
         lastSeen = {}
         linkIds = {}
         nextFuse = time.time() + 1.5
@@ -433,9 +423,9 @@ class WaveTraceRunner:
         self.log("Stream started.")
         try:
             if isMesh:
-                # per-link serving math lives once in WeaponServing.py; presence/count/weapon all share it.
                 from wavetrace.recognition import dwellProbaDetailed, linkHealth
-                # Use raw UDP ingestion for parseBatchLinks instead of snooper.frames()
+                # parseBatchLinks needs the raw datagram, so read the socket directly
+                # instead of going through snooper.frames()
                 import socket
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.settimeout(0.5)
@@ -472,7 +462,7 @@ class WaveTraceRunner:
                     repFeatures = None
                     repIc = None
                     nodePower = {nid: 0.0 for nid in nodes}
-                    linkStats = []  # per (tx->rx) delivered Hz + missing-frame fraction (C9b) for the UI
+                    linkStats = []  # per tx→rx: delivered Hz and missing-frame fraction
 
                     for key in sorted(buffers):
                         if now - lastSeen.get(key, 0) > 3.0 or len(buffers[key]) < 2: continue
@@ -485,7 +475,6 @@ class WaveTraceRunner:
                         linkStats.append({"tx": key.tx_mac_suffix, "rx": key.rx_node_id,
                                            "hz": round(_hz, 1), "miss": round(_miss, 3)})
 
-                        # temporal soft vote over the buffer + last window's image/features/ic for the spectrogram
                         lastProbs, image, features, ic, _nw = dwellProbaDetailed(
                             list(buffers[key]), m["session"].head.contract.target_sample_rate_hz, m)
                         if lastProbs is None: continue
@@ -521,7 +510,6 @@ class WaveTraceRunner:
 
                     asyncio.run_coroutine_threadsafe(self.inference_queue.put(json.dumps(r)), self.loop)
 
-                    # Stream payload (use the last valid link's image for visualization)
                     if repImage is not None:
                         occGrid = _heatmapGrid(heatmapHead, repImage)
                         npItems = sorted(nodePower.items())
@@ -625,7 +613,7 @@ class WaveTraceRunner:
             self.is_running = False
 
     def startCameraCollectManaged(self, req):
-        """Camera collection: concurrent webcam YOLO and mesh CSI. Builds per-node, stacked heatmap, and optionally per-link weapon datasets."""
+        """The webcam labeler runs on a worker thread while this thread ingests mesh CSI."""
         self.is_running = True
         import os, glob as _g, socket as _sock, threading, time as _t, collections as _col
 
@@ -649,15 +637,13 @@ class WaveTraceRunner:
         perLink = bool(getattr(req, "per_link", False))
         root = getattr(req, "train_data", "data/2g4_ht40")
 
-        # ── Load calibrations ──────────────────────────────────────────────
-        # Try per-node layout first (node0/, node1/, …), fall back to flat dir.
         calibs = {}
         for d in sorted(_g.glob(f"{req.calibration}/node*")):
             base = os.path.basename(d)
             if base[4:].isdigit():
                 calibs[int(base[4:])] = loadCalibration(d)
         if not calibs:
-            # Flat calibration dir (single-node or unified calib) — treat as node 0
+            # older flat calibration dirs have no node*/ level; they count as node 0
             flatMeta = os.path.join(req.calibration, "meta.json")
             if os.path.exists(flatMeta):
                 calibs[0] = loadCalibration(req.calibration)
@@ -682,13 +668,14 @@ class WaveTraceRunner:
             return
 
         self.log(f"[CAM] Capturing {duration:g}s  stage={req.col_stage}  cam={camIndex}  port={req.udp_port}")
-        # 5fps is plenty since labels change slowly relative to the 1.28s CSI window; cuts CPU load 3x vs 15fps.
+        # labels change slowly next to the 1.28 s CSI window, so 5 fps is enough and costs
+        # a third of the CPU that 15 fps does
         CAM_FPS = 5.0
 
         perNode = _col.defaultdict(list)
         perLinkCsi = _col.defaultdict(list)
         box: dict = {}
-        camStop = threading.Event()  # set this to stop the camera worker early
+        camStop = threading.Event()
 
         def _camWorker():
             try:
@@ -723,7 +710,7 @@ class WaveTraceRunner:
                         perLinkCsi[(tx, rx)].extend(frames)
         finally:
             s.close()
-            camStop.set()  # signal the camera thread to stop even if duration not elapsed
+            camStop.set()  # stop the camera thread even when the duration has not elapsed
 
         th.join(timeout=max(5.0, duration * 0.1))
         if th.is_alive():
@@ -752,7 +739,6 @@ class WaveTraceRunner:
                 f.node_id = nid
             res[nid] = rf
 
-        # 1) Per-node presence/weapon datasets
         presBuilt = []
         for nid in calNodes:
             frs = res.get(nid, [])
@@ -769,7 +755,6 @@ class WaveTraceRunner:
             presBuilt.append(nid)
             self.log(f"[CAM] node {nid} -> {ds}")
 
-        # 2) Stacked heatmap dataset (all nodes as channels + occupancy mask)
         merged = [f for nid in calNodes for f in res.get(nid, [])]
         if merged:
             hmDir = f"{root}/cam_ds/heatmap/{sess}"
@@ -781,7 +766,6 @@ class WaveTraceRunner:
             self.log(f"[CAM] heatmap stacked -> {hmDir} "
                      f"({hmDs.X_image.shape[0]} windows, {nMask} masks)")
 
-        # 3) Per-link weapon datasets (requires per_link=True and stage=weapon)
         if req.col_stage == "weapon" and perLink:
             for (tx, rx), frs in perLinkCsi.items():
                 if rx not in calNodes:

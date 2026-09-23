@@ -1,7 +1,7 @@
-"""End-to-end pipeline tests: capture/recording -> calibrate -> collect-data -> train -> run -> publish.
+"""End-to-end: capture/recording -> calibrate -> collect-data -> train -> run -> publish.
 
-Validates that CLI modes compose correctly and serving features match training.
-Ensures parity: serving pipeline (iterWindows) must produce byte-identical features to training (buildDataset).
+Parity: the serving pipeline (iterWindows) must produce byte-identical features to
+training (buildDataset).
 """
 
 import io
@@ -57,8 +57,6 @@ def _presence_recording(seed=300, duration=10.0):
     return frames
 
 
-# ----- recording + calibration serialization -----------------------------------------------------
-
 def test_recording_roundtrip(tmp_path):
     frames = _weapon_recording(duration=2.0)
     saveRecording(frames, tmp_path / "rec")
@@ -95,8 +93,6 @@ def test_calibration_disabled_lock_roundtrips_to_none(tmp_path):
     assert gl is None
 
 
-# ----- the parity invariant (the reason Frontend.iterWindows exists) ------------------------------
-
 def test_run_features_match_build_dataset(tmp_path):
     """iterWindows (serving) must yield the SAME features buildDataset (training) stores."""
     frames = _weapon_recording(duration=4.0)
@@ -105,7 +101,6 @@ def test_run_features_match_build_dataset(tmp_path):
     # Training arrays: using raw mags, gainLock=None.
     ds = buildDataset(frames, result, None, ScriptedLabeler([(2.5, 7.5, True)]),
                        window=32, hop=16, intercarrier=True)
-    # Serving stream processes the same frames.
     feats, ics = [], []
     for _, f, _img, ic in iterWindows(frames, result.subcarriers, None, window=32, hop=16,
                                        intercarrier=True):
@@ -113,8 +108,6 @@ def test_run_features_match_build_dataset(tmp_path):
     assert np.allclose(np.stack(feats), ds.X_features)
     assert np.allclose(np.stack(ics), ds.X_intercarrier)
 
-
-# ----- serving plan wiring ------------------------------------------------------------------------
 
 class _FakeHead:
     def __init__(self, backend, feature_mode=None):
@@ -125,21 +118,15 @@ class _FakeHead:
 
 def test_serving_plan_table():
     f = np.arange(3.0); i = np.zeros((2, 2)); ic = np.arange(5.0)
-    # Presence: features used, lock on, no intercarrier (ic).
     lock, inter, pick = planInferenceInput("presence", _FakeHead("mlp"))
     assert (lock, inter) == (True, False) and np.array_equal(pick(f, i, ic), f)
-    # Weapon variance/ic27: ic used, lock off.
     lock, inter, pick = planInferenceInput("weapon", _FakeHead("variance", "ic27"))
     assert (lock, inter) == (False, True) and np.array_equal(pick(f, i, ic), ic)
-    # Weapon fusion: hstack(ic, f) used, lock on.
     lock, inter, pick = planInferenceInput("weapon", _FakeHead("mlp", "fusion"))
     assert (lock, inter) == (True, True) and np.array_equal(pick(f, i, ic), np.hstack([ic, f]))
-    # Weapon CNN: flattened image used, lock off.
     lock, inter, pick = planInferenceInput("weapon", _FakeHead("cnn", "cnn"))
     assert (lock, inter) == (False, False) and np.array_equal(pick(f, i, ic), i.reshape(-1))
 
-
-# ----- end-to-end: collect -> train -> run -> publish ---------------------------------------------
 
 def test_end_to_end_weapon(tmp_path):
     frames = _weapon_recording()
@@ -165,7 +152,6 @@ def test_end_to_end_weapon(tmp_path):
 
 
 def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
-    # Camera label source (GxG masks) flows through collectSource. Mask and tier persist to disk.
     frames = _weapon_recording(duration=4.0)
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     grid = 4
@@ -229,8 +215,6 @@ def test_inference_latency_under_8ms(tmp_path):
     stats = measureLatency(session, np.zeros(27, dtype=np.float32))
     assert stats["max_ms"] < 8.0
 
-
-# ----- publisher schema ---------------------------------------------------------------------------
 
 def test_result_to_dict_schema():
     r = RecognitionResult(); r.class_id = 1; r.confidence = 0.9; r.timestamp = 1.2

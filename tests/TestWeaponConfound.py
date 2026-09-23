@@ -1,4 +1,4 @@
-"""Item 13: Carry-position confound axis in the weapon LOGO report (CAUSE 5E)."""
+"""Carry-position confound axis in the weapon LOGO report."""
 import numpy as np
 
 from wavetrace.recognition.Train import _carryGroups, _logoMetrics

@@ -1,15 +1,13 @@
-"""Phase 5c — drive the shared P4 front-end over a CSI recording, attach aligned labels, emit and
-serialize a labeled dataset {(x_t, label_t)} (OFFLINE — correctness + sync, not Big-O).
+"""Run a CSI recording through the front-end, attach aligned labels, and save a labeled dataset.
 
-Both recognition inputs are stored (MINDMAP "Recognition input contract") so Phase 6/7 picks
-MLP/SVM or heatmap-CNN with no re-run:
-  * X_features (n, 9·K) — §2.9 nine features per NBVI subcarrier
-  * X_image    (n, K_img, window) — selected-subcarrier × time CSI "image" (T1/P10: K_img is the
-    full noise-gate-passing set when calibration has image_subcarriers; fallback = NBVI K)
+Every sample stores both recognition inputs, so a later model can pick either without re-running
+the recording:
+  * X_features (n, 9·K) - nine features per NBVI subcarrier
+  * X_image    (n, K_img, window) - subcarrier × time CSI "image"; K_img is the full set that
+    passed the noise gate when calibration selected one, otherwise the NBVI K
 
-Labels stay binary (A presence / E weapon) via the labeler's `label_fn`, but the raw box/keypoints
-and any weapon position ride along on the Label and into the manifest, so the location/heatmap work
-needs no re-run.
+The label itself is binary, but its box, keypoints and any weapon position ride along into the
+manifest, so heatmap and location work needs no re-run either.
 
 Serialization = JSONL manifest + .npy arrays under data/<name>/ (gitignored):
     meta.json       dataset-level: fs, K, K_img, subcarriers, image_subcarriers, window/hop,
@@ -25,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from wavetrace import InterCarrierExtractor, Label
-from wavetrace.Calibration import imageBaseline as _image_baseline
+from wavetrace.Calibration import build_image_baseline
 from wavetrace.Frontend import demuxByNode, iterWindows, iterWindowsStacked
 from wavetrace.groundtruth.Align import align
 
@@ -38,11 +36,10 @@ class Dataset:
     t: np.ndarray                    # (n,) float64 window-END timestamps
     labels: list[Label]             # full Labels (box/keypoints/position preserved)
     meta: dict = field(default_factory=dict)
-    # P6a group ids (one per sample) — the leave-one-session/subject-out eval gate folds on these.
     session_ids: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=object))
     subject_ids: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=object))
-    # P7p-a: (n, 27) inter-carrier block (µ|σ²|CV × 9) from RAW magnitudes — the σ²[p] weapon-head
-    # input. None unless built with intercarrier=True (which requires gainLock=None).
+    # (n, 27) inter-carrier block (µ|σ²|CV × 9) from RAW magnitudes; None unless built with
+    # intercarrier=True, which requires gainLock=None.
     X_intercarrier: np.ndarray | None = None
 
 
@@ -80,21 +77,23 @@ def buildDataset(
 ) -> "Dataset":
     """Build a labeled dataset from a CSI recording + a label source.
 
-    `label_source` is either a list[Label] (camera/replay — nearest-match Aligned to windows + sync
-    error measured) OR a callable t->Label (scripted / location-chip — same CSI clock, evaluated at
-    each window timestamp, no drop).
+    `label_source` is either a list[Label] - camera or replay, nearest-matched to each window with
+    the sync error measured - or a callable t->Label on the same CSI clock, evaluated at every
+    window timestamp and never dropped.
 
     `gainLock` = the locked GainLock from `calibration`, OR None to skip the per-frame amplitude
-    rescale. Pass None for material / weapon datasets (σ²[p], reflectionSignature): gain lock
-    normalizes every frame to a common mean, erasing the bulk attenuation those features measure.
-    Use it only for the amplitude / presence feature path.
+    rescale. Pass None for material and weapon datasets: the gain lock normalizes every frame to a
+    common mean, which erases the bulk attenuation σ²[p] and reflectionSignature measure. It is
+    for the amplitude and presence path only.
 
-    session_id / subject_id (P6a): group ids of THIS recording, stamped on every sample.
-    intercarrier (P7p-a): also emit the (n, 27) IC block from RAW magnitudes.
-    frame_average (T2/P10): non-overlapping decimating mean (M=1 = no change).
-    subtract_baseline (T3/P10): subtract the quiet-room baseline from the image path only.
-    subtract_ic_baseline (Item 10/CAUSE 2B): subtract the raw quiet-room baseline from the IC path
-      (weapon σ²[p] background subtraction). Independent of subtract_baseline (image path)."""
+    session_id / subject_id: group ids of this recording, stamped on every sample; the
+      leave-one-group-out evaluation folds on them.
+    intercarrier: also emit the (n, 27) inter-carrier block from RAW magnitudes.
+    frame_average: M >= 1 non-overlapping decimating mean; 1 leaves the rate alone.
+    subtract_baseline: subtract the quiet-room baseline from the image path only.
+    subtract_ic_baseline: subtract the raw quiet-room baseline from the inter-carrier path, so the
+      weapon's σ²[p] sees the perturbation rather than the whole static room. Independent of
+      subtract_baseline."""
     subc = np.asarray(calibration_result.subcarriers, dtype=np.intp)
     K = int(subc.size)
     imgSubcList = getattr(calibration_result, "image_subcarriers", None) or list(calibration_result.subcarriers)
@@ -102,14 +101,14 @@ def buildDataset(
 
     imgBaselineArr = None
     if subtract_baseline:
-        imgBaselineArr = _image_baseline(calibration_result, locked=(gainLock is not None))
+        imgBaselineArr = build_image_baseline(calibration_result, locked=(gainLock is not None))
     # IC background subtraction uses the RAW baseline (the IC path is always raw, gainLock=None for
     # weapon), so no locked-basis rescale — just the quiet-room mean |H| per subcarrier.
     icBaselineArr = (np.asarray(calibration_result.baseline_mag, dtype=np.float32)
                        if (subtract_ic_baseline and intercarrier) else None)
 
     # materialize once: iterWindows consumes the stream, and the fs estimate below re-indexes
-    # frames[-1] — a bare generator would be exhausted by then (B5).
+    # frames[-1], which a bare generator would have exhausted by then.
     frames = list(frames)
 
     feats: list[np.ndarray] = []
@@ -129,7 +128,6 @@ def buildDataset(
             ics.append(ic.copy())
         wts.append(t)
 
-    # ----- attach labels --------------------------------------------------------------------------
     sel, selLabels, stats = _attachLabels(wts, label_source, tolerance)
 
     if sel:
@@ -141,15 +139,14 @@ def buildDataset(
     y = np.asarray([l.class_id for l in selLabels], dtype=np.int64)
     tArr = np.asarray([wts[i] for i in sel], dtype=np.float64)
 
-    # fs estimated live from CsiFrame timestamps (never assume packet rate, REFERENCE §4)
+    # measure fs from the frame timestamps; the configured packet rate is not what arrives
     fs = ((len(frames) - 1) / (frames[-1].timestamp - frames[0].timestamp)
           if len(frames) > 1 and frames[-1].timestamp > frames[0].timestamp else 0.0)
     meta = {
         "fs": float(fs),
         "K": K,
         "K_img": KImg,
-        # raw per-frame capture width (64/128/192 by band; Source.py's per-link width guard keeps
-        # this uniform across `frames`) -- distinct from K, the NBVI-selected subset of it.
+        # raw capture width (64/128/192 by band), not K, which is the NBVI-selected subset of it
         "num_subcarriers": int(frames[0].num_subcarriers),
         "subcarriers": [int(s) for s in calibration_result.subcarriers],
         "image_subcarriers": imgSubcList,
@@ -210,10 +207,10 @@ def buildDatasetStacked(
     for nid in nodeIds:
         calResult, gainLock = calibrations[nid]
         imgSubc = getattr(calResult, "image_subcarriers", None) or list(calResult.subcarriers)
-        base = _image_baseline(calResult, locked=(gainLock is not None)) if subtract_baseline else None
+        base = build_image_baseline(calResult, locked=(gainLock is not None)) if subtract_baseline else None
         perNodeCalib[nid] = (list(calResult.subcarriers), imgSubc, gainLock, base)
 
-    # K and K_img from lowest node id (all nodes must match — validated by iterWindowsStacked)
+    # all nodes share these widths; iterWindowsStacked has already checked that
     firstCal = calibrations[nodeIds[0]][0]
     K = len(firstCal.subcarriers)
     imgSubcList = getattr(firstCal, "image_subcarriers", None) or list(firstCal.subcarriers)
@@ -306,7 +303,7 @@ def saveDataset(dataset: "Dataset", out_dir) -> Path:
                 "name": lab.name,
                 "bbox": list(lab.bbox) if lab.bbox is not None else None,
                 "keypoints": list(lab.keypoints),
-                # heatmap target: the camera mask pooled to a G×G grid (None unless a SegmentationLabeler set it)
+                # heatmap target: the camera mask pooled to a G×G grid, set only by a SegmentationLabeler
                 "mask": [float(v) for v in lab.mask] if lab.mask else None,
                 "mask_grid": int(lab.mask_grid) if lab.mask_grid else None,
                 "session_id": str(dataset.session_ids[i]) if dataset.session_ids.size else "",

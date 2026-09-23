@@ -1,13 +1,9 @@
-"""Hardware ingest tests: FrameParser decode + NodeAggregator tagging/sync."""
-
 import numpy as np
 import pytest
 
 from wavetrace import CsiFrame, FrameError, FrameParser, NodeAggregator
 from fixtures.SyntheticCsi import encodeFrame, generateRawFrames
 
-
-# FrameParser decode correctness.
 
 def test_parse_round_trip_recovers_complex_grid():
     # Random int8 I/Q must decode exactly (exercises sign fixup).
@@ -40,22 +36,21 @@ def test_parse_stamps_timestamp_and_node_id():
 def test_parse_length_mismatch_raises_frameerror():
     parser = FrameParser(num_antennas=1, num_subcarriers=4)  # Expects 8 bytes.
     with pytest.raises(FrameError):
-        parser.parse(np.zeros(6, dtype=np.uint8))  # Truncated packet -> error.
+        parser.parse(np.zeros(6, dtype=np.uint8))
 
 
 def test_parse_reuses_buffer_across_calls():
-    # Same CsiFrame reused each call (zero alloc).
+    # The same CsiFrame is reused each call: no per-frame allocation.
     frames = generateRawFrames(numAntennas=1, numSubcarriers=4, numFrames=2, seed=2)
     parser = FrameParser(num_antennas=1, num_subcarriers=4)
     first = parser.parse(frames[0][0])
     second = parser.parse(frames[1][0])
-    assert first is second  # Identical Python object.
-    assert np.array_equal(second.grid, frames[1][1])  # Holds second frame's data.
+    assert first is second
+    assert np.array_equal(second.grid, frames[1][1])
 
 
 @pytest.mark.parametrize("numAntennas,numSubcarriers", [(1, 1), (1, 64), (64, 1), (2, 30)])
 def test_parse_arbitrary_geometry(numAntennas, numSubcarriers):
-    # Parser must handle any geometry (1x1, 1xN, Nx1, MxN).
     raw, expected = generateRawFrames(
         numAntennas=numAntennas, numSubcarriers=numSubcarriers, numFrames=1, seed=3
     )[0]
@@ -64,8 +59,6 @@ def test_parse_arbitrary_geometry(numAntennas, numSubcarriers):
     assert frame.grid.shape == (numAntennas, numSubcarriers)
     assert np.array_equal(frame.grid, expected)
 
-
-# NodeAggregator tagging + time-sync.
 
 def _frameWith(node_id, timestamp, value):
     frame = CsiFrame(num_antennas=1, num_subcarriers=2)
@@ -79,10 +72,10 @@ def test_aggregator_tags_and_keeps_latest_per_node():
     agg = NodeAggregator()
     agg.submit(_frameWith(0, 1.00, 1 + 0j))
     agg.submit(_frameWith(1, 1.01, 2 + 0j))
-    agg.submit(_frameWith(0, 1.02, 9 + 0j))  # Overwrites node 0's latest.
+    agg.submit(_frameWith(0, 1.02, 9 + 0j))
     assert agg.num_nodes == 2
     synced = {int(f.node_id): f for f in agg.synced(tolerance=0.1)}
-    assert synced[0].grid[0, 0] == 9 + 0j  # Newest for node 0.
+    assert synced[0].grid[0, 0] == 9 + 0j
     assert synced[1].grid[0, 0] == 2 + 0j
 
 

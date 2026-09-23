@@ -1,4 +1,4 @@
-"""WEAPON_NLOS_PLAN: per-link weapon heads and health metrics."""
+"""Per-link weapon heads and link health metrics."""
 
 from types import SimpleNamespace
 
@@ -17,7 +17,6 @@ def test_link_tag_parses_tx_from_dataset_dir():
 
 
 def test_entry_for_prefers_per_link_then_falls_back_to_node():
-    """Resolves link key to per-link head, or falls back to per-node head."""
     perLink = {("4f9c", 2): "LINK", (None, 2): "NODE"}
     assert _entryFor(perLink, ("4f:9c", 2)) == "LINK"   # per-link wins
     assert _entryFor(perLink, ("64:b8", 2)) == "NODE"   # unknown direction -> node fallback
@@ -37,7 +36,6 @@ def test_link_health_clean_stream_no_missing():
 
 
 def test_link_health_detects_dropped_frames():
-    """Gaps yield nonzero missing fraction."""
     ts = list(np.arange(20) * 0.01)
     del ts[10]; del ts[5]  # two single-frame drops
     hz, miss = linkHealth(_frames(ts))

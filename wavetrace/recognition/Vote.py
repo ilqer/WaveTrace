@@ -1,10 +1,9 @@
-"""Phase 7p-e: Soft majority voting over presence event.
+"""One verdict per segment: accumulate class probabilities while it is active, then take the
+argmax of their mean.
 
-Accumulates class probabilities during an active segment; verdict is argmax of mean.
-Voting helps moving subjects, not static windows.
-Options: mid-segment extraction and window decimation.
-
-O(1) per add, O(votes) finalize."""
+Voting helps a moving subject, not a static one. The middle of a segment can be extracted and its
+windows decimated. O(1) per add, O(votes) to finalize.
+"""
 
 import numpy as np
 

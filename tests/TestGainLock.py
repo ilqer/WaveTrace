@@ -1,5 +1,3 @@
-"""Gainlock tests: AGC stabilization + CV fallback."""
-
 import numpy as np
 import pytest
 
@@ -13,8 +11,6 @@ def _frame(grid):
     return f
 
 
-# Coefficient of Variation (gain-invariant).
-
 def test_cv_is_gain_invariant():
     rng = np.random.default_rng(0)
     amp = rng.uniform(0.2, 2.0, 64).astype(np.float32)
@@ -24,8 +20,6 @@ def test_cv_is_gain_invariant():
     assert coefficient_of_variation((0.1 * amp).astype(np.float32)) == pytest.approx(base, rel=1e-5)
     assert coefficient_of_variation(np.ones(32, np.float32)) == pytest.approx(0.0, abs=1e-6)
 
-
-# GainLock: removes AGC gain, preserves phase.
 
 def test_gainlock_removes_per_frame_gain():
     rng = np.random.default_rng(1)
@@ -43,7 +37,6 @@ def test_gainlock_removes_per_frame_gain():
     gl.apply(f1)
     gl.apply(f2)
     assert np.allclose(np.abs(f1.grid), np.abs(f2.grid), rtol=1e-4)
-    # Frame rescaled to reference level.
     assert np.abs(f1.grid).mean() == pytest.approx(gl.reference_scale, rel=1e-4)
 
 
@@ -60,8 +53,6 @@ def test_gainlock_preserves_phase():
     gl.apply(f)
     assert np.allclose(np.angle(f.grid), before, atol=1e-5)  # Positive real scale leaves phase untouched.
 
-
-# GainLock error handling.
 
 def test_gainlock_ready_and_observed():
     gl = GainLock(3)

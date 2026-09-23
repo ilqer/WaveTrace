@@ -84,8 +84,6 @@ def _strip_contract_keys(path):
     return path
 
 
-# ----- PresenceHead ------------------------------------------------------------------------------
-
 def test_presence_head_save_writes_contract_and_schema_version(tmp_path):
     config = ModelConfig(stage="presence", k=2, window=64, hop=16)
     X, y = _presence_blobs(k=2)
@@ -112,8 +110,6 @@ def test_presence_head_load_falls_back_when_contract_absent(tmp_path):
     assert np.array_equal(loaded.predict(X), head.predict(X))  # backward-compatible: still predicts
 
 
-# ----- WeaponHead ---------------------------------------------------------------------------------
-
 def test_weapon_head_save_writes_contract_and_schema_version(tmp_path):
     config = ModelConfig(stage="weapon", k=12, backend="variance", window=64, hop=8)
     X, y = _weapon_variance_blobs()
@@ -139,8 +135,6 @@ def test_weapon_head_load_falls_back_when_contract_absent(tmp_path):
     assert loaded.contract == derive_pipeline_contract(loaded.config)
     assert np.array_equal(loaded.predict(X), head.predict(X))  # backward-compatible: still predicts
 
-
-# ----- save() serializes self.contract, not a fresh re-derivation ---------------------------------
 
 def test_presence_head_resave_preserves_a_stored_contract_that_diverged_from_derivation(tmp_path):
     """Load an artifact whose stored contract differs from derive_pipeline_contract(config) (as
@@ -171,8 +165,6 @@ def test_weapon_head_resave_preserves_a_stored_contract_that_diverged_from_deriv
     resaved = reloaded.save(tmp_path / "resaved.joblib")
     assert joblib.load(resaved)["contract"]["subcarrier_width"] == 48
 
-
-# ----- subcarrier_width is the real capture width, not the NBVI-selected k -------------------------
 
 def test_train_presence_stamps_dataset_capture_width_not_k(tmp_path):
     ds = _presence_dataset(num_subcarriers=32, k=2)

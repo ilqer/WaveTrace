@@ -1,5 +1,3 @@
-"""Tests for multi-node stacking: demuxByNode, iterWindowsStacked, buildDatasetStacked."""
-
 import numpy as np
 import pytest
 
@@ -62,10 +60,7 @@ def _two_node_frames(duration=4.0, seed=200, scale1=SCALE1, ts_offset1=0.0):
     return result
 
 
-# ---- T4d.1 + T4d.2: demuxByNode ---------------------------------------------------
-
 def test_two_node_recording_and_demux():
-    """2-node interleaved stream demuxes into two independent lists; node_ids and counts match."""
     frames = _two_node_frames(duration=2.0)
     byNode = demuxByNode(frames)
     assert set(byNode.keys()) == {0, 1}
@@ -87,8 +82,6 @@ def test_demux_order_preserved():
         ts = [fr.timestamp for fr in byNode[nid]]
         assert ts == sorted(ts)
 
-
-# ---- T4d.3: stacked shapes -----------------------------------------------------------
 
 def test_stacked_shapes():
     """iterWindowsStacked yields (N·9·K,), (N, K_img, W), (N·27,) shapes for N=2."""
@@ -114,8 +107,6 @@ def test_stacked_shapes():
     assert ic.shape == (2 * 27,)
 
 
-# ---- T4d.4: single-node parity -------------------------------------------------------
-
 def test_single_node_parity():
     """1-node stacked == plain iterWindows: features allclose, timestamps match, image allclose."""
     frames = list(_single_node_frames(duration=4.0))
@@ -125,7 +116,7 @@ def test_single_node_parity():
     W, H = 32, 16
 
     for fr in frames:
-        fr.node_id = 0  # ensure single node
+        fr.node_id = 0
 
     byNode = demuxByNode(frames)
     perNodeCalib = {0: (subc, imgSubc, None, None)}
@@ -145,10 +136,7 @@ def test_single_node_parity():
         assert np.allclose(imgS[0], ip)
 
 
-# ---- T4d.5: timestamp shift > node_tolerance → ValueError ---------------------------
-
 def test_timestamp_shift_raises():
-    """Timestamp gap > node_tolerance raises ValueError (node de-sync)."""
     frames = _two_node_frames(duration=4.0, ts_offset1=1.0)  # 1 s >> 0.05 s tolerance
     result, _ = _calibrate()
     subc = list(result.subcarriers)
@@ -163,10 +151,7 @@ def test_timestamp_shift_raises():
                                   window=32, hop=16, node_tolerance=0.05))
 
 
-# ---- T4d.6: unequal lengths → stops at shorter, no error ----------------------------
-
 def test_unequal_lengths_stops_at_shorter():
-    """If one node has fewer frames, iteration stops cleanly at the shorter stream."""
     framesLong = list(_single_node_frames(duration=6.0))
     framesShort = list(_single_node_frames(duration=2.0))
     result, _ = _calibrate()
@@ -183,8 +168,6 @@ def test_unequal_lengths_stops_at_shorter():
     itemsShort = list(iterWindows(framesShort, subc, None, window=32, hop=16))
     assert len(itemsMixed) == len(itemsShort) and len(itemsMixed) > 0
 
-
-# ---- T4d.7: mismatched K → ValueError -----------------------------------------------
 
 def test_mismatched_k_raises():
     """Nodes with different NBVI subcarrier count K raise ValueError before iteration."""
@@ -204,8 +187,6 @@ def test_mismatched_k_raises():
         list(iterWindowsStacked(perNodeFrames, perNodeCalib, window=32, hop=16))
 
 
-# ---- T4d.8: CNN on (n, N, K_img, W) + pre-P10 legacy blob ---------------------------
-
 def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     """CNN accepts (n, N, K_img, W) images: fit/predict/save→load→identical probas."""
     pytest.importorskip("torch")
@@ -219,7 +200,6 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     n = 40
     y = np.array([0] * 20 + [1] * 20, dtype=np.int64)
 
-    # 2-node (N=2 channels) model test.
     X2ch = rng.uniform(0, 1, size=(n, N, KImg, W)).astype(np.float32)
     head = build_weapon_head(config)
     head.fit(X2ch, y, epochs=2)
@@ -231,7 +211,7 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     head2 = load_weapon_head(p)
     assert np.allclose(head2.predict_proba(X2ch), proba, atol=1e-5)
 
-    # Legacy blob test: image_shape is a 2-tuple (K_img, W) for single-channel model. Simulate by stripping it.
+    # A legacy single-channel blob stores image_shape as a 2-tuple (K_img, W); strip to simulate.
     X1ch = rng.uniform(0, 1, size=(n, KImg, W)).astype(np.float32)
     head1ch = build_weapon_head(config)
     head1ch.fit(X1ch, y, epochs=2)
@@ -248,10 +228,7 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     assert np.allclose(head3.predict_proba(X1ch), proba1ch, atol=1e-5)
 
 
-# ---- T4d.9: buildDatasetStacked end-to-end ----------------------------------------
-
 def test_build_dataset_stacked_end_to_end(tmp_path):
-    """buildDatasetStacked: shapes, meta keys, save→load round-trip with frame_average=2."""
     frames = _two_node_frames(duration=6.0)
     result, _ = _calibrate()
     calibrations = {0: (result, None), 1: (result, None)}

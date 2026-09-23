@@ -1,28 +1,15 @@
-"""Phase 8 — the single source of front-end truth, shared by training (buildDataset) and serving
-(Cli.run) so the served model sees EXACTLY the features it trained on.
+"""One front-end for training and for serving, so a served model sees the features it trained on.
 
-`iterWindows` streams a CSI recording through the P4 front-end and yields one tuple per emitted
-window. The per-frame logic mirrors the dual-block contract: the inter-carrier block always sees
-RAW (pre-lock) magnitudes (the gain lock cancels the cross-subcarrier flatness the metal signature
-lives in), while the feature/image path sees the gain-locked magnitudes. Emit cadence: once the
-window fills, then every `hop` frames — all three extractors run in lockstep.
+`iterWindows` streams a CSI recording and yields one tuple per emitted window: the window fills,
+then one emit every `hop` frames, with the feature, image and inter-carrier extractors in lockstep.
+O(n log n) per emit.
 
-`frame_average` (T2/P10): non-overlapping decimating mean (LUMS moving-metal trick). M=1 (default)
-is special-cased to the original byte-identical path. For M>1 each group of M real frames is
-collapsed to one virtual frame; incomplete tail groups are dropped; effective fs = fs/M.
+The inter-carrier block always reads RAW, pre-lock magnitudes - the gain lock cancels the
+cross-subcarrier flatness the metal signature lives in - while the feature and image paths read
+gain-locked magnitudes.
 
-`image_subcarriers` (T1/P10): when set, the image path uses these subcarrier indices (all valid,
-frequency-ordered) instead of the NBVI set. Feature path always uses NBVI `subcarriers`. Dual
-SpectrogramBuilder when the two sets differ. `imageBaseline` (T3/P10, in the image path's basis)
-is subtracted per virtual frame when provided (image-path only; features and IC untouched).
-
-The yielded arrays for frame_average=1 are the extractors' REUSED zero-copy buffers: copy before
-advancing the iterator if you retain them. For frame_average>1, features and IC are also reused
-buffers; image is reused. buildDataset copies each. O(n log n) per emit.
-
-`iterWindowsStacked` (T4/P10): lockstep-zip one `iterWindows` per node, yield channel-stacked
-(N, K_img, window) images and (N·9·K,) feature vectors. `demuxByNode` splits an interleaved
-stream by node_id.
+The arrays yielded are the extractors' reused zero-copy buffers: copy them before advancing the
+iterator if you keep them. `iterWindowsStacked` yields fresh arrays instead.
 """
 
 import numpy as np
@@ -35,205 +22,210 @@ def iterWindows(frames, subcarriers, gainLock, *, window=128, hop=32, intercarri
     """Yield (t, features, image, ic) per emitted window over `frames`.
 
     subcarriers: NBVI subcarrier indices (K, the feature series).
-    gainLock: locked GainLock or None (no rescale).
-    intercarrier: emit the 27-feature IC block from raw mags; ic=None when False.
-    ic_baseline: (S,) float32 quiet-room |H| per subcarrier (calibration.baseline_mag). When set, it
-      is subtracted from each frame's raw magnitude BEFORE the IC block (diagnosis CAUSE 2B weapon
-      background subtraction): σ²[p] then measures the variance of the PERTURBATION (h_live−h_baseline,
-      static room nulled), not of the full channel. Per-subcarrier (not a scalar), so it genuinely
-      reshapes σ²[p]. Only affects the IC path; features/image are unchanged. Must match training.
-    image_subcarriers: if set, image rows use these subcarrier indices (all-valid, freq order) instead
-      of the NBVI set. None -> image uses `subcarriers` (byte-identical to pre-T1 behavior).
-    frame_average: M>=1 decimating mean (M=1 -> existing path, byte-identical). Effective fs=fs/M.
-    imageBaseline: (S,) float32 baseline in the image path's amplitude basis. When set, subtracted
-      from each virtual frame's image values before pushing. Features and IC are not affected. Must be
-      pre-computed by the caller via Calibration.imageBaseline(). Applied after frame averaging.
+    gainLock: a locked GainLock, or None to leave amplitudes alone.
+    intercarrier: emit the 27-feature inter-carrier block from raw magnitudes; ic=None when False.
+    ic_baseline: (S,) quiet-room |H| per subcarrier, subtracted from each raw magnitude before the
+      inter-carrier block, so σ²[p] measures the variance of the perturbation rather than of the
+      whole channel with the static room still in it. Must match what training used.
+    image_subcarriers: subcarrier indices for the image rows; None reuses `subcarriers`.
+    frame_average: M >= 1 non-overlapping decimating mean. Each group of M frames collapses into one
+      virtual frame, an incomplete tail group is dropped, and the effective rate is fs/M.
+    imageBaseline: (S,) baseline in the image path's amplitude basis, subtracted per virtual frame
+      after averaging. Image path only; build it with Calibration.build_image_baseline().
 
-    Yields: t (float window-END timestamp), features (9·K,), image (K_img, window), ic (27,) or None.
+    Yields: t (window-END timestamp), features (9·K,), image (K_img, window), ic (27,) or None.
     """
     if frame_average < 1:
         raise ValueError("frame_average must be >= 1")
 
-    subc = np.asarray(subcarriers, dtype=np.intp)
-    K = int(subc.size)
-    fe = FeatureExtractor(num_series=K, window=window, hop=hop)
+    subcarrier_indices = np.asarray(subcarriers, dtype=np.intp)
+    num_feature_subcarriers = int(subcarrier_indices.size)
+    feature_extractor = FeatureExtractor(num_series=num_feature_subcarriers, window=window, hop=hop)
 
     if image_subcarriers is not None:
-        imgSubc = np.asarray(image_subcarriers, dtype=np.intp)
-        KImg = int(imgSubc.size)
-        sg = SpectrogramBuilder(num_subcarriers=KImg, time_steps=window, hop=hop)
+        image_subcarrier_indices = np.asarray(image_subcarriers, dtype=np.intp)
+        num_image_subcarriers = int(image_subcarrier_indices.size)
+        spectrogram = SpectrogramBuilder(num_subcarriers=num_image_subcarriers, time_steps=window, hop=hop)
     else:
-        imgSubc = subc
-        KImg = K
-        sg = SpectrogramBuilder(num_subcarriers=K, time_steps=window, hop=hop)
+        image_subcarrier_indices = subcarrier_indices
+        num_image_subcarriers = num_feature_subcarriers
+        spectrogram = SpectrogramBuilder(num_subcarriers=num_feature_subcarriers, time_steps=window, hop=hop)
 
-    ic = InterCarrierExtractor(window=window, hop=hop) if intercarrier else None
+    intercarrier_extractor = InterCarrierExtractor(window=window, hop=hop) if intercarrier else None
 
-    # precompute baseline slice (once, before the loop) to avoid repeated indexing
-    imgBase = (np.ascontiguousarray(imageBaseline[imgSubc], dtype=np.float32)
-                if imageBaseline is not None else None)
-    subBuf = np.empty(KImg, dtype=np.float32) if imgBase is not None else None
-    # full-S IC baseline (not sliced to subc — the IC block consumes the whole frame, Frontend §76)
-    icBase = np.ascontiguousarray(ic_baseline, dtype=np.float32) if ic_baseline is not None else None
+    # slice the baseline once here rather than per frame
+    image_baseline_rows = (
+        np.ascontiguousarray(imageBaseline[image_subcarrier_indices], dtype=np.float32)
+        if imageBaseline is not None else None
+    )
+    image_row_buffer = (np.empty(num_image_subcarriers, dtype=np.float32)
+                        if image_baseline_rows is not None else None)
+    # not sliced to subcarrier_indices: the inter-carrier block consumes the whole frame
+    ic_baseline_values = (np.ascontiguousarray(ic_baseline, dtype=np.float32)
+                          if ic_baseline is not None else None)
 
     if frame_average == 1:
-        # M=1: exact original code path — byte-identical to pre-P10 behavior.
-        for fr in frames:
-            if ic is not None:
-                icMag = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
-                if icBase is not None:
-                    if icMag.shape != icBase.shape:
-                        raise ValueError(f"ic_baseline width {icBase.shape} != frame width "
-                                         f"{icMag.shape}; calibration and capture must share width")
-                    icMag = icMag - icBase  # null the static room before σ²[p]
-                icEmitted = ic.push(icMag)
+        for frame in frames:
+            if intercarrier_extractor is not None:
+                raw_magnitudes = np.abs(np.asarray(frame.grid)).mean(axis=0).astype(np.float32)
+                if ic_baseline_values is not None:
+                    if raw_magnitudes.shape != ic_baseline_values.shape:
+                        raise ValueError(f"ic_baseline width {ic_baseline_values.shape} != frame width "
+                                         f"{raw_magnitudes.shape}; calibration and capture must share width")
+                    # null the static room before σ²[p]
+                    raw_magnitudes = raw_magnitudes - ic_baseline_values
+                intercarrier_emitted = intercarrier_extractor.push(raw_magnitudes)
             if gainLock is not None:
-                gainLock.apply(fr)
-            mags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
-            vals = np.ascontiguousarray(mags[subc])
+                gainLock.apply(frame)
+            magnitudes = np.abs(np.asarray(frame.grid)).mean(axis=0).astype(np.float32)
+            feature_values = np.ascontiguousarray(magnitudes[subcarrier_indices])
             if image_subcarriers is not None:
-                valsImg = np.ascontiguousarray(mags[imgSubc])
+                image_values = np.ascontiguousarray(magnitudes[image_subcarrier_indices])
             else:
-                valsImg = vals
-            emitted = fe.push(vals)
-            if imgBase is not None:
-                np.subtract(valsImg, imgBase, out=subBuf)
-                sgEmitted = sg.push(subBuf)
+                image_values = feature_values
+            feature_emitted = feature_extractor.push(feature_values)
+            if image_baseline_rows is not None:
+                np.subtract(image_values, image_baseline_rows, out=image_row_buffer)
+                image_emitted = spectrogram.push(image_row_buffer)
             else:
-                sgEmitted = sg.push(valsImg)
-            if ic is None:
-                icEmitted = emitted
-            if emitted:
-                assert sgEmitted and icEmitted, "front-end emit cadence diverged"
-                yield (float(fr.timestamp), fe.features, sg.image,
-                       ic.features if ic is not None else None)
+                image_emitted = spectrogram.push(image_values)
+            if intercarrier_extractor is None:
+                intercarrier_emitted = feature_emitted
+            if feature_emitted:
+                assert image_emitted and intercarrier_emitted, "front-end emit cadence diverged"
+                yield (float(frame.timestamp), feature_extractor.features, spectrogram.image,
+                       intercarrier_extractor.features if intercarrier_extractor is not None else None)
     else:
-        # M>1: non-overlapping decimating mean (LUMS); preallocated accumulators avoid per-frame alloc.
-        rawAcc = lockedAcc = None
-        count = 0
-        lastTs = 0.0
+        # accumulators are preallocated: this runs per frame
+        raw_accumulator = locked_accumulator = None
+        frames_in_group = 0
+        last_timestamp = 0.0
 
-        for fr in frames:
-            rawMags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
-            if rawAcc is None:
-                S = rawMags.size
-                rawAcc = np.zeros(S, dtype=np.float32)
-                lockedAcc = np.zeros(S, dtype=np.float32)
-            if ic is not None:
-                np.add(rawAcc, rawMags, out=rawAcc)
+        for frame in frames:
+            raw_magnitudes = np.abs(np.asarray(frame.grid)).mean(axis=0).astype(np.float32)
+            if raw_accumulator is None:
+                num_subcarriers = raw_magnitudes.size
+                raw_accumulator = np.zeros(num_subcarriers, dtype=np.float32)
+                locked_accumulator = np.zeros(num_subcarriers, dtype=np.float32)
+            if intercarrier_extractor is not None:
+                np.add(raw_accumulator, raw_magnitudes, out=raw_accumulator)
             if gainLock is not None:
-                gainLock.apply(fr)
-            lockedMags = np.abs(np.asarray(fr.grid)).mean(axis=0).astype(np.float32)
-            np.add(lockedAcc, lockedMags, out=lockedAcc)
-            count += 1
-            lastTs = float(fr.timestamp)
+                gainLock.apply(frame)
+            locked_magnitudes = np.abs(np.asarray(frame.grid)).mean(axis=0).astype(np.float32)
+            np.add(locked_accumulator, locked_magnitudes, out=locked_accumulator)
+            frames_in_group += 1
+            last_timestamp = float(frame.timestamp)
 
-            if count == frame_average:
-                lockedAcc /= frame_average
-                if ic is not None:
-                    rawAcc /= frame_average
+            if frames_in_group == frame_average:
+                locked_accumulator /= frame_average
+                if intercarrier_extractor is not None:
+                    raw_accumulator /= frame_average
 
-                vals = np.ascontiguousarray(lockedAcc[subc])
+                feature_values = np.ascontiguousarray(locked_accumulator[subcarrier_indices])
                 if image_subcarriers is not None:
-                    valsImg = np.ascontiguousarray(lockedAcc[imgSubc])
+                    image_values = np.ascontiguousarray(locked_accumulator[image_subcarrier_indices])
                 else:
-                    valsImg = vals
-                emitted = fe.push(vals)
-                if imgBase is not None:
-                    np.subtract(valsImg, imgBase, out=subBuf)
-                    sgEmitted = sg.push(subBuf)
+                    image_values = feature_values
+                feature_emitted = feature_extractor.push(feature_values)
+                if image_baseline_rows is not None:
+                    np.subtract(image_values, image_baseline_rows, out=image_row_buffer)
+                    image_emitted = spectrogram.push(image_row_buffer)
                 else:
-                    sgEmitted = sg.push(valsImg)
-                if ic is not None:
-                    if icBase is not None and rawAcc.shape != icBase.shape:
-                        raise ValueError(f"ic_baseline width {icBase.shape} != frame width "
-                                         f"{rawAcc.shape}; calibration and capture must share width")
-                    icEmitted = ic.push(rawAcc - icBase if icBase is not None else rawAcc)
+                    image_emitted = spectrogram.push(image_values)
+                if intercarrier_extractor is not None:
+                    if ic_baseline_values is not None and raw_accumulator.shape != ic_baseline_values.shape:
+                        raise ValueError(f"ic_baseline width {ic_baseline_values.shape} != frame width "
+                                         f"{raw_accumulator.shape}; calibration and capture must share width")
+                    intercarrier_emitted = intercarrier_extractor.push(
+                        raw_accumulator - ic_baseline_values
+                        if ic_baseline_values is not None else raw_accumulator
+                    )
                 else:
-                    icEmitted = emitted
-                if emitted:
-                    assert sgEmitted and icEmitted, "front-end emit cadence diverged"
-                    yield (lastTs, fe.features, sg.image,
-                           ic.features if ic is not None else None)
+                    intercarrier_emitted = feature_emitted
+                if feature_emitted:
+                    assert image_emitted and intercarrier_emitted, "front-end emit cadence diverged"
+                    yield (last_timestamp, feature_extractor.features, spectrogram.image,
+                           intercarrier_extractor.features if intercarrier_extractor is not None else None)
 
-                rawAcc[:] = 0.0
-                lockedAcc[:] = 0.0
-                count = 0
+                raw_accumulator[:] = 0.0
+                locked_accumulator[:] = 0.0
+                frames_in_group = 0
 
 
 def demuxByNode(frames) -> dict:
-    """Split an interleaved CsiFrame stream by fr.node_id, capture order preserved. O(F)."""
+    """Split an interleaved CsiFrame stream by node_id, capture order preserved. O(F)."""
     result: dict = {}
-    for fr in frames:
-        nid = int(fr.node_id)
-        if nid not in result:
-            result[nid] = []
-        result[nid].append(fr)
+    for frame in frames:
+        node_id = int(frame.node_id)
+        if node_id not in result:
+            result[node_id] = []
+        result[node_id].append(frame)
     return result
 
 
 def iterWindowsStacked(per_node_frames, per_node_calib, *, window=128, hop=32,
                          intercarrier=False, frame_average=1, node_tolerance=0.05):
-    """Lockstep-zip one iterWindows per node; yield channel-stacked windows. Offline. O(N·n log n).
+    """Lockstep-zip one iterWindows per node; yield channel-stacked windows. O(N·n log n).
 
     per_node_frames: dict[node_id -> frame iterable].
     per_node_calib: dict[node_id -> (subcarriers, image_subcarriers, gainLock, imageBaseline|None)].
-    All nodes must share K and K_img (ValueError otherwise).
-    Node/channel order = sorted node ids.
+    Channel order is the sorted node ids, and every node must share K and K_img.
 
     Yields (t, features, image, ic):
-      t = window-end timestamp of the LOWEST node id.
-      features = (N·9·K,) float32 concatenation across nodes.
-      image = (N, K_img, window) float32 np.stack across nodes.
-      ic = (N·27,) float32 concatenation or None when intercarrier=False.
+      t = window-end timestamp of the lowest node id.
+      features = (N·9·K,) concatenated across nodes.
+      image = (N, K_img, window) stacked across nodes.
+      ic = (N·27,) concatenated, or None when intercarrier=False.
 
-    Stacked outputs are NEW arrays (np.stack/concatenate copy) — safe to retain, unlike iterWindows
-    whose buffers are reused per emit. Stops at the shortest node stream; no error on unequal lengths.
-    Raises ValueError when timestamps diverge > node_tolerance (node de-sync) or K/K_img mismatch.
+    Stops at the shortest node stream. Raises ValueError when the nodes' timestamps diverge by more
+    than node_tolerance (de-sync) or their widths disagree.
     """
-    nodeIds = sorted(per_node_calib.keys())
-    N = len(nodeIds)
-    if N == 0:
+    node_ids = sorted(per_node_calib.keys())
+    num_nodes = len(node_ids)
+    if num_nodes == 0:
         return
 
-    kList, kImgList = [], []
-    for nid in nodeIds:
-        subc, imgSubc, _, _ = per_node_calib[nid]
-        kList.append(len(subc))
-        img = imgSubc if imgSubc is not None else subc
-        kImgList.append(len(img))
-    if len(set(kList)) != 1:
-        raise ValueError(f"iterWindowsStacked: nodes have different K: {kList}")
-    if len(set(kImgList)) != 1:
-        raise ValueError(f"iterWindowsStacked: nodes have different K_img: {kImgList}")
+    feature_widths, image_widths = [], []
+    for node_id in node_ids:
+        subcarrier_indices, image_subcarrier_indices, _, _ = per_node_calib[node_id]
+        feature_widths.append(len(subcarrier_indices))
+        image_widths.append(len(image_subcarrier_indices if image_subcarrier_indices is not None
+                                else subcarrier_indices))
+    if len(set(feature_widths)) != 1:
+        raise ValueError(f"iterWindowsStacked: nodes have different K: {feature_widths}")
+    if len(set(image_widths)) != 1:
+        raise ValueError(f"iterWindowsStacked: nodes have different K_img: {image_widths}")
 
-    gens = []
-    for nid in nodeIds:
-        subc, imgSubc, lock, base = per_node_calib[nid]
-        gens.append(iterWindows(
-            per_node_frames[nid], subc, lock, window=window, hop=hop,
-            intercarrier=intercarrier, image_subcarriers=imgSubc,
-            frame_average=frame_average, imageBaseline=base,
+    node_windows = []
+    for node_id in node_ids:
+        (subcarrier_indices, image_subcarrier_indices,
+         node_gain_lock, node_image_baseline) = per_node_calib[node_id]
+        node_windows.append(iterWindows(
+            per_node_frames[node_id], subcarrier_indices, node_gain_lock, window=window, hop=hop,
+            intercarrier=intercarrier, image_subcarriers=image_subcarrier_indices,
+            frame_average=frame_average, imageBaseline=node_image_baseline,
         ))
 
     while True:
-        items = []
-        for g in gens:
+        windows = []
+        for windows_of_one_node in node_windows:
             try:
-                items.append(next(g))
+                windows.append(next(windows_of_one_node))
             except StopIteration:
                 return
 
-        ts = [item[0] for item in items]
-        if max(ts) - min(ts) > node_tolerance:
+        timestamps = [window[0] for window in windows]
+        if max(timestamps) - min(timestamps) > node_tolerance:
             raise ValueError(
                 f"recording is not node-synced: max timestamp gap "
-                f"{max(ts) - min(ts):.4f}s > tolerance {node_tolerance}s"
+                f"{max(timestamps) - min(timestamps):.4f}s > tolerance {node_tolerance}s"
             )
 
-        t = items[0][0]  # lowest node id's timestamp
-        features = np.concatenate([np.asarray(item[1], dtype=np.float32) for item in items])
-        image = np.stack([np.asarray(item[2], dtype=np.float32) for item in items])
-        ic = (np.concatenate([np.asarray(item[3], dtype=np.float32) for item in items])
-              if intercarrier else None)
-        yield (t, features, image, ic)
+        timestamp = windows[0][0]
+        features = np.concatenate([np.asarray(window[1], dtype=np.float32) for window in windows])
+        image = np.stack([np.asarray(window[2], dtype=np.float32) for window in windows])
+        intercarrier_features = (
+            np.concatenate([np.asarray(window[3], dtype=np.float32) for window in windows])
+            if intercarrier else None
+        )
+        yield (timestamp, features, image, intercarrier_features)

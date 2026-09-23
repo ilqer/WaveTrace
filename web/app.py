@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(0.5)
 
 
-# Confine arbitrary file writes and pickle (RCE) via joblib.load to output/ dir.
+# joblib.load unpickles, so both reads and writes are confined to output/.
 ALLOWED_ROOT = os.path.realpath("output")
 
 def _safeOutputPath(path: str) -> str:
@@ -60,7 +60,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Shared State
 runner_task = None
 runner = None
 inference_queue = None
@@ -72,19 +71,16 @@ device_queue = None
 device_hub = None
 
 class StartRequest(BaseModel):
-    # Action
     action: str = "run" # run | calib | collect | train
-    
-    # Source
+
     synthetic: bool = False
     antennas: int = 2
     subcarriers: int = 64
     fs: float = 100.0
     duration: float = 60.0
     seed: int = 0
-    udp_port: int = 9876  # MUST match the firmware/run_* port (nodes push CSI to 9876)
-    
-    # Run
+    udp_port: int = 9876  # must match the port the firmware pushes CSI to
+
     mode: str = "presence"
     calibration: str = "data/2g4_ht40/ui/cal"
     model: str = "data/2g4_ht40/ui/model/model.joblib"
@@ -92,24 +88,20 @@ class StartRequest(BaseModel):
     vote: bool = True
     frame_average: int = 1
     use_baseline: bool = False
-    
-    # Calib
+
     baseline_packets: int = 300
     cal_out: str = "data/2g4_ht40/ui/cal"
-    
-    # Collect
+
     col_stage: str = "presence"
     col_spans: str = "0:5,10:15,20:25"
     col_window: int = 128
     col_hop: int = 32
-    subtract_ic_baseline: bool = True  # weapon IC background subtraction (Item 10/CAUSE 2B) — default ON
-    
-    # Train
+    subtract_ic_baseline: bool = True
+
     train_backend: str = "mlp"
     train_out: str = "data/2g4_ht40/ui/model"
-    train_data: str = "data/2g4_ht40/ui/ds"  # dataset dir or cumulative pool parent (globs node*/)
+    train_data: str = "data/2g4_ht40/ui/ds"  # a dataset dir, or a parent whose node*/ subdirs are pooled
 
-    # Hardware
     cam_url: str = "/api/camera/stream"
     cam_index: int = 0
     per_link: bool = False
@@ -209,7 +201,7 @@ async def startInference(req: StartRequest):
         except Exception as e:
             loop.call_soon_threadsafe(logs_queue.put_nowait, f"FATAL ERROR: {str(e)}")
 
-    # runBlocking is blocking; run it in a worker thread so stop_inference can join runner_task later.
+    # runBlocking blocks, so it runs on a worker thread; stop_inference awaits the task later.
     runner_task = asyncio.create_task(asyncio.to_thread(runBlocking))
     return {"status": "started"}
 
@@ -299,7 +291,7 @@ async def model_weights(model: str, mode: str = "weapon"):
 
 @app.get("/api/fusion/weights")
 async def fusion_weights(path: str):
-    """Learned per-band trust from a saved BandFusion model."""
+    """Softmax over the saved combiner's coefficients gives per-band trust."""
     import joblib, numpy as np
     try:
         blob = joblib.load(_safeOutputPath(path))
@@ -311,8 +303,8 @@ async def fusion_weights(path: str):
 
 @app.get("/api/weapon/litmus")
 async def weapon_litmus(root: str = "data", node: int | None = None, per_link: bool = False):
-    """Static σ²[p] check: per-node (default) or tx→rx link (per_link=true).
-    Rows sorted by AUC desc. Includes histogram bins for PDF overlay."""
+    """Static σ²[p] separation between clear and weapon captures, per node or per tx→rx link.
+    Each row's `hist` holds histogram bins for the client's PDF overlay."""
     from wavetrace.diagnostics import gather_sigma2, json_hist, key_label, separation, verdict
     try:
         data = gather_sigma2(root, node, per_link=per_link)
@@ -344,9 +336,8 @@ async def weapon_litmus(root: str = "data", node: int | None = None, per_link: b
 
 @app.get("/api/calib/info")
 async def calib_info(path: str = "output/calib"):
-    """Reads saved calib for pinned subcarrier width.
-    K is max(image_subcarriers)+1 (highest index from radio during calib).
-    bw_label maps K to HT20/HT40/HT80."""
+    """K is max(image_subcarriers)+1: the highest subcarrier index the radio reported during
+    calibration. It pins the width the rest of the pipeline must use."""
     import json as _json
     metaPath = os.path.join(path, "meta.json")
     if not os.path.exists(metaPath):
@@ -375,7 +366,6 @@ async def calib_info(path: str = "output/calib"):
 
 @app.get("/api/paths/scan")
 async def scan_paths():
-    """Scans project for calib dirs, models, and datasets. Populates UI path-pickers."""
     import glob as _glob
 
     def _scan():
@@ -398,7 +388,6 @@ async def scan_paths():
             for p in _glob.glob("data/**/X_features.npy", recursive=True)
                        + _glob.glob("output/**/X_features.npy", recursive=True)
         ))
-        # Parent dirs of multiple dataset subdirs (cumulative pool roots)
         poolDirs = sorted(set(
             os.path.dirname(os.path.dirname(p))
             for p in _glob.glob("data/**/X_features.npy", recursive=True)
@@ -416,9 +405,8 @@ async def scan_paths():
 
 @app.get("/api/paths/browse")
 async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str = ""):
-    """Opens macOS Finder dialog (osascript) and returns chosen path.
-    type: 'dir' or 'file'. ext: csv extensions (file mode).
-    Returns {"path": "/abs/path"} or {"path": null} on cancel."""
+    """macOS only: the dialog comes from osascript.
+    Returns {"path": "/abs/path"}, or {"path": null} when the user cancels."""
     import subprocess as _sp
 
     def _openDialog():
@@ -439,7 +427,7 @@ async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str =
             )
             if result.returncode != 0:
                 return {"path": None, "cancelled": True}
-            # osascript returns path with trailing newline; strip it
+            # osascript returns the path with a trailing newline
             chosen = result.stdout.strip().rstrip("/")
             return {"path": chosen}
         except _sp.TimeoutExpired:
@@ -463,7 +451,6 @@ class ModelUploadRequest(BaseModel):
 
 @app.post("/api/model/upload")
 async def model_upload(req: ModelUploadRequest):
-    """Receives base64 PC-trained model.joblib and writes to Pi."""
     import base64
     try:
         dest = _safeOutputPath(req.dest)
@@ -474,7 +461,6 @@ async def model_upload(req: ModelUploadRequest):
     except Exception as e:
         return {"error": str(e)}
 
-# ---- Hardware: serial discovery / monitor, flashing, Pi capture control --------------
 class MonitorRequest(BaseModel):
     port: str
     baud: int = 115200
@@ -519,7 +505,7 @@ async def serial_monitor_stop(req: StopMonitorRequest = None):
 
 @app.post("/api/flash")
 async def flash(req: FlashRequest):
-    # flashing blocks (build+flash); run in a worker thread so the event loop keeps streaming
+    # the build-and-flash blocks, so it runs on a worker thread and the event loop keeps streaming
     asyncio.create_task(asyncio.to_thread(device_hub.flash, req.role, req.node_id, req.port, req.clean))
     return {"status": "flashing", "role": req.role, "port": req.port, "clean": req.clean}
 
@@ -568,20 +554,18 @@ _yolo_lock = _threading.Lock()
 
 
 def _loadYolo(weights: str = "yolov8n-seg.pt"):
-    """Thread-safely loads and caches YOLO model."""
     with _yolo_lock:
         if weights not in _yolo_cache:
             try:
                 from ultralytics import YOLO
                 _yolo_cache[weights] = YOLO(weights)
             except Exception as e:
-                _yolo_cache[weights] = None   # cache failure so we don't retry every frame
+                _yolo_cache[weights] = None   # cache the failure so we don't retry on every frame
                 print(f"[YOLO] load failed: {e}")
     return _yolo_cache.get(weights)
 
 
 def _annotateFrame(model, frame, weapon_classes=(43,)):
-    """Draws YOLO seg masks and labels on frame copy (Green = person, orange = weapon)."""
     import cv2, numpy as np
     results = model(frame, verbose=False)
     out = frame.copy()
@@ -609,14 +593,14 @@ def _annotateFrame(model, frame, weapon_classes=(43,)):
     return out
 
 
-# Use ffmpeg subprocess (not cv2.VideoCapture) to avoid macOS AVFoundation run-loop segfault on background threads. cv2 is only for YOLO annotation.
+# Frames come from an ffmpeg subprocess, not cv2.VideoCapture: on macOS, AVFoundation's run loop
+# segfaults on a background thread. cv2 is used only for YOLO annotation.
 
 import subprocess as _subprocess
 import shutil as _shutil
 
 
 def _ffmpegBin() -> str:
-    """Return the ffmpeg executable path, or raise RuntimeError."""
     p = _shutil.which("ffmpeg")
     if p is None:
         raise RuntimeError(
@@ -626,8 +610,8 @@ def _ffmpegBin() -> str:
 
 
 def _ffmpegGrabOne(index: int) -> bytes | None:
-    """Captures one JPEG frame from camera `index` via ffmpeg. Returns raw bytes or None.
-    macOS: ffmpeg uses AVFoundation, triggering permission dialog on first run (no Terminal grant needed)."""
+    """On macOS the AVFoundation input raises its own camera-permission dialog on first run,
+    so Terminal itself needs no camera grant."""
     try:
         ffmpeg = _ffmpegBin()
     except RuntimeError:
@@ -652,7 +636,6 @@ def _ffmpegGrabOne(index: int) -> bytes | None:
 
 @app.get("/api/camera/check")
 async def camera_check(cam_index: int = 0):
-    """One-frame probe via ffmpeg: checks camera access and returns resolution."""
     def _probe():
         try:
             ffmpeg = _ffmpegBin()
@@ -693,9 +676,8 @@ def cameraStop():
 @app.get("/api/camera/stream")
 async def camera_stream(request: Request, index: int = 0, annotate: bool = False,
                         weights: str = "yolov8n-seg.pt"):
-    """Webcam MJPEG stream via asyncio subprocess (no threads/queues).
-    Parses ffmpeg stdout for JPEG SOI/EOI markers for multipart chunks.
-    annotate=true overlays YOLO seg masks (cv2 decode/encode only)."""
+    """ffmpeg's mjpeg output is one continuous byte stream, so frames are cut at the JPEG
+    SOI/EOI markers and sent as multipart/x-mixed-replace chunks."""
     global _camera_active
     _camera_active = True
     
@@ -705,7 +687,7 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
         try:
             ffmpeg = _ffmpegBin()
         except RuntimeError:
-            return  # ffmpeg not found — browser <img> fires onError
+            return  # ffmpeg missing: an empty body makes the browser's <img> fire onError
 
         cmd = [
             ffmpeg, "-hide_banner", "-loglevel", "error",
@@ -745,7 +727,7 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
                         break
                     e = buf.find(EOI, s + 2)
                     if e == -1:
-                        buf = buf[s:]   # keep partial frame, wait for more data
+                        buf = buf[s:]   # no EOI yet: keep the partial frame and read more
                         break
                     jpg = buf[s: e + 2]
                     buf = buf[e + 2:]
@@ -753,7 +735,7 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
                     frameIdx += 1
 
                     if model is not None:
-                        # Throttle YOLO to 5fps (1 out of every 6 frames from 30fps source)
+                        # throttle YOLO to 5 fps: 1 frame in every 6 of the 30 fps source
                         if frameIdx % 6 != 0:
                             continue
                             

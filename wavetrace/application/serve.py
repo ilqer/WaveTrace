@@ -3,7 +3,7 @@ window."""
 
 import numpy as np
 
-from wavetrace.Calibration import loadCalibration, imageBaseline
+from wavetrace.Calibration import loadCalibration, build_image_baseline
 from wavetrace.Frontend import iterWindows
 from wavetrace.recognition import SegmentVoter, modeSession, planInferenceInput
 from wavetrace import RecognitionResult
@@ -21,8 +21,8 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
     image_subcarriers = getattr(result, "image_subcarriers", None)
     image_baseline = None
     if config.subtract_baseline:
-        image_baseline = imageBaseline(result, locked=(apply_lock and gain_lock is not None))
-    # weapon IC background subtraction (Item 10/CAUSE 2B): raw baseline, IC path only, mirrors training
+        image_baseline = build_image_baseline(result, locked=(apply_lock and gain_lock is not None))
+    # the raw baseline, inter-carrier path only, exactly as training subtracted it
     ic_baseline = result.baseline_mag if getattr(config, "subtract_ic_baseline", False) else None
 
     frames_iter = source.frames()
@@ -30,7 +30,7 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
         from wavetrace.output.Guard import AlertGuard, DriftMonitor
         drift_monitor = DriftMonitor(result.baseline_mag)
         alert_guard = AlertGuard()
-        # tee raw (pre-lock) per-frame mags to DriftMonitor without disrupting the frame stream
+        # tee the raw, pre-lock magnitudes to DriftMonitor without disturbing the frame stream
         def _tee_drift(frames, monitor, publisher):
             import numpy as _np
             for frame in frames:

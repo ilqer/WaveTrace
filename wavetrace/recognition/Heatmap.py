@@ -1,7 +1,7 @@
 """Camera-supervised G×G occupancy heatmap head.
 
-Same wrapper shape as WeaponHead (fit/predict/save/load) so the serving + UI paths reuse it.
-Works for HUMAN or WEAPON depending only on which mask the SegmentationLabeler supervised on.
+Same shape as WeaponHead (fit/predict/save/load), so the serving and UI paths reuse it. Whether
+it finds a human or a weapon depends only on which mask the SegmentationLabeler supervised on.
 
 Input  : X_image (n, C, K, window) — C = nodes (multi-node images), same tensor WeaponHead eats.
 Target : Y (n, G, G) occupancy in [0,1] from CameraLabeler (Label.mask reshaped to G×G).

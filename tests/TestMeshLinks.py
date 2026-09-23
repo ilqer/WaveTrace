@@ -1,4 +1,4 @@
-"""Tests for all-pairs link splitting. parseBatchLinks buckets batches by (tx_short, rx_node)."""
+"""parseBatchLinks buckets batches by (tx_short, rx_node)."""
 
 import struct
 
@@ -65,7 +65,7 @@ def test_tx_mac_filter_keeps_one_link():
 
 
 def test_per_link_width_guard():
-    """First frame sets the expected subcarrier width for a link. 
+    """First frame sets the expected subcarrier width for a link.
     Frames with mismatched widths in the same link are dropped.
     Different links can operate on different widths (e.g. 5GHz vs 2.4GHz)."""
     a, b = "aa:aa:aa:aa:00:01", "bb:bb:bb:bb:00:02"

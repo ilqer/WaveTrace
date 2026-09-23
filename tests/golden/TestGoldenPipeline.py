@@ -1,19 +1,17 @@
-"""Phase 0 golden characterization tests (REFACTOR_PLAN.md Phase 0 step 5).
+"""Characterization tests: they pin the CURRENT behaviour of the full calibrate -> collect -> train
+-> infer chain through public entry points only (wavetrace.Cli.calibrateSource / collectSource /
+runInference, wavetrace.recognition.trainPresence / trainWeapon) over the small committed fixture
+recordings in tests/golden/fixtures/.
 
-Pin CURRENT behaviour of the full calibrate -> collect -> train -> infer chain through public entry
-points only (wavetrace.Cli.calibrateSource / collectSource / runInference, wavetrace.recognition.
-trainPresence / trainWeapon) over the small committed fixture recordings in tests/golden/fixtures/.
-Every later refactor phase (1-6) must leave these values unchanged — that IS the definition of
-"behaviour-preserving" for this project. If a later phase's diff makes one of these fail, either the
-phase broke something or the snapshot in tests/golden/expected/ needs a deliberate, reviewed
-re-generation — never a silent tolerance widening. Both tests/golden/fixtures/ (the input recordings)
-and tests/golden/expected/ (the pinned outputs) were produced once, offline, by scripts equivalent to
-this file's own calibrate/collect/train/infer calls with fixed seeds (see fixture_params.json for the
-exact generation parameters); re-running those calls is exactly what this file does on every test run.
+A failure means either a change altered behaviour, or the snapshot in tests/golden/expected/ needs a
+deliberate, reviewed re-generation -- never a silent tolerance widening. Both tests/golden/fixtures/
+(the input recordings) and tests/golden/expected/ (the pinned outputs) were produced once, offline,
+by scripts equivalent to this file's own calibrate/collect/train/infer calls with fixed seeds (see
+fixture_params.json for the exact generation parameters); re-running those calls is exactly what
+this file does on every test run.
 
 Deterministic and fully offline: fixed seeds throughout (fixture generation, MLPClassifier
-random_state, the weapon 'variance' backend has no RNG at all). Verified stable across repeated runs
-in this environment before being committed (two consecutive runs byte-identical).
+random_state, the weapon 'variance' backend has no RNG at all).
 
 Coverage note: `capture` (raw UDP/serial acquisition) is hardware-only and is NOT characterized here
 -- everything downstream of a saved recording is. That is the largest deterministic sub-chain
@@ -75,7 +73,7 @@ def test_collect_weapon_pins_intercarrier_and_labels(tmp_path):
     expected_y = np.load(EXPECTED / "weapon_y.npy")
     assert set(np.unique(ds.y).tolist()) == {0, 1}
     assert np.array_equal(ds.y, expected_y)
-    assert ds.X_intercarrier.shape[1] == 27  # the ic27 block (see REFACTOR_PLAN.md §1.8 Axis A)
+    assert ds.X_intercarrier.shape[1] == 27  # the ic27 block
     np.testing.assert_allclose(ds.X_intercarrier, expected_x, rtol=1e-6)
 
 
@@ -89,8 +87,8 @@ def test_train_presence_pins_accuracy(tmp_path):
 
 
 def test_train_weapon_pins_accuracy(tmp_path):
-    # feature_mode defaults to 'ic27' -> backend defaults to 'variance' (deterministic, no RNG at
-    # all -- see wavetrace/recognition/Weapon.py _fitVariance), unlike the presence 'mlp' default.
+    # feature_mode defaults to 'ic27' -> backend defaults to 'variance', which has no RNG at
+    # all, unlike the presence 'mlp' default.
     cal_dir = _calibrate(tmp_path)
     collectSource(RecordingSource(FIXTURES / "main_recording"), cal_dir, tmp_path / "ds_w",
                   PARAMS["weapon_spans"], stage="weapon", window=WINDOW, hop=HOP)

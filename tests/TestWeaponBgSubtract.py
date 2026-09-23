@@ -1,10 +1,10 @@
-"""Tests for IC-path background subtraction in iterWindows (weapon variance feature)."""
+"""IC-path background subtraction in iterWindows (the weapon variance feature)."""
 import numpy as np
 import pytest
 
 from wavetrace import CsiFrame
 from wavetrace.Frontend import iterWindows
-from wavetrace.recognition.Weapon import VARIANCE_FEATURE  # column 9 = σ²-series window mean
+from wavetrace.domain.recognition import VARIANCE_FEATURE
 
 S = 32
 WINDOW, HOP = 32, 16

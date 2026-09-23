@@ -1,8 +1,7 @@
-"""Learned late-fusion of per-band models.
+"""Learned late fusion: a logistic regression maps each band's probability to a final one.
 
-Logistic regression maps band probabilities to final probability. Stacking learns weights from validation split.
-
-Band split: node_id < 100 is 2.4 GHz, node_id >= 100 is 5 GHz."""
+The weights are learned on a held-out validation split. node_id < 100 is 2.4 GHz, >= 100 is 5 GHz.
+"""
 
 from pathlib import Path
 

@@ -1,10 +1,7 @@
-"""Live PEOPLE-COUNT fusion. Every link uses its RX node's cal + count head.
-Reads models from data/model_count.
+"""Live people-count fusion: every (tx->rx) link is served through its rx node's cal and count head.
 
-Each RX-node head emits class probabilities. Since heads may learn different classes,
-probabilities are expanded to global class space. LinkVoter blends them weighted by
-static reliability (LOGO accuracy) x live margin.
-Result is the count and an expected-value estimate.
+Heads may have learned different class sets, so each one's probabilities are expanded into a global
+class space before LinkVoter blends them, weighted by LOGO accuracy times live decision margin.
 """
 
 import argparse
@@ -31,7 +28,7 @@ def _minWidth(result):
 
 
 def _logoAcc(metrics_path):
-    """Node head LOGO accuracy (session or subject)."""
+    """LOGO accuracy of a node head; session axis preferred, subject as fallback, None if neither."""
     try:
         with open(metrics_path) as f:
             logo = json.load(f).get("logo", {})
@@ -53,7 +50,7 @@ def _expandProba(proba, col_map, k):
 
 
 def _lastWindowProba(frames, fs, result, gainLock, cfg, intercarrier, pick, session):
-    """Resample frames, window, and return last window's proba."""
+    """Last window's class probabilities, or None when there are too few frames to fill a window."""
     res = resampleUniform(frames, fs)
     if len(res) < cfg.window:
         return None
@@ -68,8 +65,8 @@ def _lastWindowProba(frames, fs, result, gainLock, cfg, intercarrier, pick, sess
 
 
 def loadCountNodes(cal_root, model_root):
-    """Discover calibrations and count heads per RX-node.
-    Builds global class space, col_map, and static weight (LOGO accuracy with chance 1/K)."""
+    """Per rx-node calibration and count head, plus the global class space, each head's column map
+    into it, and a static vote weight rescaled from LOGO accuracy against 1/k chance."""
     nodes = {}
     accs = {}
     for model_dir in sorted(glob.glob(os.path.join(model_root, "node*"))):
@@ -98,7 +95,7 @@ def loadCountNodes(cal_root, model_root):
     for nid, m in nodes.items():
         m["col_map"] = [colOf[c] for c in m["classes"]]
         a = accs[nid]
-        # Chance-aware static reliability prior. None -> 1.0.
+        # rescale accuracy so chance maps to 0 and perfect to 1; no LOGO number means 1.0
         m["weight"] = max(a - chance, 0.0) / max(1.0 - chance, 1e-9) if a is not None else 1.0
     return nodes, classes
 
@@ -129,8 +126,8 @@ def main():
     k = len(classes)
     labels = [countName(c, args.max_count) for c in classes]
     clsArr = np.asarray(classes, dtype=np.float64)
-    # the artifact's own resample rate, not a re-declared constant -- every node's head is trained
-    # at the same rate today, so any node's contract stands in for the print banner.
+    # read off a head's own contract rather than re-declared here; every head is trained at the same
+    # rate today, so any one of them stands in for the banner
     sample_rate_hz = next(iter(nodes.values()))["session"].head.contract.target_sample_rate_hz
 
     buffers = collections.defaultdict(collections.deque)  # keyed by (tx_short, rx_node)
@@ -168,7 +165,7 @@ def main():
                     while buf and buf[0].timestamp < cutoff:
                         buf.popleft()
 
-            # Static per-node reliability x live margin. Uniform fallback.
+            # LinkVoter multiplies static reliability by live margin; uniform when nothing is weighted
             linkStatic = {lid: nodes[key[1]]["weight"] for key, lid in linkIds.items()}
             static = linkStatic if any(w > 0 for w in linkStatic.values()) else None
             voter = LinkVoter(static)
@@ -184,7 +181,7 @@ def main():
                     continue
                 g = _expandProba(proba, m["col_map"], k)
                 top = np.sort(proba)[::-1]
-                quality = float(top[0] - top[1]) if proba.size > 1 else float(top[0])  # Decision margin.
+                quality = float(top[0] - top[1]) if proba.size > 1 else float(top[0])  # decision margin
                 voter.add(linkIds[key], g, quality=quality)
                 breakdown.append(f"{key[0]}->{key[1]}:{classes[int(np.argmax(g))]}")
 
@@ -197,7 +194,7 @@ def main():
                 print("\r(live links present, but all from chance-level nodes)   ", end="", flush=True)
                 continue
             blended = np.asarray(blended, dtype=np.float64)
-            expected = float((clsArr * blended).sum())  # Soft estimate (handles 'N+' as N).
+            expected = float((clsArr * blended).sum())  # soft estimate; the 'N+' class counts as N
             rounded = int(round(expected))
             label = countName(min(rounded, max(classes)), args.max_count)
             print(f"PEOPLE ~{expected:0.1f}  ({label})  "

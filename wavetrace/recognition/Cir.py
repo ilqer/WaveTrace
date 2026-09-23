@@ -1,21 +1,21 @@
 """Offline delay-domain super-resolution (Channel Impulse Response) via L1 sparse recovery.
 
-Stage-E weapon tool (plan §1, REFERENCE_DIGEST §0C, RuView ADR-134). The wideband channel is sparse
-in the delay domain (~few physical paths), so the K measured subcarriers H(f_k) can be inverted to a
-fine-grid CIR `x` whose taps are the multipath arrivals — incl. a concealed metal object's reflection.
+The wideband channel is sparse in the delay domain (a few physical paths), so the K measured
+subcarriers H(f_k) can be inverted into a fine-grid CIR `x` whose taps are the multipath arrivals,
+including a concealed metal object's reflection.
 
 Why ISTA on a DFT dictionary, not a plain IFFT:
-  * A zero-padded IFFT smears each tap with -13 dB sidelobes — adjacent taps (body vs. object) merge.
-  * Φ is a *sub*-DFT (one column per fine delay bin); solving `min ‖H-Φx‖² + λ‖x‖₁` super-resolves the
-    delay axis ~`oversample`× past the 1/BW Nyquist limit (ADR-134 §2.1). κ(Φ)≈1 by construction.
-  * ISTA over OMP: when specular + body reflections fall in one Nyquist bin, OMP's greedy commit is
-    irreversible; ISTA's continuous shrinkage degrades gracefully at low SNR (ADR-134 §2.2).
+  * A zero-padded IFFT smears each tap with -13 dB sidelobes, so adjacent taps (body vs object) merge.
+  * Φ is a *sub*-DFT, one column per fine delay bin; solving `min ‖H-Φx‖² + λ‖x‖₁` super-resolves the
+    delay axis roughly `oversample`× past the 1/BW Nyquist limit. κ(Φ)≈1 by construction.
+  * ISTA over OMP: when the specular and body reflections fall in one Nyquist bin, OMP's greedy
+    commit is irreversible, while ISTA's continuous shrinkage degrades gracefully at low SNR.
 
 Φ atoms are built from the MEASURED subcarrier indices, so non-contiguous layouts (HT40's central
 null gap, masked pilots) are handled natively — no separate subcarrier-infill step is needed.
 
-PHASE PRECONDITION (ADR-134 §2.5): pass phase-sanitized H (conj-mult / CFO-removed, e.g. via
-reconstruct_complex_csi). Raw STO/CFO ramps fit as ghost taps near τ=0.
+Pass phase-sanitized H (conj-multiplied / CFO-removed, e.g. via reconstruct_complex_csi). Raw
+STO/CFO ramps fit as ghost taps near τ=0.
 
 Offline only (never the hot path): dictionary build O(K·G) once; each estimate O(n_iter·K·G).
 """
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 import numpy as np
 
 SUBCARRIER_SPACING_HZ = 312_500.0  # 802.11n HT20/HT40 OFDM tone spacing
-_NOISE_FLOOR_DB = -25.0            # tap power below this (rel. to peak) = noise (ADR-134 §2.9)
+_NOISE_FLOOR_DB = -25.0            # tap power this far below the peak counts as noise
 
 
 class CirError(ValueError):
@@ -125,8 +125,8 @@ def cirFromCsi(H: np.ndarray, *, freq_idx: np.ndarray | None = None, oversample:
     meanTau = float((delays * power).sum() / total) if total > 0 else 0.0
     rms = float(np.sqrt(((delays - meanTau) ** 2 * power).sum() / total)) if total > 0 else 0.0
 
-    # A TAP = a local maximum above the floor (tolerance-aware peak detector, ADR-134 §2.9);
-    # dominant_ratio sums each bin into its nearest peak's basin so split leakage counts once. O(G).
+    # a tap is a local maximum above the noise floor; dominant_ratio sums each bin into its
+    # nearest peak's basin, so leakage split across bins is counted once. O(G).
     floor = power.max() * (10.0 ** (_NOISE_FLOOR_DB / 10.0))
     left = np.empty_like(power); left[0] = -np.inf; left[1:] = power[:-1]
     right = np.empty_like(power); right[-1] = -np.inf; right[:-1] = power[1:]

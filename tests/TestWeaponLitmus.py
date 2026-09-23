@@ -1,4 +1,3 @@
-"""Unit tests for weapon litmus tool (weapon_litmus.py)."""
 import os
 import sys
 

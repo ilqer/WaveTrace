@@ -1,6 +1,3 @@
-"""Unit tests for wavetrace.Source's transport options classes: SourceOptions, UdpSourceOptions,
-SerialSourceOptions, NexmonSourceOptions."""
-
 import pytest
 
 from wavetrace.Source import (
@@ -10,8 +7,6 @@ from wavetrace.Source import (
     UdpSourceOptions,
 )
 
-
-# ----- SourceOptions (base) -------------------------------------------------------------------------
 
 def test_source_options_defaults():
     options = SourceOptions()
@@ -33,8 +28,6 @@ def test_source_options_are_frozen():
     with pytest.raises(AttributeError):
         options.max_frames = 1
 
-
-# ----- UdpSourceOptions ------------------------------------------------------------------------------
 
 def test_udp_source_options_is_a_source_options():
     assert issubclass(UdpSourceOptions, SourceOptions)
@@ -60,8 +53,6 @@ def test_udp_source_options_rejects_non_positive_max_frames_when_given():
     with pytest.raises(ValueError, match="max_frames"):
         UdpSourceOptions(max_frames=0)
 
-
-# ----- SerialSourceOptions ---------------------------------------------------------------------------
 
 def test_serial_source_options_is_a_source_options():
     assert issubclass(SerialSourceOptions, SourceOptions)
@@ -92,8 +83,6 @@ def test_serial_source_options_rejects_non_positive_timeout_via_inherited_rule()
     with pytest.raises(ValueError, match="timeout_seconds"):
         SerialSourceOptions(device="/dev/tty.x", timeout_seconds=0)
 
-
-# ----- NexmonSourceOptions ---------------------------------------------------------------------------
 
 def test_nexmon_source_options_is_a_source_options():
     assert issubclass(NexmonSourceOptions, SourceOptions)

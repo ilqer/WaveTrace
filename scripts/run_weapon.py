@@ -1,12 +1,8 @@
-"""Independent live WEAPON detection — every (tx->rx) link served through its RX node's cal + weapon
-head (inter-carrier features), fused into one armed/clear verdict. Standalone from run_live_mesh /
-run_count (imports only library code), reads the weapon models from data/model_weapon.
+"""Live weapon detection: every (tx->rx) link is served through its rx node's cal and weapon head
+(inter-carrier features), and the links are fused into one armed/clear verdict.
 
-Each link's RX-node WeaponHead emits P(weapon); LinkVoter blends them weighted by static reliability
-(per-node LOGO accuracy via accuracyWeights) x live decision margin. A node validated at/below chance
-gets weight 0 and drops out.
-
-    .venv/bin/python scripts/run_weapon.py
+LinkVoter weights each link by static reliability (LOGO accuracy) times live decision margin, so a
+head validated at or below chance gets weight 0 and drops out.
 """
 
 import argparse
@@ -19,8 +15,8 @@ from wavetrace.recognition import LinkVoter, dwellProbaDetailed, linkHealth, loa
 
 
 def _entryFor(entries, buf_key):
-    """Match a live buffer key (tx_short, rx_node) to a serving entry: the per-link (tag, nid) head
-    first (tx_short '4f:9c' -> tag '4f9c'), then the per-node fallback (None, nid). None if neither."""
+    """Serving entry for a live (tx_short, rx_node) key: the per-link head first (tx_short '4f:9c'
+    becomes tag '4f9c'), then the per-node fallback (None, nid), else None."""
     txShort, nid = buf_key
     return entries.get((txShort.replace(":", ""), nid)) or entries.get((None, nid))
 
@@ -48,8 +44,8 @@ def main():
               f"{args.cal}/node*/. Run collect_baseline.py then collect_weapon.py first.")
         return
     weaponI = next(iter(entries.values()))["weapon_i"]  # ordering validated equal in loadWeaponLinks
-    # the artifact's own resample rate, not a re-declared constant -- every head is trained at the
-    # same rate today, so any entry's contract stands in for the print banner.
+    # read off a head's own contract rather than re-declared here; every head is trained at the same
+    # rate today, so any one of them stands in for the banner
     sample_rate_hz = next(iter(entries.values()))["session"].head.contract.target_sample_rate_hz
 
     buffers = collections.defaultdict(collections.deque)  # keyed by (tx_short, rx_node)
@@ -90,7 +86,7 @@ def main():
                     while buf and buf[0].timestamp < cutoff:
                         buf.popleft()
 
-            # static per-link reliability x live margin (LinkVoter multiplies them); uniform fallback.
+            # LinkVoter multiplies static reliability by live margin; uniform when nothing is weighted
             linkStatic = {lid: _entryFor(entries, key)["weight"] for key, lid in linkIds.items()}
             static = linkStatic if any(w > 0 for w in linkStatic.values()) else None
             voter = LinkVoter(static)
@@ -108,7 +104,7 @@ def main():
                 pWeapon = float(proba[wi]) if wi >= 0 else 0.0
                 quality = abs(pWeapon - 0.5) * 2.0  # decision margin -> 0 (unsure) .. 1 (confident)
                 voter.add(linkIds[key], proba, quality=quality)
-                hz, miss = linkHealth(buffers[key])  # delivered rate + missing-frame fraction (C9b)
+                hz, miss = linkHealth(buffers[key])  # delivered rate and missing-frame fraction
                 tail = f"@{hz:.0f}Hz" + (f"!{miss:.0%}drop" if miss > 0.1 else "")
                 breakdown.append(f"{key[0]}->{key[1]}:{pWeapon:.2f}{tail}")
 

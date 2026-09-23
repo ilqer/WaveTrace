@@ -1,6 +1,6 @@
 """WaveTrace: WiFi-CSI sensing pipeline (posture & weapon recognition, CSI-only at deploy).
 
-Phase 1 re-exports the native core types from the `_wavetrace` extension so callers use
+Re-exports the native core types from the `_wavetrace` extension, so callers write
 `from wavetrace import CsiFrame, RecognitionResult, Label`.
 """
 

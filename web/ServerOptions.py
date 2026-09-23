@@ -1,13 +1,8 @@
-"""Delivery-layer configuration for the FastAPI/uvicorn dashboard server."""
-
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
 class WebServerOptions:
-    """Settings for the FastAPI/uvicorn dashboard server (`web/app.py`), including the
-    reload-watcher's own paths/globs."""
-
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = True

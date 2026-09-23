@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Minimal LAN SNTP server. Provides shared clock for mesh when there's no internet.
-Run on PC (PC_IP). ESP nodes sync to this for cross-node frame alignment (ms-level).
+"""Minimal LAN SNTP server, for a mesh router with no internet.
 
-    sudo .venv/bin/python scripts/ntp_server.py
-
-If router has internet, point SNTP_SERVER to real NTP instead. Unsynced mesh still runs, but fusion alignment is lost.
+Nodes sync to it so their frame timestamps line up across the mesh to about a millisecond; an
+unsynced mesh still runs, but frames from different nodes can no longer be aligned.
 """
 
 import socket

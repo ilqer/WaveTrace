@@ -1,5 +1,3 @@
-"""Unit tests for wavetrace.domain.contracts.PipelineContract — no I/O, milliseconds."""
-
 import pytest
 
 from wavetrace.domain.contracts import (

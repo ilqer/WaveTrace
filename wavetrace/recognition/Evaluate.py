@@ -1,10 +1,9 @@
-"""Phase 6c: Eval gate (LOGO + baselines).
+"""The evaluation gate: leave-one-group-out, against two baselines.
 
-Always use LeaveOneGroupOut (LOGO) for generalization metrics. Random splits leak autocorrelated windows.
+Only LOGO counts. A random split leaks, because neighbouring windows overlap and are correlated.
 
-Baselines:
-* majority-class: predict training fold's frequent class.
-* PresenceSegmenter: no-train DSP gate. Windowed CV of mean channel energy. It's a segment detector, mapped here to per-window.
+The baselines are the majority class of the training fold, and PresenceSegmenter - an untrained DSP
+gate over the windowed CV of mean channel energy, mapped from segments onto windows.
 """
 
 import numpy as np
@@ -51,7 +50,7 @@ def leaveOneGroupOut(X, y, groups, make_head) -> dict:
         "majority_accuracy": float((yMaj == yTrue).mean()),
         "confusion": cm,
     }
-    if cm.shape == (2, 2):  # binary stage -> the P7 tier gate quantities ride along
+    if cm.shape == (2, 2):  # binary stage: the tier-gate rates ride along
         report.update(binaryRates(cm))
     return report
 
@@ -70,7 +69,7 @@ def binaryRates(confusion) -> dict:
 
 
 def tierVerdict(reports, *, fp_max: float = 0.10, tpr_min: float = 0.90) -> dict:
-    """Phase-7 tier gate: PASS iff EVERY report meets FP <= fp_max AND TPR >= tpr_min."""
+    """PASS only when every report meets FP <= fp_max and TPR >= tpr_min."""
     worstTpr = min(r["tpr"] for r in reports.values())
     worstFp = max(r["fp_rate"] for r in reports.values())
     reasons = []
@@ -92,7 +91,7 @@ def evaluateWeapon(
     X, y, *, session_ids, subject_ids, make_head,
     fp_max: float = 0.10, tpr_min: float = 0.90,
 ) -> dict:
-    """Stage-E tier report: LOGO over session and subject + verdict. make_head returns unfitted WeaponHead."""
+    """LOGO over session and subject, plus a verdict. make_head returns an unfitted WeaponHead."""
     reports = {
         "session": leaveOneGroupOut(X, y, session_ids, make_head),
         "subject": leaveOneGroupOut(X, y, subject_ids, make_head),
@@ -121,7 +120,7 @@ def evaluateConcealmentGap(
     Xv, yv, gv = X[~mask], y[~mask], np.asarray(groups)[~mask]
     Xc, yc = X[mask], y[mask]
 
-    # concealed: fit on ALL visible, predict the held-out concealed set (honest transfer number)
+    # fit on all visible, predict the held-out concealed set: the honest transfer number
     head = make_head().fit(Xv, yv)
     predC = head.predict(Xc)
     cmC = confusion_matrix(yc, predC, labels=[0, 1])
@@ -169,8 +168,8 @@ def evaluatePresence(
     X_features, y, *, session_ids, subject_ids, make_head, X_image=None,
     segmenter_kwargs: dict | None = None,
 ) -> dict:
-    """Phase-6 DoD report: LOGO over sessions and subjects + baselines. `make_head` returns an
-    unfitted `PresenceHead` (same contract as `evaluateWeapon`'s `make_head`)."""
+    """LOGO over sessions and subjects, plus the baselines. `make_head` returns an unfitted
+    `PresenceHead`, the same contract as `evaluateWeapon`'s."""
     report = {
         "session": leaveOneGroupOut(X_features, y, session_ids, make_head),
         "subject": leaveOneGroupOut(X_features, y, subject_ids, make_head),

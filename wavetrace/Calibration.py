@@ -1,8 +1,7 @@
-"""Phase 3c: Per-session calibration.
+"""Per-session calibration from an empty room: amplitude scale plus NBVI subcarrier selection.
 
-Empty-room baseline calibration. Output sets amplitude scale and subcarrier selection (NBVI).
-
-GainLock is optional. Only use it for amplitude/presence features. Do not use for phase or material features (they need absolute attenuation).
+The gain lock is for amplitude and presence features only. Phase and material features need the
+absolute attenuation it removes.
 """
 
 from dataclasses import dataclass, field
@@ -18,7 +17,7 @@ from wavetrace import CsiFrame, GainLock, select_subcarriers_nbvi, valid_subcarr
 class CalibrationResult:
     reference_scale: float       # GainLock reference amplitude level (NaN if gain lock disabled)
     subcarriers: list[int]       # NBVI-selected, non-consecutive subcarrier indices
-    numBaseline: int            # number of baseline frames used
+    numBaseline: int            # baseline frames observed
     baseline_mag: np.ndarray     # mean |H| per subcarrier over the quiet baseline, shape (S,)
     baseline_diff: np.ndarray    # mean CFO-free differential channel H(k)·conj(H(k-1)), complex, (S-1,)
     image_subcarriers: list[int] = field(default_factory=list)  # ALL noise-gate-passing subcarriers, ascending — CNN image rows
@@ -30,7 +29,8 @@ def reflectionSignature(grid, result: CalibrationResult):
     * mag_ratio[k]: Attenuation coefficient. Metal changes it from 1.
     * phase_delta[k]: Shift in CFO-free differential phase. Measures mm-level path-length changes.
 
-    Pass raw CSI grid. Do NOT pass GainLock'd frames (destroys attenuation info). Antennas are averaged/fused. O(A·S)."""
+    Pass a raw CSI grid: gain-locked frames have lost the attenuation this measures. Antennas are
+    averaged. O(A·S)."""
     g = np.asarray(grid)
     amp = np.abs(g).mean(axis=0)
     diff = (g[:, 1:] * np.conj(g[:, :-1])).mean(axis=0)
@@ -39,7 +39,7 @@ def reflectionSignature(grid, result: CalibrationResult):
     return magRatio.astype(np.float32), phaseDelta.astype(np.float32)
 
 
-def imageBaseline(result: "CalibrationResult", *, locked: bool) -> np.ndarray:
+def build_image_baseline(result: "CalibrationResult", *, locked: bool) -> np.ndarray:
     """Quiet-room baseline. O(S). Rescales to gain-lock basis if locked."""
     b = np.asarray(result.baseline_mag, dtype=np.float32)
     if locked and not np.isnan(float(result.reference_scale)):

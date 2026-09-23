@@ -7,6 +7,8 @@ threshold margin.
 
 import numpy as np
 
+from wavetrace.domain.recognition import VARIANCE_FEATURE
+
 
 class VarianceBackend:
     """A learned threshold `_threshold`, scale `_scale` and direction `_positive_below` over one
@@ -15,10 +17,6 @@ class VarianceBackend:
     feature_mode = "ic27"
 
     def __init__(self, config, **backend_options):
-        # deferred: wavetrace.recognition.Weapon pulls in the recognition package, which pulls in
-        # this package's heads.py — importing VARIANCE_FEATURE at module load time would cycle back
-        # here before get_backend_class exists whenever adapters.recognition loads first.
-        from wavetrace.recognition.Weapon import VARIANCE_FEATURE
         self.config = config
         self._variance_feature_column = int(backend_options.get("variance_feature", VARIANCE_FEATURE))
         self._threshold = None

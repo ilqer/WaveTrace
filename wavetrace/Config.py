@@ -24,32 +24,29 @@ class CaptureConfig:
 
 @dataclass(frozen=True, slots=True)
 class SignalConfig:
-    """DSP toggles. Gain lock is optional (only for amplitude path)."""
+    """DSP toggles. The gain lock applies to the amplitude path only."""
 
     gain_lock_enabled: bool = True
 
 
 @dataclass(frozen=True, slots=True)
 class ModelConfig:
-    """Recognition head config.
+    """Recognition head hyperparameters.
 
-    `stage`: Target (presence/weapon).
-    `backend`: default `'mlp'`; valid keys are whatever `wavetrace.adapters.recognition` registers.
-    An unregistered `backend` is rejected by `wavetrace.adapters.recognition.get_backend_class`, at
-    head construction/`load()`.
-    `k`: NBVI subcarrier count (from calibration)."""
+    `backend` accepts whatever `wavetrace.adapters.recognition` registers; an unregistered name is
+    rejected when the head is built or loaded, not here."""
 
     stage: str                      # "presence" | "weapon"
     k: int                          # NBVI subcarrier count -> feature dim = 9*k per node
     backend: str = "mlp"
-    window: int = 128               # front-end window (frames), locked P4
-    hop: int = 32                   # front-end hop (frames), locked P4
+    window: int = 128               # front-end window, in frames
+    hop: int = 32                   # front-end hop, in frames
     fs_tol: float = 0.10            # fsOk: max relative live-fs deviation before a window is dropped
     hidden: int = 32                # MLP hidden width (single layer — tiny head, O(1) forward)
     seed: int = 0                   # backend rng seed (deterministic training/inference)
-    frame_average: int = 1          # T2/P10: non-overlapping decimating mean (M=1 = no change)
-    subtract_baseline: bool = False  # T3/P10: subtract quiet-room baseline from image path
-    subtract_ic_baseline: bool = False  # Item 10/CAUSE 2B: subtract raw baseline from the weapon IC path
+    frame_average: int = 1          # non-overlapping decimating mean; 1 = no averaging
+    subtract_baseline: bool = False  # subtract the quiet-room baseline from the image path
+    subtract_ic_baseline: bool = False  # subtract the raw quiet-room baseline from the weapon IC path
 
     def __post_init__(self) -> None:
         if self.stage not in ("presence", "weapon"):

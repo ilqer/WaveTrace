@@ -1,4 +1,4 @@
-"""Type stubs for the native `_wavetrace` extension (Phase 1 core types)."""
+"""Type stubs for the native `_wavetrace` extension."""
 
 from typing import Optional
 
@@ -140,12 +140,12 @@ def fft(x: npt.NDArray[np.complex64]) -> npt.NDArray[np.complex64]:
     ...
 
 def nine_features(window: npt.NDArray[np.float32]) -> list[float]:
-    """REFERENCE §2.9 nine features [mean,std,max,min,IQR,skew,lag1,MAD,WL] over one window."""
+    """Nine features over one window: mean, std, max, min, IQR, skew, lag-1, MAD, waveform length."""
     ...
 
 def inter_carrier_stats(mags: npt.NDArray[np.float32]) -> tuple[float, float]:
-    """Per-packet inter-subcarrier (mu, sigma2) over subcarrier magnitudes (REFERENCE §0B weapon
-    discriminator: metal -> lower sigma2). Sample variance (M-1)."""
+    """Per-packet inter-subcarrier (mu, sigma2) over subcarrier magnitudes. Metal lowers sigma2,
+    which is what the weapon head reads. Sample variance, (M-1)."""
     ...
 
 def inter_carrier_phase_stats(phase: npt.NDArray[np.float32]) -> tuple[float, float]:
@@ -183,8 +183,8 @@ class FeatureExtractor:
         ...
 
 class InterCarrierExtractor:
-    """Windows the per-packet inter-subcarrier amplitude stats {mu, sigma2, cv} into a 27-feature
-    block (3 series x §2.9 nine features). Push RAW magnitudes (NOT gain-locked)."""
+    """Windows the per-packet inter-subcarrier stats {mu, sigma2, cv} into a 27-feature block:
+    three series of nine features. Push RAW magnitudes, never gain-locked ones."""
 
     def __init__(self, window: int, hop: int) -> None: ...
     @property

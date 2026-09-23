@@ -1,5 +1,3 @@
-"""Unit tests for web.ServerOptions.WebServerOptions."""
-
 import pytest
 
 from web.ServerOptions import WebServerOptions

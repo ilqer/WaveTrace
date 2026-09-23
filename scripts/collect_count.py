@@ -1,13 +1,8 @@
-"""Independent PEOPLE-COUNT pipeline — capture labeled count sessions over UDP and train a per-node
-count model. Standalone from the presence mesh scripts: imports only library code (wavetrace.*), never
-run_live_mesh / collect_presence, and writes to its own data/model_count root so presence is untouched.
+"""Capture labeled people-count sessions over UDP and train a count model per node.
 
-You choose the counts up front with --max-count N: you capture levels 0,1,...,N where the top level N
-means "N or more people". Per-(tx->rx)-LINK, resampled onto the shared pipeline rate, pooled into
-each node's single multi-class head (same train/serve parity as the presence path). Calibration is
-shared and reused from collect_baseline (data/cal/node{id}) — gain/NBVI are per-node, count-independent.
-
-    .venv/bin/python scripts/collect_count.py --max-count 3 --sessions 3
+Levels 0..N are captured in turn, with the top level N meaning "N or more people". Calibration is
+shared with the presence path (<root>/cal/node{id}): gain and NBVI are per node and do not depend on
+how many people are in the zone.
 """
 
 import argparse
@@ -30,12 +25,10 @@ SUBJECT = "u0"
 
 
 def captureLinks(prompt, n, port, node_ids, countdown=0, max_capture_s=60.0):
-    """Collect up to n frames PER (tx->rx) LINK in ONE pass. Returns {(tx_short, rx_node): [frames]}.
-
-    Per-link so training matches per-link serving (run_count): each directed link is its own clean
-    single-channel stream. Keeps the dominant subcarrier width per link. Stops when every expected RX
-    node has appeared AND all known links reach n, OR max_capture_s elapses (the recv timeout fires only
-    on TOTAL silence, so the wall-clock deadline is what stops a lone quiet link from stalling)."""
+    """Collect up to n frames per (tx->rx) link in one pass. Returns {(tx_short, rx_node): [frames]},
+    each link reduced to its dominant subcarrier width. Splitting per link keeps every directed link a
+    single clean stream, which is how run_count serves it. The wall-clock deadline is needed because
+    the receive timeout only fires on total silence, so one quiet link would stall the loop."""
     print(f"\n>> {prompt}\n   press Enter to start...", flush=True)
     input()
     if countdown:
@@ -103,9 +96,8 @@ def main():
     if args.max_count < 1:
         print("[ERROR] --max-count must be >= 1 (need at least empty vs one person).", file=sys.stderr)
         return
-    counts = list(range(args.max_count + 1))  # 0,1,...,N; class_id == count
+    counts = list(range(args.max_count + 1))  # class_id == the count
 
-    # nodes with a calibration from collect_baseline, optionally narrowed by --node
     calNodes = sorted(int(os.path.basename(d)[len("node"):])
                        for d in glob.glob(os.path.join(args.cal, "node*"))
                        if os.path.basename(d)[len("node"):].isdigit())
@@ -132,7 +124,6 @@ def main():
                 args.frames, args.port, calNodes, countdown=5 if c == 0 else 0)
             print('\a\a\a', end='', flush=True)  # 3 beeps = done, stop moving
             for nid in calNodes:
-                # every (tx->rx) link on this node, resampled on its own grid, pooled into one head
                 for key in sorted(k for k in cap if k[1] == nid):
                     fr = resampleUniform(cap.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
                     if len(fr) < DEFAULT_WINDOW_FRAMES:  # a link shorter than this emits no window
@@ -142,7 +133,6 @@ def main():
                     rec = f"{args.root}/count_sess_{i}/c{c}/node{nid}/link_{tag}"
                     ds = f"{args.root}/count_ds_{i}/c{c}/node{nid}/link_{tag}"
                     saveRecording(fr, rec)
-                    # constant-count labeler: every window in this segment gets class_id = c
                     lab = ScriptedLabeler([(span[0], span[1], True)],
                                           label_fn=lambda raw, t, _c=c, _n=label: (_c, _n))
                     collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],

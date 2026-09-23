@@ -1,7 +1,7 @@
-"""Spatial localization (AoA) tests.
-Plants a known azimuth into a ULA, verifying MUSIC/Bartlett algorithms recover it.
-Also tests range, heatmap, aggregate, and serialize logic.
-Uses the same steering convention as Localizer. Clean rank-1 source must peak at the planted angle.
+"""Plants a known azimuth into a ULA and checks that MUSIC/Bartlett recover it.
+
+Uses the same steering convention as Localizer: a clean rank-1 source must peak at the
+planted angle.
 """
 
 import io
@@ -190,7 +190,7 @@ def test_tracker_gates_teleport():
 
 
 def test_tracker_confidence_sets_the_gain():
-    # Test identical 5-deg offset with different confidences. Higher confidence increases Kalman gain, making tracker move faster.
+    # Higher confidence raises the Kalman gain, so the tracker moves further on the same offset.
     def step(conf):
         tr = Tracker(range_enabled=False)
         tr.update(_meas(0.0, 0.9, 0.0, rng=float("nan")))    # init at 0

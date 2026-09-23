@@ -1,7 +1,6 @@
-"""PresenceSegmenter tests: streaming variance-gate active-segment detector.
+"""PresenceSegmenter: a streaming variance gate that flags active segments.
 
-Validates that active (fluctuating) regions are flagged, segment bounds are correct,
-and hysteresis applies to transitions. Active region is a high-modulation stretch between quiet stretches.
+The fixture is a high-modulation stretch between two quiet stretches.
 """
 
 import numpy as np

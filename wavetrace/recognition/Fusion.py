@@ -1,6 +1,8 @@
-"""Phase 6e: Multi-RX feature-level fusion.
+"""Fuse several RX nodes at the feature level: concatenate their vectors in a stable order.
 
-RX nodes have independent clocks; fuse at feature level. Concatenate per-node feature vectors in stable order. O(features) per emit."""
+The nodes have independent clocks, so anything finer than feature-level concatenation would be
+combining clock noise. O(features) per emit.
+"""
 
 import numpy as np
 
