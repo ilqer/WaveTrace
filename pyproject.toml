@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "scikit-learn>=1.3"]
 
 [project.scripts]
-wavetrace = "wavetrace.Cli:main"
+wavetrace = "wavetrace.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
@@ -26,11 +26,6 @@ wheel.packages = ["wavetrace"]
 cmake.build-type = "Release"
 
 [tool.pytest.ini_options]
-# Legacy PascalCase test files (CLAUDE.md naming) stay Test*.py until Phase 6's tree rename;
-# new Phase-3-onward tests use the final PEP 8 test_*.py name (REFACTOR_PLAN.md §1.2/§1.5).
-python_files = ["Test*.py", "test_*.py"]
-python_classes = "Test*"
-python_functions = "test_*"
 testpaths = ["tests"]
 
 [tool.ruff]
@@ -51,39 +46,17 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# pep8-naming (N) is intentionally OFF: the codebase is camelCase Python on purpose until
-# Phase 6 of REFACTOR_PLAN.md converts it. Turning N on here would fight every existing name.
-select = ["F"]
+select = ["F", "N"]
 ignore = []
 
-[tool.ruff.lint.per-file-ignores]
-# Phase 0 is behaviour-preserving and may not touch these files (REFACTOR_PLAN.md Phase 0 hard
-# constraints). Each entry below is pre-existing pyflakes debt caught by turning the linter on for
-# the first time, not something introduced here — left in place and noted under "Found, deferred"
-# in REFACTOR_PROGRESS.md for a later, in-scope phase to clean up.
-"experiments/weapon_experiments.py" = ["F541"]
-"scripts/health_monitor.py" = ["F401"]
-"scripts/ntp_server.py" = ["F541"]
-"scripts/run_live_mesh.py" = ["F401"]
-"tests/TestCir.py" = ["F841"]
-"tests/TestFeatures.py" = ["F401"]
-"tests/TestFrontendExt.py" = ["F401", "F841"]
-"tests/TestMeshLinks.py" = ["F401"]
-"tests/TestRegression.py" = ["F401"]
-"tests/TestSubcarrierSelect.py" = ["F401", "F841"]
-"wavetrace/Cli.py" = ["F401"]
-"wavetrace/Localize.py" = ["F401"]
-"wavetrace/groundtruth/Webcam.py" = ["F401"]
-"wavetrace/recognition/Heatmap.py" = ["F841"]
-"web/app.py" = ["F401"]
-"web/foxglove.py" = ["F401"]
-"web/streamer.py" = ["F401"]
+[tool.ruff.lint.pep8-naming]
+# CLAUDE.md §6: `X` / `y` in ML code and maths symbols next to their formula (`H`, `S_inv`, `E_n`)
+ignore-names = ["[A-Z]", "[A-Z]_*"]
 
 [tool.mypy]
 python_version = "3.10"
 ignore_missing_imports = true
-# The codebase predates type hints in most modules; this is a starting posture for Phase 0,
-# not an enforced gate yet (mypy is not part of the Phase 0 verify gate).
+# Most modules predate type hints, so mypy is advisory: it is not part of the verify gate.
 check_untyped_defs = false
 disallow_untyped_defs = false
 exclude = [
@@ -136,14 +109,14 @@ modules = [
 ]
 
 [[tool.importlinter.contracts]]
-# `wavetrace.Cli` is the composition root; nothing else imports it.
-name = "nothing outside Cli.py imports the wavetrace.Cli entrypoint"
+# `wavetrace.cli` is the composition root; nothing else imports it.
+name = "nothing outside cli.py imports the wavetrace.cli entrypoint"
 type = "forbidden"
 # "wavetrace.*", not the bare "wavetrace" package: import-linter's forbidden contract silently
-# skips a source/forbidden pair that overlaps as packages, so "wavetrace" against "wavetrace.Cli"
-# would check nothing. Only "wavetrace.Cli" itself overlaps, and is correctly skipped.
+# skips a source/forbidden pair that overlaps as packages, so "wavetrace" against "wavetrace.cli"
+# would check nothing. Only "wavetrace.cli" itself overlaps, and is correctly skipped.
 source_modules = ["wavetrace.*", "web", "scripts"]
-forbidden_modules = ["wavetrace.Cli"]
+forbidden_modules = ["wavetrace.cli"]
 
 [[tool.importlinter.contracts]]
 # The heads are pure classifiers: backends are resolved only in wavetrace.adapters.recognition.heads

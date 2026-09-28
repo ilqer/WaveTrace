@@ -1,6 +1,6 @@
 """The calibrate use-case: quiet-baseline calibration -> a persisted calibration dir."""
 
-from wavetrace.Calibration import Calibration, saveCalibration
+from wavetrace.calibration import Calibration, save_calibration
 
 
 def calibrate_source(source, out_dir, *, baseline_packets=300, use_gain_lock=True, nbvi_max=12):
@@ -10,4 +10,4 @@ def calibrate_source(source, out_dir, *, baseline_packets=300, use_gain_lock=Tru
     for frame in source.frames():
         calibration.observe(frame)
     result = calibration.finalize()
-    return saveCalibration(result, out_dir), result
+    return save_calibration(result, out_dir), result

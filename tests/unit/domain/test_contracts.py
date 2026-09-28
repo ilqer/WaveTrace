@@ -83,7 +83,7 @@ def test_to_dict_from_dict_round_trip_with_none_subcarrier_width():
 
 
 class _FakeModelConfig:
-    """Duck-typed stand-in for wavetrace.Config.ModelConfig (only .window/.hop read;
+    """Duck-typed stand-in for wavetrace.config.ModelConfig (only .window/.hop read;
     derive_pipeline_contract does not read .k -- see PipelineContract.subcarrier_width)."""
 
     def __init__(self, window, hop, k):

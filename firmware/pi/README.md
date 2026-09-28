@@ -86,11 +86,13 @@ The remaining settings are fixed for the current hardware:
 | `start_capture.sh` | per-boot: `makecsiparams` (HT80) + monitor mode + a 5-frame check |
 | `illuminate.sh` | run on the Mac; pings modem B so it emits frames for the Pi to sniff |
 | `nexmon_reader.py` | reads Nexmon's local UDP port 5500 → `(timestamp, mac, complex csi[S])` |
-| `publisher.py` | packs the byte-exact v2/v3 record (mirrors `wavetrace/Source.py`) → UDP 9876 |
+| `publisher.py` | packs the byte-exact v2/v3 record (mirrors `wavetrace/adapters/source/wire_format.py`) → UDP 9876 |
 | `pi5_csi_node.py` | main loop: reader → quantize → batch → send, with a rate printout |
+| `camera_stream.py` | MJPEG camera streamer on port 8090 for ground-truth labeling (training only; needs picamera2) |
+| `requirements.txt` | Pi-side Python dependencies (numpy) |
 
 ## Notes
 
 - Weapon mode requires `WIRE_VER=3` and a fixed `CSI_SCALE` (both are the default). A per-frame auto-scale removes the absolute amplitude that the metal signature lives in.
-- I/Q ordering in `parseNexmonCsi` does not matter for amplitude-based presence detection; verify it on hardware before using phase-based features.
+- I/Q ordering in `parse_nexmon_csi` does not matter for amplitude-based presence detection; verify it on hardware before using phase-based features.
 - For fusing this node with the ESP mesh, NTP-sync the Pi's clock to the same source the ESP nodes use (the Mac). Weapon or presence detection using the Pi alone does not need NTP.

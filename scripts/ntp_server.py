@@ -13,7 +13,7 @@ import time
 NTP_EPOCH = 2208988800  # seconds from 1900-01-01 (NTP epoch) to 1970-01-01 (Unix epoch)
 
 
-def _ntpTs(t: float):
+def _ntp_timestamp(t: float):
     """Unix seconds to NTP 32-bit pair."""
     sec = int(t) + NTP_EPOCH
     frac = int((t - int(t)) * (1 << 32)) & 0xFFFFFFFF
@@ -34,25 +34,25 @@ def main():
         sys.exit(f"ERROR: could not bind to udp/{port}: {e}")
 
     print(f"SNTP server on udp/{port}  (stratum 1, system clock)  — Ctrl+C to stop")
-    print(f"make sure your ESP32 config.h has PC_IP set to this machine's IP.")
+    print("make sure your ESP32 Config.h has PC_IP set to this machine's IP.")
     served = 0
     while True:
         data, addr = sock.recvfrom(512)
-        recvT = time.time()
+        receive_time_s = time.time()
         print(f"[{time.strftime('%H:%M:%S')}] request from {addr[0]}")
         if len(data) < 48:
             print(f"  short packet ({len(data)} bytes), ignoring")
             continue
         origin = data[40:48]  # Client's transmit timestamp (echoed).
-        refS, refF = _ntpTs(recvT - 1.0)
-        recS, recF = _ntpTs(recvT)
-        txS, txF = _ntpTs(time.time())
+        reference_ntp_s, reference_ntp_fraction = _ntp_timestamp(receive_time_s - 1.0)
+        receive_ntp_s, receive_ntp_fraction = _ntp_timestamp(receive_time_s)
+        tx_ntp_s, tx_ntp_fraction = _ntp_timestamp(time.time())
         pkt = struct.pack("!B B b b", (0 << 6) | (4 << 3) | 4, 1, 4, -20)  # LI=0,VN=4,Mode=4 server
         pkt += struct.pack("!I", 0) + struct.pack("!I", 0) + b"LOCL"        # root delay/disp, refid
-        pkt += struct.pack("!II", refS, refF)                            # reference timestamp
+        pkt += struct.pack("!II", reference_ntp_s, reference_ntp_fraction)  # reference timestamp
         pkt += origin                                                      # originate (client's TX)
-        pkt += struct.pack("!II", recS, recF)                            # receive timestamp
-        pkt += struct.pack("!II", txS, txF)                              # transmit timestamp
+        pkt += struct.pack("!II", receive_ntp_s, receive_ntp_fraction)   # receive timestamp
+        pkt += struct.pack("!II", tx_ntp_s, tx_ntp_fraction)             # transmit timestamp
         sock.sendto(pkt, addr)
         served += 1
         if served % 20 == 1:

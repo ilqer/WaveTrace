@@ -10,10 +10,10 @@ import os
 import json
 import uvicorn
 
-from web.ServerOptions import WebServerOptions
+from web.server_options import WebServerOptions
 from web.streamer import WaveTraceRunner
 from web.foxglove import fg_server
-from web.device_ctl import DeviceHub, listSerialPorts
+from web.device_ctl import DeviceHub, list_serial_ports
 
 
 @asynccontextmanager
@@ -44,11 +44,14 @@ async def lifespan(app: FastAPI):
 # joblib.load unpickles, so both reads and writes are confined to output/.
 ALLOWED_ROOT = os.path.realpath("output")
 
-def _safeOutputPath(path: str) -> str:
-    full = os.path.realpath(path)
-    if os.path.commonpath([full, ALLOWED_ROOT]) != ALLOWED_ROOT:
+JPEG_START_OF_IMAGE = b"\xff\xd8"
+JPEG_END_OF_IMAGE = b"\xff\xd9"
+
+def _resolve_output_path(path: str) -> str:
+    resolved_path = os.path.realpath(path)
+    if os.path.commonpath([resolved_path, ALLOWED_ROOT]) != ALLOWED_ROOT:
         raise ValueError(f"path escapes output/: {path}")
-    return full
+    return resolved_path
 
 
 app = FastAPI(title="WaveTrace Lab Dashboard", lifespan=lifespan)
@@ -71,7 +74,7 @@ device_queue = None
 device_hub = None
 
 class StartRequest(BaseModel):
-    action: str = "run" # run | calib | collect | train
+    action: str = "run"  # run | calib | collect | train | camera_collect
 
     synthetic: bool = False
     antennas: int = 2
@@ -84,7 +87,7 @@ class StartRequest(BaseModel):
     mode: str = "presence"
     calibration: str = "data/2g4_ht40/ui/cal"
     model: str = "data/2g4_ht40/ui/model/model.joblib"
-    gainLock: bool = True
+    gainLock: bool = True  # noqa: N815 - request-body key; clients send it under this name
     vote: bool = True
     frame_average: int = 1
     use_baseline: bool = False
@@ -175,7 +178,7 @@ async def broadcast_device():
                 clients_device.discard(client)
 
 @app.post("/api/action/start")
-async def startInference(req: StartRequest):
+async def start_action(req: StartRequest):
     global runner, runner_task, inference_queue, stream_queue, logs_queue
     
     if runner and runner.is_running:
@@ -186,23 +189,23 @@ async def startInference(req: StartRequest):
     runner = WaveTraceRunner(loop, inference_queue, stream_queue, logs_queue, training_queue,
                              telemetry_queue)
     
-    def runBlocking():
+    def run_request():
         try:
             if req.action == "run":
-                runner.startInferenceManaged(req)
+                runner.run_inference_request(req)
             elif req.action == "calib":
-                runner.startCalibrationManaged(req)
+                runner.run_calibration_request(req)
             elif req.action == "collect":
-                runner.startCollectionManaged(req)
+                runner.run_collection_request(req)
             elif req.action == "train":
-                runner.startTrainingManaged(req)
+                runner.run_training_request(req)
             elif req.action == "camera_collect":
-                runner.startCameraCollectManaged(req)
-        except Exception as e:
-            loop.call_soon_threadsafe(logs_queue.put_nowait, f"FATAL ERROR: {str(e)}")
+                runner.run_camera_collection_request(req)
+        except Exception as error:
+            loop.call_soon_threadsafe(logs_queue.put_nowait, f"FATAL ERROR: {str(error)}")
 
-    # runBlocking blocks, so it runs on a worker thread; stop_inference awaits the task later.
-    runner_task = asyncio.create_task(asyncio.to_thread(runBlocking))
+    # run_request blocks, so it runs on a worker thread; stop_inference awaits the task later.
+    runner_task = asyncio.create_task(asyncio.to_thread(run_request))
     return {"status": "started"}
 
 @app.get("/api/pipeline/state")
@@ -276,30 +279,31 @@ async def websocket_telemetry(websocket: WebSocket):
 @app.get("/api/model/weights")
 async def model_weights(model: str, mode: str = "weapon"):
     """Per-antenna learned CNN channel weights (L2 norms of first conv filters, normalized)."""
-    from wavetrace.recognition import modeSession
-    from wavetrace.recognition.Explain import cnnChannelWeights
+    from wavetrace.recognition import open_session
+    from wavetrace.recognition.explain import cnn_channel_weights
     try:
-        safeModel = _safeOutputPath(model)
+        safe_model_path = _resolve_output_path(model)
     except ValueError:
         return {"error": "model path must be inside output/ and must not escape it"}
     try:
-        sess = modeSession(mode, safeModel)
-        w = cnnChannelWeights(sess.head)
-        return {"per_antenna": w.tolist() if w is not None else None}
-    except Exception as e:
-        return {"error": str(e)}
+        session = open_session(mode, safe_model_path)
+        per_antenna_weights = cnn_channel_weights(session.head)
+        return {"per_antenna": per_antenna_weights.tolist() if per_antenna_weights is not None else None}
+    except Exception as error:
+        return {"error": str(error)}
 
 @app.get("/api/fusion/weights")
 async def fusion_weights(path: str):
     """Softmax over the saved combiner's coefficients gives per-band trust."""
     import joblib, numpy as np
     try:
-        blob = joblib.load(_safeOutputPath(path))
-        coef = blob["combiner"].coef_.ravel()
-        ex = np.exp(coef - coef.max()); w = ex / ex.sum()
-        return {"bands": blob["band_order"], "weights": [round(float(x), 3) for x in w]}
-    except Exception as e:
-        return {"error": str(e)}
+        blob = joblib.load(_resolve_output_path(path))
+        coefficients = blob["combiner"].coef_.ravel()
+        exponentials = np.exp(coefficients - coefficients.max())
+        band_weights = exponentials / exponentials.sum()
+        return {"bands": blob["band_order"], "weights": [round(float(weight), 3) for weight in band_weights]}
+    except Exception as error:
+        return {"error": str(error)}
 
 @app.get("/api/weapon/litmus")
 async def weapon_litmus(root: str = "data", node: int | None = None, per_link: bool = False):
@@ -307,31 +311,35 @@ async def weapon_litmus(root: str = "data", node: int | None = None, per_link: b
     Each row's `hist` holds histogram bins for the client's PDF overlay."""
     from wavetrace.diagnostics import gather_sigma2, json_hist, key_label, separation, verdict
     try:
-        data = gather_sigma2(root, node, per_link=per_link)
-        if not data:
+        sigma2_by_key = gather_sigma2(root, node, per_link=per_link)
+        if not sigma2_by_key:
             return {"error": f"no weapon recordings under {root}/weapon_rec/*/<clear|weapon>/node*/"}
 
-        def _aucOf(key):
-            s = separation(data[key].get("clear", _npEmpty()), data[key].get("weapon", _npEmpty()))
-            return s["auc"] if s else 0.0
+        def _compute_auc(key):
+            separation_result = separation(sigma2_by_key[key].get("clear", _empty_array()),
+                                           sigma2_by_key[key].get("weapon", _empty_array()))
+            return separation_result["auc"] if separation_result else 0.0
 
-        out = []
-        for key in sorted(data, key=lambda k: (-_aucOf(k), key_label(k))):
-            c = data[key].get("clear", _npEmpty())
-            w = data[key].get("weapon", _npEmpty())
-            s = separation(c, w)
+        rows = []
+        for key in sorted(sigma2_by_key,
+                          key=lambda group_key: (-_compute_auc(group_key), key_label(group_key))):
+            clear_sigma2 = sigma2_by_key[key].get("clear", _empty_array())
+            weapon_sigma2 = sigma2_by_key[key].get("weapon", _empty_array())
+            separation_result = separation(clear_sigma2, weapon_sigma2)
             label = key_label(key)
-            if s is None:
-                out.append({"label": label, "ok": False, "reason": "need both clear and weapon captures"})
+            if separation_result is None:
+                rows.append({"label": label, "ok": False, "reason": "need both clear and weapon captures"})
                 continue
-            out.append({"label": label, "auc": round(s["auc"], 3),
-                        "lower_when_armed": s["lower_when_armed"], "cohens_d": round(s["cohens_d"], 2),
-                        "n_clear": s["n_clear"], "n_weapon": s["n_weapon"],
-                        "verdict": verdict(s["auc"]),
-                        "hist": json_hist(c, w) if c.size >= 10 and w.size >= 10 else None})
-        return {"rows": out, "per_link": per_link}
-    except Exception as e:
-        return {"error": str(e)}
+            rows.append({"label": label, "auc": round(separation_result["auc"], 3),
+                         "lower_when_armed": separation_result["lower_when_armed"],
+                         "cohens_d": round(separation_result["cohens_d"], 2),
+                         "n_clear": separation_result["n_clear"], "n_weapon": separation_result["n_weapon"],
+                         "verdict": verdict(separation_result["auc"]),
+                         "hist": json_hist(clear_sigma2, weapon_sigma2)
+                         if clear_sigma2.size >= 10 and weapon_sigma2.size >= 10 else None})
+        return {"rows": rows, "per_link": per_link}
+    except Exception as error:
+        return {"error": str(error)}
 
 
 @app.get("/api/calib/info")
@@ -339,29 +347,29 @@ async def calib_info(path: str = "output/calib"):
     """K is max(image_subcarriers)+1: the highest subcarrier index the radio reported during
     calibration. It pins the width the rest of the pipeline must use."""
     import json as _json
-    metaPath = os.path.join(path, "meta.json")
-    if not os.path.exists(metaPath):
+    meta_path = os.path.join(path, "meta.json")
+    if not os.path.exists(meta_path):
         return {"error": f"no calibration at {path} (run Calib first)"}
     try:
-        with open(metaPath) as f:
-            meta = _json.load(f)
-        imgSubc = meta.get("image_subcarriers") or meta.get("subcarriers") or []
-        K = int(max(imgSubc)) + 1 if imgSubc else 0
-        if K <= 96:
-            bwLabel = "HT20 · 2.4 GHz"
-        elif K <= 200:
-            bwLabel = "HT40 · 2.4 GHz"
+        with open(meta_path) as meta_file:
+            meta = _json.load(meta_file)
+        image_subcarriers = meta.get("image_subcarriers") or meta.get("subcarriers") or []
+        subcarrier_count = int(max(image_subcarriers)) + 1 if image_subcarriers else 0
+        if subcarrier_count <= 96:
+            bandwidth_label = "HT20 · 2.4 GHz"
+        elif subcarrier_count <= 200:
+            bandwidth_label = "HT40 · 2.4 GHz"
         else:
-            bwLabel = "HT80 · 5 GHz"
+            bandwidth_label = "HT80 · 5 GHz"
         return {
-            "K": K,
-            "bw_label": bwLabel,
+            "K": subcarrier_count,
+            "bw_label": bandwidth_label,
             "n_selected": len(meta.get("subcarriers") or []),
-            "n_image": len(imgSubc),
+            "n_image": len(image_subcarriers),
             "path": path,
         }
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception as error:
+        return {"error": str(error)}
 
 
 @app.get("/api/paths/scan")
@@ -369,35 +377,36 @@ async def scan_paths():
     import glob as _glob
 
     def _scan():
-        calDirs = sorted(set(
-            os.path.dirname(p)
-            for p in _glob.glob("data/**/meta.json", recursive=True)
+        calibration_dirs = sorted(set(
+            os.path.dirname(matched_path)
+            for matched_path in _glob.glob("data/**/meta.json", recursive=True)
                        + _glob.glob("output/**/meta.json", recursive=True)
         ))
-        modelFiles = sorted(
+        model_files = sorted(
             _glob.glob("data/**/model.joblib", recursive=True)
             + _glob.glob("output/**/model.joblib", recursive=True)
         )
-        meshRoots = sorted(set(
-            os.path.dirname(p)
-            for p in _glob.glob("data/**/node*/model.joblib", recursive=True)
+        mesh_roots = sorted(set(
+            os.path.dirname(matched_path)
+            for matched_path in _glob.glob("data/**/node*/model.joblib", recursive=True)
                        + _glob.glob("output/**/node*/model.joblib", recursive=True)
         ))
-        datasetDirs = sorted(set(
-            os.path.dirname(p)
-            for p in _glob.glob("data/**/X_features.npy", recursive=True)
+        dataset_dirs = sorted(set(
+            os.path.dirname(matched_path)
+            for matched_path in _glob.glob("data/**/X_features.npy", recursive=True)
                        + _glob.glob("output/**/X_features.npy", recursive=True)
         ))
-        poolDirs = sorted(set(
-            os.path.dirname(os.path.dirname(p))
-            for p in _glob.glob("data/**/X_features.npy", recursive=True)
+        pooled_dataset_dirs = sorted(set(
+            os.path.dirname(os.path.dirname(matched_path))
+            for matched_path in _glob.glob("data/**/X_features.npy", recursive=True)
                        + _glob.glob("output/**/X_features.npy", recursive=True)
-            if os.path.basename(os.path.dirname(p)) not in (".", "")
+            if os.path.basename(os.path.dirname(matched_path)) not in (".", "")
         ))
         return {
-            "calibrations": calDirs,
-            "models": modelFiles + [r for r in meshRoots if r not in modelFiles],
-            "datasets": datasetDirs + [d for d in poolDirs if d not in datasetDirs],
+            "calibrations": calibration_dirs,
+            "models": model_files + [mesh_root for mesh_root in mesh_roots if mesh_root not in model_files],
+            "datasets": dataset_dirs + [pooled_dir for pooled_dir in pooled_dataset_dirs
+                                        if pooled_dir not in dataset_dirs],
         }
 
     return await asyncio.to_thread(_scan)
@@ -409,14 +418,14 @@ async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str =
     Returns {"path": "/abs/path"}, or {"path": null} when the user cancels."""
     import subprocess as _sp
 
-    def _openDialog():
+    def _open_dialog():
         if type == "dir":
             script = f'POSIX path of (choose folder with prompt "{prompt}")'
         else:
             if ext:
-                extList = "{" + ", ".join(f'"{e.strip()}"' for e in ext.split(",")) + "}"
+                allowed_extensions = "{" + ", ".join(f'"{e.strip()}"' for e in ext.split(",")) + "}"
                 script = (f'POSIX path of (choose file with prompt "{prompt}" '
-                          f'of type {extList})')
+                          f'of type {allowed_extensions})')
             else:
                 script = f'POSIX path of (choose file with prompt "{prompt}")'
 
@@ -437,10 +446,10 @@ async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str =
         except Exception as e:
             return {"path": None, "error": str(e)}
 
-    return await asyncio.to_thread(_openDialog)
+    return await asyncio.to_thread(_open_dialog)
 
 
-def _npEmpty():
+def _empty_array():
     import numpy as np
     return np.array([])
 
@@ -453,13 +462,13 @@ class ModelUploadRequest(BaseModel):
 async def model_upload(req: ModelUploadRequest):
     import base64
     try:
-        dest = _safeOutputPath(req.dest)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        with open(dest, "wb") as f:
-            f.write(base64.b64decode(req.file_b64))
-        return {"status": "uploaded", "dest": dest}
-    except Exception as e:
-        return {"error": str(e)}
+        destination_path = _resolve_output_path(req.dest)
+        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+        with open(destination_path, "wb") as model_file:
+            model_file.write(base64.b64decode(req.file_b64))
+        return {"status": "uploaded", "dest": destination_path}
+    except Exception as error:
+        return {"error": str(error)}
 
 class MonitorRequest(BaseModel):
     port: str
@@ -484,11 +493,11 @@ class StopMonitorRequest(BaseModel):
 
 @app.get("/api/serial/ports")
 async def serial_ports():
-    return {"ports": listSerialPorts()}
+    return {"ports": list_serial_ports()}
 
 @app.get("/api/device/state")
 async def device_state():
-    return device_hub.getState()
+    return device_hub.get_state()
 
 class SerialMonitorRequest(BaseModel):
     port: str
@@ -496,12 +505,12 @@ class SerialMonitorRequest(BaseModel):
 
 @app.post("/api/serial/monitor/start")
 async def serial_monitor_start(req: SerialMonitorRequest):
-    return device_hub.startMonitor(req.port, req.baud)
+    return device_hub.start_monitor(req.port, req.baud)
 
 @app.post("/api/serial/monitor/stop")
 async def serial_monitor_stop(req: StopMonitorRequest = None):
-    p = req.port if req else None
-    return device_hub.stopMonitor(p)
+    port = req.port if req else None
+    return device_hub.stop_monitor(port)
 
 @app.post("/api/flash")
 async def flash(req: FlashRequest):
@@ -511,12 +520,12 @@ async def flash(req: FlashRequest):
 
 @app.post("/api/pi/run")
 async def pi_run(req: PiRequest):
-    asyncio.create_task(asyncio.to_thread(device_hub.runPi, req.host, req.command))
+    asyncio.create_task(asyncio.to_thread(device_hub.run_on_pi, req.host, req.command))
     return {"status": "running", "host": req.host}
 
 @app.post("/api/script/run")
 async def script_run(req: ScriptRequest):
-    asyncio.create_task(asyncio.to_thread(device_hub.runScript, req.script, req.args))
+    asyncio.create_task(asyncio.to_thread(device_hub.run_script, req.script, req.args))
     return {"status": "running", "script": req.script}
 
 
@@ -526,8 +535,8 @@ class StopProcRequest(BaseModel):
 
 @app.post("/api/device/stop")
 async def device_stop(req: StopProcRequest = None):
-    p = req.proc_id if req else None
-    return device_hub.stopProc(p)
+    process_id = req.proc_id if req else None
+    return device_hub.stop_process(process_id)
 
 class InputRequest(BaseModel):
     proc_id: str
@@ -535,7 +544,7 @@ class InputRequest(BaseModel):
 
 @app.post("/api/device/input")
 async def device_input(req: InputRequest):
-    return device_hub.sendInput(req.proc_id, req.input)
+    return device_hub.send_input(req.proc_id, req.input)
 
 @app.websocket("/ws/device")
 async def websocket_device(websocket: WebSocket):
@@ -553,44 +562,45 @@ _yolo_cache: dict = {}
 _yolo_lock = _threading.Lock()
 
 
-def _loadYolo(weights: str = "yolov8n-seg.pt"):
+def _load_yolo(weights: str = "yolov8n-seg.pt"):
     with _yolo_lock:
         if weights not in _yolo_cache:
             try:
                 from ultralytics import YOLO
                 _yolo_cache[weights] = YOLO(weights)
-            except Exception as e:
+            except Exception as error:
                 _yolo_cache[weights] = None   # cache the failure so we don't retry on every frame
-                print(f"[YOLO] load failed: {e}")
+                print(f"[YOLO] load failed: {error}")
     return _yolo_cache.get(weights)
 
 
-def _annotateFrame(model, frame, weapon_classes=(43,)):
+def _annotate_frame(model, frame, weapon_class_ids=(43,)):
     import cv2, numpy as np
     results = model(frame, verbose=False)
-    out = frame.copy()
-    for r in results:
-        boxes = r.boxes
-        masks = r.masks
-        for i, box in enumerate(boxes):
-            clsId = int(box.cls[0])
-            conf = float(box.conf[0])
-            isWeapon = clsId in weapon_classes
-            color = (30, 120, 255) if isWeapon else (50, 220, 80)   # BGR: orange / green
-            label = f"{'WEAPON' if isWeapon else model.names.get(clsId, str(clsId))} {conf:.0%}"
+    annotated_frame = frame.copy()
+    for result in results:
+        boxes = result.boxes
+        masks = result.masks
+        for i, detection_box in enumerate(boxes):
+            class_id = int(detection_box.cls[0])
+            confidence = float(detection_box.conf[0])
+            is_weapon = class_id in weapon_class_ids
+            color = (30, 120, 255) if is_weapon else (50, 220, 80)   # BGR: orange / green
+            label = f"{'WEAPON' if is_weapon else model.names.get(class_id, str(class_id))} {confidence:.0%}"
             if masks is not None and i < len(masks.xy):
-                pts = masks.xy[i].astype(np.int32)
-                overlay = out.copy()
-                cv2.fillPoly(overlay, [pts], color)
-                out = cv2.addWeighted(out, 0.55, overlay, 0.45, 0)
-                cv2.polylines(out, [pts], True, color, 2)
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            cv2.rectangle(out, (x1, y1), (x2, y2), color, 1)
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-            cv2.rectangle(out, (x1, y1 - th - 4), (x1 + tw + 2, y1), color, -1)
-            cv2.putText(out, label, (x1 + 1, y1 - 3),
+                mask_polygon_px = masks.xy[i].astype(np.int32)
+                overlay = annotated_frame.copy()
+                cv2.fillPoly(overlay, [mask_polygon_px], color)
+                annotated_frame = cv2.addWeighted(annotated_frame, 0.55, overlay, 0.45, 0)
+                cv2.polylines(annotated_frame, [mask_polygon_px], True, color, 2)
+            left_px, top_px, right_px, bottom_px = map(int, detection_box.xyxy[0])
+            cv2.rectangle(annotated_frame, (left_px, top_px), (right_px, bottom_px), color, 1)
+            (text_width_px, text_height_px), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(annotated_frame, (left_px, top_px - text_height_px - 4),
+                          (left_px + text_width_px + 2, top_px), color, -1)
+            cv2.putText(annotated_frame, label, (left_px + 1, top_px - 3),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
-    return out
+    return annotated_frame
 
 
 # Frames come from an ffmpeg subprocess, not cv2.VideoCapture: on macOS, AVFoundation's run loop
@@ -600,74 +610,48 @@ import subprocess as _subprocess
 import shutil as _shutil
 
 
-def _ffmpegBin() -> str:
-    p = _shutil.which("ffmpeg")
-    if p is None:
+def _find_ffmpeg() -> str:
+    ffmpeg_path = _shutil.which("ffmpeg")
+    if ffmpeg_path is None:
         raise RuntimeError(
             "ffmpeg not found — install it: brew install ffmpeg"
         )
-    return p
-
-
-def _ffmpegGrabOne(index: int) -> bytes | None:
-    """On macOS the AVFoundation input raises its own camera-permission dialog on first run,
-    so Terminal itself needs no camera grant."""
-    try:
-        ffmpeg = _ffmpegBin()
-    except RuntimeError:
-        return None
-    cmd = [
-        ffmpeg, "-hide_banner", "-loglevel", "error",
-        "-f", "avfoundation",
-        "-framerate", "30",
-        "-video_size", "1280x720",
-        "-i", f"{index}:none",
-        "-vframes", "1",
-        "-f", "image2",
-        "-vcodec", "mjpeg",
-        "-",
-    ]
-    try:
-        result = _subprocess.run(cmd, capture_output=True, timeout=10)
-        return result.stdout if result.returncode == 0 and result.stdout else None
-    except Exception:
-        return None
+    return ffmpeg_path
 
 
 @app.get("/api/camera/check")
 async def camera_check(cam_index: int = 0):
     def _probe():
         try:
-            ffmpeg = _ffmpegBin()
-        except RuntimeError as e:
-            return {"ok": False, "error": str(e)}
-        import json as _json
-        cmd = [
+            ffmpeg = _find_ffmpeg()
+        except RuntimeError as error:
+            return {"ok": False, "error": str(error)}
+        ffmpeg_command = [
             ffmpeg, "-hide_banner", "-loglevel", "error",
             "-f", "avfoundation", "-framerate", "30", "-video_size", "1280x720",
             "-i", f"{cam_index}:none",
             "-vframes", "1", "-f", "rawvideo", "-vcodec", "rawvideo", "-",
         ]
         try:
-            r = _subprocess.run(cmd, capture_output=True, timeout=10)
-            if r.returncode != 0 or not r.stdout:
-                stderr = r.stderr.decode(errors="replace")[-400:]
-                if "permission" in stderr.lower() or "authorization" in stderr.lower():
+            result = _subprocess.run(ffmpeg_command, capture_output=True, timeout=10)
+            if result.returncode != 0 or not result.stdout:
+                stderr_tail = result.stderr.decode(errors="replace")[-400:]
+                if "permission" in stderr_tail.lower() or "authorization" in stderr_tail.lower():
                     return {"ok": False,
                             "error": "Camera permission denied — allow Terminal in System Settings → Privacy → Camera"}
-                return {"ok": False, "error": f"ffmpeg exit {r.returncode}: {stderr}"}
+                return {"ok": False, "error": f"ffmpeg exit {result.returncode}: {stderr_tail}"}
             return {"ok": True, "width": 1280, "height": 720, "cam_index": cam_index}
         except _subprocess.TimeoutExpired:
             return {"ok": False, "error": "Camera probe timed out"}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        except Exception as error:
+            return {"ok": False, "error": str(error)}
     return await asyncio.to_thread(_probe)
 
 
 _camera_active = False
 
 @app.post("/api/camera/stop")
-def cameraStop():
+def stop_camera():
     global _camera_active
     _camera_active = False
     return {"ok": True}
@@ -681,15 +665,15 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
     global _camera_active
     _camera_active = True
     
-    model = await asyncio.to_thread(_loadYolo, weights) if annotate else None
+    model = await asyncio.to_thread(_load_yolo, weights) if annotate else None
 
     async def _generate():
         try:
-            ffmpeg = _ffmpegBin()
+            ffmpeg = _find_ffmpeg()
         except RuntimeError:
             return  # ffmpeg missing: an empty body makes the browser's <img> fire onError
 
-        cmd = [
+        ffmpeg_command = [
             ffmpeg, "-hide_banner", "-loglevel", "error",
             "-f", "avfoundation",
             "-framerate", "30",
@@ -700,60 +684,59 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
             "-",
         ]
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
+        ffmpeg_process = await asyncio.create_subprocess_exec(
+            *ffmpeg_command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
 
-        SOI = b"\xff\xd8"
-        EOI = b"\xff\xd9"
-        buf = b""
-        frameIdx = 0
+        unparsed_bytes = b""
+        frame_index = 0
 
         try:
             while _camera_active:
                 if await request.is_disconnected():
                     break
-                    
-                chunk = await proc.stdout.read(65536)
+
+                chunk = await ffmpeg_process.stdout.read(65536)
                 if not chunk:
                     break
-                buf += chunk
+                unparsed_bytes += chunk
                 while True:
-                    s = buf.find(SOI)
-                    if s == -1:
-                        buf = b""
+                    frame_start_byte = unparsed_bytes.find(JPEG_START_OF_IMAGE)
+                    if frame_start_byte == -1:
+                        unparsed_bytes = b""
                         break
-                    e = buf.find(EOI, s + 2)
-                    if e == -1:
-                        buf = buf[s:]   # no EOI yet: keep the partial frame and read more
+                    frame_end_byte = unparsed_bytes.find(JPEG_END_OF_IMAGE, frame_start_byte + 2)
+                    if frame_end_byte == -1:
+                        # no EOI yet: keep the partial frame and read more
+                        unparsed_bytes = unparsed_bytes[frame_start_byte:]
                         break
-                    jpg = buf[s: e + 2]
-                    buf = buf[e + 2:]
-                    
-                    frameIdx += 1
+                    jpeg_frame = unparsed_bytes[frame_start_byte: frame_end_byte + 2]
+                    unparsed_bytes = unparsed_bytes[frame_end_byte + 2:]
+
+                    frame_index += 1
 
                     if model is not None:
                         # throttle YOLO to 5 fps: 1 frame in every 6 of the 30 fps source
-                        if frameIdx % 6 != 0:
+                        if frame_index % 6 != 0:
                             continue
-                            
+
                         import cv2, numpy as np
-                        arr = np.frombuffer(jpg, dtype=np.uint8)
-                        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                        encoded_jpeg = np.frombuffer(jpeg_frame, dtype=np.uint8)
+                        frame = cv2.imdecode(encoded_jpeg, cv2.IMREAD_COLOR)
                         if frame is not None:
-                            frame = await asyncio.to_thread(_annotateFrame, model, frame)
-                            _, enc = cv2.imencode(".jpg", frame,
-                                                  [cv2.IMWRITE_JPEG_QUALITY, 75])
-                            jpg = enc.tobytes()
+                            frame = await asyncio.to_thread(_annotate_frame, model, frame)
+                            _, annotated_jpeg = cv2.imencode(".jpg", frame,
+                                                             [cv2.IMWRITE_JPEG_QUALITY, 75])
+                            jpeg_frame = annotated_jpeg.tobytes()
 
                     yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
-                           + str(len(jpg)).encode()
-                           + b"\r\n\r\n" + jpg + b"\r\n")
+                           + str(len(jpeg_frame)).encode()
+                           + b"\r\n\r\n" + jpeg_frame + b"\r\n")
         finally:
             try:
-                proc.kill()
+                ffmpeg_process.kill()
             except ProcessLookupError:
                 pass
 

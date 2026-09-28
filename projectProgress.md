@@ -1,6 +1,6 @@
 # WaveTrace — Project Progress Report
 
-Last updated: 2026-06-30 | Tests passing: 295
+Last updated: 2026-09-28 | Tests passing: 369
 
 ---
 
@@ -75,7 +75,7 @@ These are finalized. Do not revisit without strong new evidence.
 8. **Feature-level concat for multi-node fusion** — Each node is processed independently; feature vectors are concatenated. Cross-node phase math is forbidden.
 9. **ISTA over OMP for CIR** — OMP commits permanently on each iteration. When body and object fall in the same Nyquist bin, OMP picks wrong early and cannot recover. ISTA's soft thresholding degrades gracefully.
 10. **Static TX buffers in firmware** — Dynamic TX buffers (sdkconfig default) compete with the CSI queue for DRAM. With a 128-entry HT40 queue (~50 KB), dynamic buffers cause ENOMEM under load. Static buffers (TX_BUFFER_TYPE=0) are pre-allocated and cannot be starved.
-11. **AoA / `Localize.py` parked** — Analytic angle-of-arrival needs ≥ 2 phase-coherent receive chains. Both candidate radios are 1×1 (ESP32-S3 single RX chain; Pi CYW43455 single stream), so AoA is not achievable on current hardware. `Localize.py` stays in-tree but unused.
+11. **AoA / `localize.py` parked** — Analytic angle-of-arrival needs ≥ 2 phase-coherent receive chains. Both candidate radios are 1×1 (ESP32-S3 single RX chain; Pi CYW43455 single stream), so AoA is not achievable on current hardware. `localize.py` stays in-tree but unused.
 12. **No usable body-worn weapon signal at 2.4 GHz, omni antennas, LOS** — Three real datasets across three environments give ic27 AUC 0.29–0.46 (inverted or near-chance). The ceiling is physics — omnidirectional antennas in line-of-sight geometry — not the model. Above-chance weapon detection requires NLOS geometry and ideally a directional TX (Yousaf 2025 used a >25 dBi dish). Do not interpret a weak model as a tuning problem.
 
 ---
@@ -225,34 +225,34 @@ These are finalized. Do not revisit without strong new evidence.
 - `Calibration.ready` (property) returns True after ≥300 baseline packets
 - `Calibration.finalize()` locks the reference amplitude scale (median of per-frame mean magnitudes)
 - `GainLock.apply(frame)` rescales every sample by referenceScale / frameScale(frame); phase is untouched
-- `GainLock.coefficientOfVariation()` fallback when locking is impossible (CV = σ/μ, gain-invariant)
+- `coefficient_of_variation()` fallback when locking is impossible (CV = σ/μ, gain-invariant)
 
 **Calibration save/load:**
-- `GainLock.lockTo(scale)` (C++): bypasses observe→finalize, directly sets referenceScale. Lets Python reconstruct a locked GainLock from a persisted scalar without re-running baseline capture.
-- `saveCalibration()`: writes meta.json (reference_scale, subcarriers, numBaseline), baseline_mag.npy, baseline_diff.npy
-- `loadCalibration()`: reads files, calls gainLock.lock_to(ref); returns `(CalibrationResult, GainLock | None)` — the GainLock is None when reference_scale is NaN (gain lock was disabled at calibration time)
+- `GainLock.lock_to(scale)` (C++): bypasses observe→finalize, directly sets referenceScale. Lets Python reconstruct a locked GainLock from a persisted scalar without re-running baseline capture.
+- `save_calibration()`: writes meta.json (reference_scale, subcarriers, numBaseline), baseline_mag.npy, baseline_diff.npy
+- `load_calibration()`: reads files, calls gain_lock.lock_to(ref); returns `(CalibrationResult, GainLock | None)` — the GainLock is None when reference_scale is NaN (gain lock was disabled at calibration time)
 - Backward compat: meta.get("image_subcarriers", meta["subcarriers"]) — old calibrations without the key fall back to the NBVI set
 
 ### 6.2 Stage 2 — C++ Preprocessing
 
-- `conjugateMultiply()`: ≥2 antennas → H[a][k] × conj(H[0][k]); single-antenna fallback → cross-subcarrier ratio H[0][k] × conj(H[0][k-1])
+- `conjugate_multiply()`: ≥2 antennas → H[a][k] × conj(H[0][k]); single-antenna fallback → cross-subcarrier ratio H[0][k] × conj(H[0][k-1])
 - `hampel()`: sliding window MAD test, k=5.0 default; 1.4826×MAD makes it a consistent σ estimator; spike detected → replace with median, phase held at last good value
-- `unwrapStep()`: streaming O(1) phase unwrap per cell
+- `unwrap_step()`: streaming O(1) phase unwrap per cell
 - EMA normalize: α=0.1 (slow EMA removes DC drift, passes motion signal)
 
 ### 6.3 Stage 3 — Material Features (Weapon Path)
 
-- `interCarrierStats()`: per-packet cross-subcarrier amplitude dispersion; flat metal → lower σ² than diffuse human body
+- `inter_carrier_stats()`: per-packet cross-subcarrier amplitude dispersion; flat metal → lower σ² than diffuse human body
 - Critical constraint: must NOT run on NBVI-selected subset; must NOT gain-lock before; run over all K valid subcarriers
-- `interCarrierPhaseStats()`: fits a least-squares line to unwrapped phase across subcarriers; metal → coherent/near-linear → small residualStd
-- `reconstructComplexCsi()`: strips linear STO/CFO ramp, preserves absolute residual phase+magnitude (used in material-ID literature)
+- `inter_carrier_phase_stats()`: fits a least-squares line to unwrapped phase across subcarriers; metal → coherent/near-linear → small residualStd
+- `reconstruct_complex_csi()`: strips linear STO/CFO ramp, preserves absolute residual phase+magnitude (used in material-ID literature)
 
 ### 6.4 Stage 4 — Feature Extraction
 
-- `nineFeatures()`: mean, std, max, min, IQR, skewness, lag-1 autocorrelation, MAD, waveform length — computed over a 128-frame window per subcarrier
+- `nine_features()`: mean, std, max, min, IQR, skewness, lag-1 autocorrelation, MAD, waveform length — computed over a 128-frame window per subcarrier
 - Window = 128 frames (~1.28s at 100 Hz), hop = 32 frames
 - NBVI selects top-K subcarriers by time-variance; K=12 for the presence path
-- Three parallel paths from iterWindows: 9·K feature vector (MLP/SVM), K×128 CSI image (CNN), 27 inter-carrier stats (weapon MLP)
+- Three parallel paths from iter_windows: 9·K feature vector (MLP/SVM), K×128 CSI image (CNN), 27 inter-carrier stats (weapon MLP)
 - `SegmentVoter`: soft majority voting; per-snapshot CNN accuracy 51.1% → voting over a full walk → 93.3% (Zhou 2020)
 
 ### 6.5 GainLock Analysis
@@ -260,7 +260,7 @@ These are finalized. Do not revisit without strong new evidence.
 The ESP32 AGC varies transmit power, which changes amplitudes in ways unrelated to the environment.
 
 - CV = σ/μ is gain-invariant: doubling all amplitudes scales σ and μ equally, so CV stays the same
-- For the weapon path: CV is the preferred form for inter-carrier variance. Absolute σ² is destroyed by gain normalization. `coefficientOfVariation` is already implemented.
+- For the weapon path: CV is the preferred form for inter-carrier variance. Absolute σ² is destroyed by gain normalization. `coefficient_of_variation` is already implemented.
 - This is a silent failure: a model trained on gain-locked amplitudes for weapon detection learns corrupted features with no error message.
 
 ### 6.6 NBVI (SubcarrierSelect)
@@ -279,16 +279,16 @@ The ESP32 AGC varies transmit power, which changes amplitudes in ways unrelated 
 
 ### 6.8 Variance Computation: Two-Pass vs Welford
 
-- All WaveTrace sites (interCarrierStats, nineFeatures, PresenceSegmenter::windowCv) use two-pass computation (compute mean first, then sum squared deviations)
+- All WaveTrace sites (inter_carrier_stats, nine_features, PresenceSegmenter::WindowCoefficientOfVariation) use two-pass computation (compute mean first, then sum squared deviations)
 - Welford recurrence is loop-carried → prevents SIMD auto-vectorization; two-pass is faster on contiguous float arrays at small sizes (K≈52–128)
-- NBVI in Calibration.py could use Welford to reduce memory from O(F·S) to O(S) during arbitrarily long calibration; not implemented (offline baseline has fixed F=3000)
-- Sliding-window variance (windowCv): Welford has no deletion step; correct approach = ring-buffer sum + sum-of-squares with periodic exact recompute
+- NBVI in calibration.py could use Welford to reduce memory from O(F·S) to O(S) during arbitrarily long calibration; not implemented (offline baseline has fixed F=3000)
+- Sliding-window variance (WindowCoefficientOfVariation): Welford has no deletion step; correct approach = ring-buffer sum + sum-of-squares with periodic exact recompute
 
 ### 6.9 InterCarrierExtractor Gap
 
-- σ²[p] was computed per-packet via interCarrierStats but never aggregated into a window-level feature vector
+- σ²[p] was computed per-packet via inter_carrier_stats but never aggregated into a window-level feature vector
 - The weapon signal = how σ²[p] behaves over the ~1.3s window (shape, stability, drift), not a single-packet value
-- Fix: InterCarrierExtractor mirrors FeatureExtractor; pushes per-frame {μ[p], σ²[p]}, runs nineFeatures over those series every hop
+- Fix: InterCarrierExtractor mirrors FeatureExtractor; pushes per-frame {μ[p], σ²[p]}, runs nine_features over those series every hop
 
 ---
 
@@ -296,25 +296,26 @@ The ESP32 AGC varies transmit power, which changes amplitudes in ways unrelated 
 
 ### 7.1 Phase 6 — Presence Head
 
-**`recognition/Model.py` — PresenceHead:**
+**`domain/recognition/presence_head.py` — PresenceHead:**
 - Backend-agnostic: fit(), predict(), predict_proba(), save(), load()
 - Default backend: StandardScaler + MLPClassifier pipeline (scaler is inside the pipeline → applied automatically at inference)
 - SVM backend: CalibratedClassifierCV(SVC(), ensemble=False); ensemble=False fits one calibrator on the full training set; needed because sklearn 1.9 deprecated SVC(probability=True)
 
-**`Evaluate.py` — Evaluation gate:**
+**`evaluate.py` — Evaluation gate:**
 - LeaveOneGroupOut over both session and subject
 - Per-fold accuracy + pooled accuracy + confusion matrix
 - Two baselines per fold: majority-class + PresenceSegmenter (C++ DSP gate replayed on the same windows)
 - PresenceSegmenter baseline prevents reporting improvements that don't beat a well-tuned threshold rule
 
-**`Infer.py`:**
-- InferenceSession.predictWindow(feat) → (class_id, proba)
+**`infer.py`:**
+- InferenceSession.predict_window(feat) → (class_id, proba)
 - Measured latency: ~0.05 ms (160x under the 8 ms DoD budget)
 
-**`Fusion.py` / `Resample.py`:**
+**`fusion.py` / `resample.py`:**
 - Per-node feature concat: O(m), no cross-node conjugate multiplication
-- resampleUniform: linear/cubic interpolation onto a uniform time grid
-- fsOk: drops windows where measured fs deviates beyond tolerance
+- resample_uniform: linear/cubic interpolation onto a uniform time grid
+- is_sample_rate_ok: drops windows where measured fs deviates beyond tolerance
+- (`recognition/resample.py` was removed on 2026-09-28 as unused; the live path resamples with `source.resample_uniform`)
 - out= buffer reuse for zero-allocation hot path
 
 **Synthetic results:**
@@ -354,42 +355,42 @@ The ESP32 AGC varies transmit power, which changes amplitudes in ways unrelated 
 
 ### 7.3 Phase 8 — Pipeline Completion
 
-- 8a: GainLock::lockTo() (C++) + saveCalibration() / loadCalibration() (Python)
-- 8b: Frontend.iterWindows parity fix (single emit loop shared by train and serve)
+- 8a: GainLock::LockTo() (C++) + save_calibration() / load_calibration() (Python)
+- 8b: frontend.iter_windows parity fix (single emit loop shared by train and serve)
 - 8c: Publisher ABC + JsonlPublisher (zero-dep, JSONL, flush every write)
 - 8d: CsiSource / SyntheticSource / RecordingSource + serialization; SerialReader = documented Phase-0 seam
-- 8e: WeaponHead feature_mode stamped into saved head; _servingPlan reads it to determine apply_lock, intercarrier, input pick
-- 8f: Cli.py (argparse, 6 modes: capture / calibrate / collect-data / train / localize / run)
-- 8g: TestPipeline.py (10 tests)
+- 8e: WeaponHead feature_mode stamped into saved head; plan_input reads it to determine apply_lock, intercarrier, input pick
+- 8f: cli.py (argparse, 6 modes: capture / calibrate / collect-data / train / localize / run)
+- 8g: test_pipeline.py (10 tests)
 
 Rebuild required after touching C++: `pip install -e . --no-build-isolation`
 
 **Parity invariant (critical engineering rule):**
-- `Frontend.iterWindows` is shared by training and serving — divergent code paths produce feature mismatch and silent model corruption
-- Per-frame order: IC extractor sees raw magnitudes BEFORE gainLock.apply() → then gain lock applied → then NBVI-selected mags pushed to FeatureExtractor and SpectrogramBuilder
+- `frontend.iter_windows` is shared by training and serving — divergent code paths produce feature mismatch and silent model corruption
+- Per-frame order: IC extractor sees raw magnitudes BEFORE gain_lock.apply() → then gain lock applied → then NBVI-selected mags pushed to FeatureExtractor and SpectrogramBuilder
 
 **Bugs found and fixed in Phase 8:**
-- `trainPresence`/`trainWeapon` created ModelConfig with window=128 ignoring the dataset's actual window; fix: pull window/hop from dataset meta
-- `resultToDict` used result.classId (wrong); correct pybind attribute is result.class_id
+- `train_presence`/`train_weapon` created ModelConfig with window=128 ignoring the dataset's actual window; fix: pull window/hop from dataset meta
+- `result_to_dict` used result.classId (wrong); correct pybind attribute is result.class_id
 
 **Multi-node architecture:**
-- iterWindowsStacked(): lockstep-zip one iterWindows per node; yields (N·9·K features, N×K_img×window image, N·27 IC)
+- iter_stacked_windows(): lockstep-zip one iter_windows per node; yields (N·9·K features, N×K_img×window image, N·27 IC)
 - Node/channel order = sorted node IDs (deterministic)
 - Timestamp tolerance check: if max(ts) − min(ts) > node_tolerance → ValueError (Phase 0 owns time sync)
 
 **Antenna handling:**
 - Phase path (Preprocessor): conjugate multiply consumes the antenna dimension → (A-1)×S; preserves spatial phase difference (AoA); not averaging
-- Amplitude path (Frontend.py:41): mags = np.abs(np.asarray(fr.grid)).mean(axis=0) — collapses antenna dimension; with single-antenna ESP32 nodes, fr.grid is (1,S) so mean(axis=0) is a no-op; the real channel axis is NODES, not antennas; fix = stack nodes as channels
+- Amplitude path (frontend.py:41): mags = np.abs(np.asarray(fr.grid)).mean(axis=0) — collapses antenna dimension; with single-antenna ESP32 nodes, fr.grid is (1,S) so mean(axis=0) is a no-op; the real channel axis is NODES, not antennas; fix = stack nodes as channels
 - CNN subcarrier handling: SpectrogramBuilder receives all S subcarriers in frequency order, not NBVI-selected K (NBVI picks non-adjacent subcarriers → meaningless local correlations in CNN)
 
 **AoA heatmap capability (corrected understanding):**
 - Early diagnosis "single TX-RX ESP32 pair cannot produce 2D spatial heatmap" was incorrect
-- Localize.py already builds AoA heatmap from ≥2 RX antennas on one radio (shared clock enables inter-antenna phase)
+- localize.py already builds AoA heatmap from ≥2 RX antennas on one radio (shared clock enables inter-antenna phase)
 - Independent per-node STO/CFO makes absolute ToF infeasible without per-node delay calibration (not yet implemented)
 
-**Bug fix (2026-06-26) — collectSource train/serve mismatch:**
-- collectSource() in Cli.py was passing gainLock to buildDataset for the weapon stage, applying gain-lock normalization to ic27 features at training time, destroying the σ²[p] amplitude-flatness signal. Serving correctly used apply_lock=False.
-- Fix: `effective_lock = None if intercarrier else gainLock`
+**Bug fix (2026-06-26) — collect_source train/serve mismatch:**
+- collect_source() in cli.py was passing gain_lock to build_dataset for the weapon stage, applying gain-lock normalization to ic27 features at training time, destroying the σ²[p] amplitude-flatness signal. Serving correctly used apply_lock=False.
+- Fix: `effective_lock = None if intercarrier else gain_lock`
 
 ### 7.4 CIR Super-Resolution Module (built 2026-06-22)
 
@@ -397,15 +398,15 @@ Rebuild required after touching C++: `pip install -e . --no-build-isolation`
 
 | Discriminator | Physical mechanism | Status |
 |---|---|---|
-| Inter-subcarrier amplitude variance σ²[p] | Metal → flat reflection → lower σ² than diffuse human body | Done: interCarrierStats / ic27 features |
-| Inter-subcarrier phase residual | Metal → coherent reflection → near-linear phase → small residualStd | Done: interCarrierPhaseStats |
-| Pure object reflection (reflectionNull / β-null background subtraction) | Empty-room cancellation exposes object-only return; needs two-path geometry | Done: reflectionNull (needs 2 paths) |
+| Inter-subcarrier amplitude variance σ²[p] | Metal → flat reflection → lower σ² than diffuse human body | Done: inter_carrier_stats / ic27 features |
+| Inter-subcarrier phase residual | Metal → coherent reflection → near-linear phase → small residualStd | Done: inter_carrier_phase_stats |
+| Pure object reflection (reflection_null / β-null background subtraction) | Empty-room cancellation exposes object-only return; needs two-path geometry | Done: reflection_null (needs 2 paths) |
 | Reconstructed complex CSI | Strip linear STO/CFO ramp; dielectric signature in absolute residual phase+magnitude | Done: reconstruct_complex_csi |
-| CIR delay taps | Metal → sharp single tap; body → diffuse multi-tap cluster; useful at HT80 (~1.2m path resolution) | Done: Cir.py |
+| CIR delay taps | Metal → sharp single tap; body → diffuse multi-tap cluster; useful at HT80 (~1.2m path resolution) | Done: cir.py |
 | CNN + majority voting over crossing event | Learns amplitude pattern across full walk; requires walking-pedestrian geometry (Zhou 2020) | Done: WeaponHead(backend="cnn") + SegmentVoter |
 | Permittivity-vs-frequency ε(f) | Wideband frequency-dispersive dielectric signature; needs wide bandwidth | Planned: unlocked by HT40/HT80 |
 
-Usage constraints: σ²[p] and reflectionNull must run on raw (pre-gain-lock) magnitudes. reconstructComplexCsi must follow phase sanitization or STO/CFO ramps become ghost taps. CIR is useful only at 5 GHz HT80 (~1.2m path separation).
+Usage constraints: σ²[p] and reflection_null must run on raw (pre-gain-lock) magnitudes. reconstruct_complex_csi must follow phase sanitization or STO/CFO ramps become ghost taps. CIR is useful only at 5 GHz HT80 (~1.2m path separation).
 
 **Research basis:**
 - Subcarrier infill (recover missing tones): not useful for ESP32 2.4 GHz HT20/HT40; active set is contiguous; ISTA handles gaps natively; infill does not extend aperture
@@ -422,10 +423,10 @@ ISTA vs OMP: OMP commits permanently on each iteration; body+object may fall in 
 | HT40 | 108 | 342 | ~9 ns | ~2.7 m | 0.03 | 35 |
 | 80 MHz Pi/Nexmon | 242 | 768 | ~4 ns | ~1.2 m | 0.02 | 40 |
 
-**Cir.py module:**
-- Functions: delayDictionary, estimateCirTaps (ISTA), cirFromCsi, cirFeatures
+**cir.py module:**
+- Functions: delay_dictionary, estimate_cir_taps (ISTA), cir_from_csi, cir_features
 - Tap detector: local maxima + nearest-peak basin (per ADR-134 §2.9 tolerance-aware detector)
-- TestCir.py: 5 tests, all passing — two-tap recovery, sub-Nyquist separation, dictionary conditioning, gapped band, error cases
+- test_cir.py: 5 tests, all passing — two-tap recovery, sub-Nyquist separation, dictionary conditioning, gapped band, error cases
 - Verified: recovers synthetic 2-tap channel to within one delay bin, κ(Φ)≈1
 
 **Test on real HT20 data (72 labeled recordings):**
@@ -439,7 +440,7 @@ ISTA vs OMP: OMP commits permanently on each iteration; body+object may fall in 
 - 5 GHz HT80: ~1.2m — genuinely useful for separating body tap from object tap
 
 **HT40 switch:**
-- Changed WT_BW_HT40 0→1 in firmware/esp32_node/main/config.h
+- Changed WT_BW_HT40 0→1 in firmware/esp32_node/main/Config.h
 - HT-LTF = 128 tone slots (−64…+63); ~108–114 carry real channel info; ~14–20 are structural nulls (DC, central gap, edge guards)
 - Must recapture calibration + retrain after switch (HT40 changes byte-width and subcarrier count)
 
@@ -458,7 +459,7 @@ ISTA vs OMP: OMP commits permanently on each iteration; body+object may fall in 
 - WT_BW_HT40=1 activates HT40; requires router also on 40 MHz (silent fallback to legacy otherwise)
 - Rate config: esp_now_set_peer_rate_config({.phymode=WIFI_PHY_MODE_HT40, .rate=MCS0}) — critical; without HT40 rate, the frame carries L-LTF (20 MHz, ~52 tones) even on a 40 MHz channel
 
-The full config.h settings table (BURST_LEN, BURST_MS, MAX_NODES, LIVE_TIMEOUT_MS, etc.) is in firmware/README.md.
+The full Config.h settings table (BURST_LEN, BURST_MS, MAX_NODES, LIVE_TIMEOUT_MS, etc.) is in firmware/README.md.
 
 ### 8.2 Bugs Found and Fixed
 
@@ -526,12 +527,12 @@ The full config.h settings table (BURST_LEN, BURST_MS, MAX_NODES, LIVE_TIMEOUT_M
 - Fix: SO_RCVBUF bump + dedicated reader thread
 
 **AGC skip corrupts σ²:**
-- Firmware skips gain lock when AGC<30 (main.cpp:233)
+- Firmware skips gain lock when AGC<30 (Main.cpp:233)
 - On strongest/closest nodes (Node 2 @ −44 dBm), AGC floats ±20–30% → σ² corrupted; best-placed hardware = least-reliable weapon hardware
 
 **Zero-config PC discovery:**
 - health_monitor.py broadcasts b"WAVETRACE_PING" to 255.255.255.255:9878 every 2s
-- discovery_task binds DISCOVERY_PORT, matches ping, adopts from.sin_addr → nodes auto-discover PC IP without manual config.h edits
+- discovery_task binds DISCOVERY_PORT, matches ping, adopts from.sin_addr → nodes auto-discover PC IP without manual Config.h edits
 
 **Port 5566→9876 mismatch (fixed 2026-06-26):**
 - All real-world scripts, Pi firmware, and DevicePanel docs locked to port 9876; web/streamer.py UdpSource was hardcoded to 5566 → live web UI received zero hardware frames; silent, no error
@@ -800,10 +801,10 @@ Note: camera-supervised collection has never been run end-to-end. All code is de
 **Training phase:**
 - MacBook FaceTime webcam → YOLO-seg → 16×16 per-frame occupancy mask
 - Masks supervise CSI image tensor (nodes × subcarriers × window) → HeatmapHead CNN; camera not needed at runtime
-- Fallback (_occupancyFallback): if heatmap.joblib missing → spectral amplitude blob (not learned positions)
+- Fallback (_occupancy_from_variance): if heatmap.joblib missing → spectral amplitude blob (not learned positions)
 
 **Critical limitation — single-person only:**
-- VisionLabeler._detect() (CameraLabeler.py:125–126): picks only the highest-confidence detected person; second person's mask is silently dropped
+- VisionLabeler._detect() (camera_labeler.py:125–126): picks only the highest-confidence detected person; second person's mask is silently dropped
 - With 2 people in frame: CSI sees both bodies, mask shows only 1 → contradictory training labels
 - Fix identified: union all detected person masks (not implemented)
 
@@ -871,7 +872,7 @@ Note: Pi 5 Nexmon has not been set up. All of the following is designed only.
 | Model upload 422 error | Introduced ModelUploadRequest(BaseModel) with file_b64 and dest fields |
 | btoa stack overflow on large files | Chunked loop reading 8192 bytes at a time |
 | Train backend dropdown crashes | Removed invalid options; replaced with four valid backends: cnn, mlp, svm, variance |
-| Sub baseline checkbox dead | Single-node inference path was hardcoding imageBaseline=None; conditional baseline construction |
+| Sub baseline checkbox dead | Single-node inference path was hardcoding image_baseline=None; conditional baseline construction |
 | WebSocket stale closure on reconnect | connectRef = useRef updated via useEffect([connect]); exponential backoff 2s→30s |
 
 **Dead code removed:**
@@ -917,24 +918,24 @@ Note: Pi 5 Nexmon has not been set up. All of the following is designed only.
 - Controls.tsx shows read-only calibBadge (e.g. "HT40 · 128 subcarriers") instead of a manual numeric input
 
 **Cumulative weapon pool training:**
-- startTrainingManaged now globs dataset_path subdirs containing X_features.npy
+- run_training_request now globs dataset_path subdirs containing X_features.npy
 - Dataset Path text input added to Train settings section in Controls.tsx
 
 ### 10.3 Security Audit
 
 **RCE via joblib.load() (high severity):**
 - app.py:252–256: fusion_weights(path: str) GET endpoint deserializes any path via joblib (pickle); combined with allow_origins=["*"]
-- Fix: _safeOutputPath() resolves and confines to output/; rejects absolute paths and .. escapes
+- Fix: _resolve_output_path() resolves and confines to output/; rejects absolute paths and .. escapes
 
 **Arbitrary file write → chained RCE (high severity):**
 - app.py:264–270: writes base64 to any dest path, even creating dirs; chains with above (write a model then load it = RCE)
-- Fix: same _safeOutputPath() applied to model_upload dest
+- Fix: same _resolve_output_path() applied to model_upload dest
 
-**app.py:~287 model_weights loads arbitrary client model path via modeSession — same RCE class; NOT YET FIXED**
+**app.py:~287 model_weights loads arbitrary client model path via open_session — same RCE class; NOT YET FIXED**
 
 **BackgroundTasks dead handle (low severity):**
-- runner_task = background_tasks.add_task(runBlocking) returns None; stop path was dead
-- Fix: asyncio.create_task(asyncio.to_thread(runBlocking)); stored handle; joined in stop with 2s timeout
+- runner_task = background_tasks.add_task(run_request) returns None; stop path was dead
+- Fix: asyncio.create_task(asyncio.to_thread(run_request)); stored handle; joined in stop with 2s timeout
 
 **Bare except swallowing CancelledError (low severity):**
 - 5 sites in broadcast loops using bare except: — swallows CancelledError and KeyboardInterrupt
@@ -1008,8 +1009,8 @@ Weapon datasets were collected in three physically distinct environments (differ
 - Fix: mask subtraction & 0xFFFFFFFF; regression test added
 
 **Per-record mac_str on hot path:**
-- _iterBinRecords yielded a formatted 17-char MAC string per record — allocation on every record
-- Fix: yield raw 6 MAC bytes; tx_mac filter compares bytes; parseBatchLinks formats only the 2-octet bucket key
+- _iter_batch_records yielded a formatted 17-char MAC string per record — allocation on every record
+- Fix: yield raw 6 MAC bytes; tx_mac filter compares bytes; parse_batch_by_link formats only the 2-octet bucket key
 
 **Capture loop deadline:**
 - Capture loops could hang indefinitely if one node is quiet
@@ -1022,7 +1023,8 @@ Weapon datasets were collected in three physically distinct environments (differ
 ### 12.1 Critical (blocking next experiment)
 
 - **NLOS litmus gate not cleared.** Antennas are aimed toward center, but AUC >= 0.65 on at least one link has not been verified on new geometry data. No ML training should happen until this gate clears.
-- **app.py:~287 security hole.** model_weights loads an arbitrary client model path via modeSession — same RCE class as fusion_weights; not yet fixed.
+- **app.py:~287 security hole.** model_weights loads an arbitrary client model path via open_session — same RCE class as fusion_weights; not yet fixed.
+- **app.py browse_path AppleScript injection.** `prompt`/`ext` go into AppleScript unescaped; with CORS `*` on a GET route any web page can trigger it. `/api/pi/run` and `/api/script/run` are unauthenticated command runners open to any origin.
 
 ### 12.2 Known Bugs
 
@@ -1030,11 +1032,14 @@ Weapon datasets were collected in three physically distinct environments (differ
 - **Camera under FastAPI asyncio:** still requires manual `python3 -c "import cv2; cv2.VideoCapture(0)"` workaround; correct fix (ffmpeg subprocess) identified but not implemented
 - **col_spans still visible in Collect tab** when camera_collect=true; should be hidden
 - **ntp_server.py alignment:** must be running at the start of every session; whether it materially improves cross-node timestamp alignment in practice has not been measured
+- **Heatmap trainers pair masks with the wrong windows:** `web/streamer.py` and `scripts/collect_camera.py` `_train_heatmap` drop mask-less labels, then fit on `X_image[:len(masks)]`, so any mask-less window before the last masked one shifts every later mask onto the wrong CSI window. The two copies have also drifted apart (stage, mask test, raise vs skip). Fix is approved: one helper that selects rows by mask index.
+- **Found in the 2026-09 naming cleanup (unverified, not fixed):** `recognition/link.py` `LinkVoter.add` looks priors up by `int(node_id)`, so string-keyed priors silently fall back to weight 1.0; `diagnostics/telemetry.py` rank-AUC doesn't average tied ranks (many ic27 CV=0 ties); `calibration.py` writes NaN as a bare `NaN` token that strict `JSON.parse` rejects; `occupancy.py` metre conversion uses the cell index, not the cell centre (half-cell offset); `train.py` `train_weapon(config=…)` doesn't force `k` from the dataset's `K`; `evaluate.py` `tpr_gap` goes negative when the visible LOGO isn't binary; `output/guard.py` DriftMonitor claims no per-frame allocation but allocates temporaries.
+- **Duplicated layout knowledge:** `data/` paths `node<id>` / `link<tag>` are built and parsed by hand (`[4:]`, `[len("link"):]`) in `web/streamer.py`, `scripts/collect_camera.py`, `scripts/collect_weapon.py`, `experiments/weapon_experiments.py` and `recognition/weapon_serving.py`.
 
 ### 12.3 Designed Only (not tested)
 
 - **Pi 5 / 5 GHz HT80:** community Nexmon patch required; architecture designed (firmware/pi/config.py, illuminator via Mac ping, wire format v3), zero hardware testing done
-- **Camera-supervised heatmap:** all code exists; collect_camera.py --train has never been run end-to-end; no heatmap.joblib has ever been produced; fallback to _occupancyFallback() is correct and works, but the trained-model path is unverified
+- **Camera-supervised heatmap:** all code exists; collect_camera.py --train has never been run end-to-end; no heatmap.joblib has ever been produced; fallback to _occupancy_from_variance() is correct and works, but the trained-model path is unverified
 
 ### 12.4 Missing Features
 

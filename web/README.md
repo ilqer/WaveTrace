@@ -42,7 +42,7 @@ cd web/ui && npm install && npm run dev
 
 WebSocket channels: `/ws/inference`, `/ws/stream`, `/ws/logs`, `/ws/training`, `/ws/telemetry`, `/ws/device`.
 
-Warning: `/api/script/run` passes the script name and args to the shell via `device_hub.runScript`. Do not expose this server to untrusted users.
+Warning: `/api/script/run` passes the script name and args to the shell via `device_hub.run_script`. Do not expose this server to untrusted users.
 
 ## Files
 
@@ -52,6 +52,8 @@ Warning: `/api/script/run` passes the script name and args to the shell via `dev
 | `streamer.py` | `WaveTraceRunner` — drives the WaveTrace pipeline in a worker thread and pushes results to the queues |
 | `device_ctl.py` | `DeviceHub` — serial monitor, firmware flash, Pi SSH, local script runner |
 | `foxglove.py` | Optional Foxglove Studio integration for 3D visualization |
+| `ws_publisher.py` | `WsPublisher` — `Publisher` that serializes each result and puts it on an asyncio queue from a background thread |
+| `server_options.py` | `WebServerOptions` — uvicorn host, port and reload settings; validates the port range |
 
 ## Frontend
 

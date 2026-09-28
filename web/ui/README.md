@@ -19,4 +19,5 @@ Open `http://localhost:5173` in a browser. The Python backend (`python web/app.p
 | `src/components/` | UI building blocks (node health table, spectrogram, controls, device panel) |
 | `src/hooks/useWaveTrace.ts` | WebSocket connection to the Python backend; feeds data to components |
 | `src/hooks/useDevice.ts` | Device control state (flash, recalibrate buttons) |
+| `src/hooks/useTelemetry.ts` | `/ws/telemetry` connection; per-node health, sync and per-link health |
 | `vite.config.ts` | Vite build config |

@@ -16,8 +16,8 @@ SCHEMA_VERSION: int = 1
 class PipelineContract:
     """`subcarrier_width` is the raw per-frame capture width (64/128/192 by band) — never the
     NBVI-selected subcarrier count (`ModelConfig.k`), a different quantity. `None` means no capture
-    width was recorded (a head built outside `Train.py`, or trained from a dataset saved before
-    `meta["num_subcarriers"]` existed); `Train.py` is the only writer of a real value."""
+    width was recorded (a head built outside `train.py`, or trained from a dataset saved before
+    `meta["num_subcarriers"]` existed); `train.py` is the only writer of a real value."""
 
     target_sample_rate_hz: float
     window_frames: int
@@ -46,7 +46,7 @@ class PipelineContract:
 
 
 def derive_pipeline_contract(config, target_sample_rate_hz: float = DEFAULT_TARGET_SAMPLE_RATE_HZ):
-    """`config` is a `wavetrace.Config.ModelConfig` (duck-typed on `.window`/`.hop`)."""
+    """`config` is a `wavetrace.config.ModelConfig` (duck-typed on `.window`/`.hop`)."""
     return PipelineContract(
         target_sample_rate_hz=target_sample_rate_hz,
         window_frames=config.window,

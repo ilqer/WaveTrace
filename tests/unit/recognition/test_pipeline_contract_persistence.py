@@ -1,5 +1,5 @@
 """PresenceHead/WeaponHead persist a PipelineContract + schema_version on save, load() falls back
-to the same derivation for artifacts saved before those keys existed, and Train.py stamps the
+to the same derivation for artifacts saved before those keys existed, and train.py stamps the
 dataset's real capture width onto the contract rather than the NBVI-selected subcarrier count."""
 
 from dataclasses import replace
@@ -8,16 +8,16 @@ import joblib
 import numpy as np
 
 from wavetrace import Label
-from wavetrace.Config import ModelConfig
+from wavetrace.config import ModelConfig
 from wavetrace.domain.contracts import SCHEMA_VERSION, derive_pipeline_contract
-from wavetrace.groundtruth import Dataset, saveDataset
+from wavetrace.groundtruth import Dataset, save_dataset
 from wavetrace.adapters.recognition.heads import (
     build_presence_head,
     build_weapon_head,
     load_presence_head,
     load_weapon_head,
 )
-from wavetrace.recognition import trainPresence, trainWeapon
+from wavetrace.recognition import train_presence, train_weapon
 
 
 def _presence_blobs(n=120, k=2, seed=0):
@@ -94,7 +94,7 @@ def test_presence_head_save_writes_contract_and_schema_version(tmp_path):
     assert blob["contract"] == derive_pipeline_contract(config).to_dict()
     assert blob["contract"]["window_frames"] == 64
     assert blob["contract"]["hop_frames"] == 16
-    # built directly (not via trainPresence/Train.py), so no dataset supplied a real capture width
+    # built directly (not via train_presence/train.py), so no dataset supplied a real capture width
     assert blob["contract"]["subcarrier_width"] is None
 
 
@@ -120,7 +120,7 @@ def test_weapon_head_save_writes_contract_and_schema_version(tmp_path):
     assert blob["contract"] == derive_pipeline_contract(config).to_dict()
     assert blob["contract"]["window_frames"] == 64
     assert blob["contract"]["hop_frames"] == 8
-    # built directly (not via trainWeapon/Train.py), so no dataset supplied a real capture width
+    # built directly (not via train_weapon/train.py), so no dataset supplied a real capture width
     assert blob["contract"]["subcarrier_width"] is None
 
 
@@ -138,7 +138,7 @@ def test_weapon_head_load_falls_back_when_contract_absent(tmp_path):
 
 def test_presence_head_resave_preserves_a_stored_contract_that_diverged_from_derivation(tmp_path):
     """Load an artifact whose stored contract differs from derive_pipeline_contract(config) (as
-    Train.py's capture-width override produces), re-save it, and confirm the divergent value
+    train.py's capture-width override produces), re-save it, and confirm the divergent value
     survives."""
     config = ModelConfig(stage="presence", k=2)
     X, y = _presence_blobs(k=2)
@@ -168,8 +168,8 @@ def test_weapon_head_resave_preserves_a_stored_contract_that_diverged_from_deriv
 
 def test_train_presence_stamps_dataset_capture_width_not_k(tmp_path):
     ds = _presence_dataset(num_subcarriers=32, k=2)
-    out = saveDataset(ds, tmp_path / "ds")
-    head, _ = trainPresence([out], tmp_path / "models")
+    out = save_dataset(ds, tmp_path / "ds")
+    head, _ = train_presence([out], tmp_path / "models")
 
     assert head.config.k == 2
     assert head.contract.subcarrier_width == 32
@@ -183,8 +183,8 @@ def test_train_presence_leaves_capture_width_none_when_dataset_predates_it(tmp_p
     able to tell "unknown" apart from either one."""
     ds = _presence_dataset(num_subcarriers=32, k=2)
     del ds.meta["num_subcarriers"]  # simulate a dataset built before this field existed
-    out = saveDataset(ds, tmp_path / "ds")
-    head, _ = trainPresence([out], tmp_path / "models")
+    out = save_dataset(ds, tmp_path / "ds")
+    head, _ = train_presence([out], tmp_path / "models")
 
     assert head.contract.subcarrier_width is None
     reloaded = load_presence_head(tmp_path / "models" / "model.joblib")
@@ -193,8 +193,8 @@ def test_train_presence_leaves_capture_width_none_when_dataset_predates_it(tmp_p
 
 def test_train_weapon_stamps_dataset_capture_width_not_k(tmp_path):
     ds = _weapon_dataset(num_subcarriers=48, k=12)
-    out = saveDataset(ds, tmp_path / "ds")
-    head, _ = trainWeapon([out], tmp_path / "models")
+    out = save_dataset(ds, tmp_path / "ds")
+    head, _ = train_weapon([out], tmp_path / "models")
 
     assert head.config.k == 12
     assert head.contract.subcarrier_width == 48

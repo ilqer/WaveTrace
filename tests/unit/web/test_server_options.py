@@ -1,6 +1,6 @@
 import pytest
 
-from web.ServerOptions import WebServerOptions
+from web.server_options import WebServerOptions
 
 
 def test_web_server_options_defaults_match_the_previous_uvicorn_literals():

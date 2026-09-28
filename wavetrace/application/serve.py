@@ -3,31 +3,31 @@ window."""
 
 import numpy as np
 
-from wavetrace.Calibration import loadCalibration, build_image_baseline
-from wavetrace.Frontend import iterWindows
-from wavetrace.recognition import SegmentVoter, modeSession, planInferenceInput
+from wavetrace.calibration import load_calibration, build_image_baseline
+from wavetrace.frontend import iter_windows
+from wavetrace.recognition import SegmentVoter, open_session, plan_input
 from wavetrace import RecognitionResult
 
 
-def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False, guard=False):
+def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=False, guard=False):
     """Stream a source through the front-end and publish one verdict per window (+ a final soft-vote
     verdict when vote=True). When guard=True, wires AlertGuard+DriftMonitor for debounce and drift
     advisory (O(S)/frame extra — acceptable on the Pi serving side). O(windows)."""
-    result, gain_lock = loadCalibration(calib_dir)
-    session = modeSession(mode, model_path)
-    apply_lock, intercarrier, pick = planInferenceInput(mode, session.head)
+    result, gain_lock = load_calibration(calibration_dir)
+    session = open_session(mode, model_path)
+    should_apply_lock, intercarrier, pick = plan_input(mode, session.head)
     config = session.head.config
 
     image_subcarriers = getattr(result, "image_subcarriers", None)
     image_baseline = None
     if config.subtract_baseline:
-        image_baseline = build_image_baseline(result, locked=(apply_lock and gain_lock is not None))
+        image_baseline = build_image_baseline(result, locked=(should_apply_lock and gain_lock is not None))
     # the raw baseline, inter-carrier path only, exactly as training subtracted it
     ic_baseline = result.baseline_mag if getattr(config, "subtract_ic_baseline", False) else None
 
     frames_iter = source.frames()
     if guard:
-        from wavetrace.output.Guard import AlertGuard, DriftMonitor
+        from wavetrace.output.guard import AlertGuard, DriftMonitor
         drift_monitor = DriftMonitor(result.baseline_mag)
         alert_guard = AlertGuard()
         # tee the raw, pre-lock magnitudes to DriftMonitor without disturbing the frame stream
@@ -37,21 +37,21 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
                 event = monitor.update(float(frame.timestamp),
                                         _np.abs(_np.asarray(frame.grid)).mean(axis=0).astype(_np.float32))
                 if event:
-                    publisher.publishEvent(event)
+                    publisher.publish_event(event)
                 yield frame
         frames_iter = _tee_drift(frames_iter, drift_monitor, publisher)
 
     voter = SegmentVoter() if vote else None
     results = []
-    for timestamp, features, image, intercarrier_features in iterWindows(
-        frames_iter, result.subcarriers, gain_lock if apply_lock else None,
+    for timestamp, features, image, intercarrier_features in iter_windows(
+        frames_iter, result.subcarriers, gain_lock if should_apply_lock else None,
         window=config.window, hop=config.hop, intercarrier=intercarrier,
         image_subcarriers=image_subcarriers,
         frame_average=config.frame_average,
-        imageBaseline=image_baseline,
+        image_baseline=image_baseline,
         ic_baseline=ic_baseline,
     ):
-        predicted_class, confidence = session.predictWindow(pick(features, image, intercarrier_features))
+        predicted_class, confidence = session.predict_window(pick(features, image, intercarrier_features))
         result_row = RecognitionResult()
         result_row.class_id = predicted_class
         result_row.confidence = confidence
@@ -61,7 +61,7 @@ def run_inference(source, calib_dir, model_path, mode, publisher, *, vote=False,
         if guard:
             event = alert_guard.update(timestamp, predicted_class)
             if event:
-                publisher.publishEvent(event)
+                publisher.publish_event(event)
         if voter is not None:
             voter.add(session.head.predict_proba(np.asarray(pick(features, image, intercarrier_features),
                                                              dtype=np.float32).reshape(1, -1))[0])

@@ -3,8 +3,8 @@
 The camera, script or chip is only the teacher. What gets deployed reads CSI alone.
 """
 
-from wavetrace.groundtruth.Align import AlignmentResult, align, estimateClockOffset
-from wavetrace.groundtruth.CameraLabeler import (
+from wavetrace.groundtruth.alignment import AlignmentResult, align, estimate_clock_offset
+from wavetrace.groundtruth.camera_labeler import (
     Detection,
     FrameDetection,
     Labeler,
@@ -19,19 +19,19 @@ from wavetrace.groundtruth.CameraLabeler import (
     YoloLabeler,
     YoloLabelerOptions,
     YoloSegLabeler,
-    presenceLabelFn,
-    weaponLabelFn,
+    presence_label_fn,
+    weapon_label_fn,
 )
-from wavetrace.groundtruth.DatasetBuilder import (
+from wavetrace.groundtruth.dataset_builder import (
     Dataset,
-    buildDataset,
-    loadDataset,
-    saveDataset,
+    build_dataset,
+    load_dataset,
+    save_dataset,
 )
 
 __all__ = [
     "align",
-    "estimateClockOffset",
+    "estimate_clock_offset",
     "AlignmentResult",
     "Labeler",
     "LabelerOptions",
@@ -47,10 +47,10 @@ __all__ = [
     "Segment",
     "Detection",
     "FrameDetection",
-    "presenceLabelFn",
-    "weaponLabelFn",
+    "presence_label_fn",
+    "weapon_label_fn",
     "Dataset",
-    "buildDataset",
-    "saveDataset",
-    "loadDataset",
+    "build_dataset",
+    "save_dataset",
+    "load_dataset",
 ]

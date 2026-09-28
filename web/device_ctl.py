@@ -17,16 +17,16 @@ IDF_EXPORT = os.path.expanduser(os.environ.get("IDF_EXPORT", "~/esp/esp-idf/expo
 FIRMWARE_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "firmware"))
 
 
-def listSerialPorts() -> list[dict]:
+def list_serial_ports() -> list[dict]:
     ports = []
     for p in list_ports.comports():
         dev = p.device
-        isUsb = ("usb" in dev.lower()) or ("USB" in (p.hwid or ""))
+        is_usb = ("usb" in dev.lower()) or ("USB" in (p.hwid or ""))
         ports.append({
             "device": dev,
             "description": p.description or "",
             "hwid": p.hwid or "",
-            "likely_esp": isUsb,
+            "likely_esp": is_usb,
         })
     ports.sort(key=lambda x: (not x["likely_esp"], x["device"]))
     return ports
@@ -39,7 +39,7 @@ class DeviceHub:
         self._monitors: dict[str, tuple[threading.Thread, threading.Event]] = {}
         self._procs: dict[str, subprocess.Popen] = {}
 
-    def getState(self) -> dict:
+    def get_state(self) -> dict:
         return {
             "monitoring": list(self._monitors.keys()),
             "runningScripts": [k.split(":", 1)[1] for k in self._procs.keys() if k.startswith("script:")],
@@ -52,16 +52,16 @@ class DeviceHub:
         # called from worker threads → hop back onto the event loop
         asyncio.run_coroutine_threadsafe(self.queue.put(payload), self.loop)
 
-    def startMonitor(self, port: str, baud: int = 115200) -> dict:
+    def start_monitor(self, port: str, baud: int = 115200) -> dict:
         if port in self._monitors:
             return {"status": "monitoring", "port": port, "baud": baud}
-        stopEv = threading.Event()
-        t = threading.Thread(target=self._monitorLoop, args=(port, baud, stopEv), daemon=True)
-        self._monitors[port] = (t, stopEv)
+        stop_event = threading.Event()
+        t = threading.Thread(target=self._monitor_serial, args=(port, baud, stop_event), daemon=True)
+        self._monitors[port] = (t, stop_event)
         t.start()
         return {"status": "monitoring", "port": port, "baud": baud}
 
-    def _monitorLoop(self, port: str, baud: int, stop_ev: threading.Event) -> None:
+    def _monitor_serial(self, port: str, baud: int, stop_ev: threading.Event) -> None:
         src = f"tty:{os.path.basename(port)}"
         try:
             ser = serial.Serial(port, baud, timeout=0.5)
@@ -82,7 +82,7 @@ class DeviceHub:
             ser.close()
             self._publish(src, f"closed {port}", level="system")
 
-    def stopMonitor(self, port: str | None = None) -> dict:
+    def stop_monitor(self, port: str | None = None) -> dict:
         if port is None:
             for p, (t, ev) in list(self._monitors.items()):
                 ev.set()
@@ -96,9 +96,9 @@ class DeviceHub:
             t.join(timeout=2.0)
         return {"status": "stopped", "port": port}
 
-    def sendInput(self, proc_id: str, data: str) -> dict:
-        if proc_id in self._procs:
-            proc = self._procs[proc_id]
+    def send_input(self, process_id: str, data: str) -> dict:
+        if process_id in self._procs:
+            proc = self._procs[process_id]
             if proc.stdin:
                 try:
                     proc.stdin.write(data)
@@ -128,7 +128,7 @@ class DeviceHub:
     def flash(self, role: str, node_id: int | None, port: str, clean: bool = False) -> None:
         if port in self._monitors:
             self._publish("flash", f"stopping monitor on {port} first", level="system")
-            self.stopMonitor(port)
+            self.stop_monitor(port)
         if not os.path.exists(IDF_EXPORT):
             self._publish("flash", f"IDF export.sh not found at {IDF_EXPORT}; "
                           f"set IDF_EXPORT env var", level="error")
@@ -143,14 +143,14 @@ class DeviceHub:
             fcmd = f"./flash.sh {role} {int(node_id)} {shlex.quote(port)}"
         # flash.sh reads both: NO_MONITOR skips its blocking monitor step, CLEAN=1 wipes
         # sdkconfig and build for a full rebuild.
-        cleanEnv = "CLEAN=1 " if clean else ""
-        inner = f"source {shlex.quote(IDF_EXPORT)} && {cleanEnv}NO_MONITOR=1 {fcmd}"
+        clean_env_prefix = "CLEAN=1 " if clean else ""
+        inner = f"source {shlex.quote(IDF_EXPORT)} && {clean_env_prefix}NO_MONITOR=1 {fcmd}"
         if clean:
             self._publish("flash", "clean rebuild: wiping sdkconfig + build (full recompile)", level="system")
         self._publish("flash", f"$ {fcmd}", level="system")
         self._stream("flash", "flash", ["bash", "-lc", inner], cwd=FIRMWARE_DIR)
 
-    def runPi(self, host: str, command: str) -> None:
+    def run_on_pi(self, host: str, command: str) -> None:
         if not host:
             self._publish("pi", "no Pi host configured", level="error")
             return
@@ -158,28 +158,28 @@ class DeviceHub:
         # -tt forces a pty so long-running capture scripts flush their output live
         self._stream("pi", "pi", ["ssh", "-tt", host, command])
 
-    def runScript(self, script_name: str, args: str = "") -> None:
+    def run_script(self, script_name: str, args: str = "") -> None:
         if not script_name.endswith(".py"):
             self._publish("script", "Invalid script name", level="error")
             return
-        rootDir = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+        repo_root_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
         cmd = ["python", "-u", script_name]
         if args:
             cmd.extend(shlex.split(args))
         self._publish(f"script:{script_name}", f"Running: {' '.join(cmd)}", level="system")
-        self._stream(f"script:{script_name}", f"script:{script_name}", cmd, cwd=rootDir)
+        self._stream(f"script:{script_name}", f"script:{script_name}", cmd, cwd=repo_root_dir)
 
 
 
-    def stopProc(self, proc_id: str | None = None) -> dict:
-        if proc_id is None:
+    def stop_process(self, process_id: str | None = None) -> dict:
+        if process_id is None:
             for pid in ["flash", "pi"]:
                 if pid in self._procs and self._procs[pid].poll() is None:
                     self._procs[pid].terminate()
                     return {"status": "terminating", "proc_id": pid}
             return {"status": "idle"}
         
-        if proc_id in self._procs and self._procs[proc_id].poll() is None:
-            self._procs[proc_id].terminate()
-            return {"status": "terminating", "proc_id": proc_id}
+        if process_id in self._procs and self._procs[process_id].poll() is None:
+            self._procs[process_id].terminate()
+            return {"status": "terminating", "proc_id": process_id}
         return {"status": "idle"}

@@ -68,12 +68,12 @@ Skip this if you just want to run the scripts. Read it if you want to understand
 
 ### Frames
 
-Every ESP32 burst is decoded into a `CsiFrame` by `wavetrace/Source.py`:
+Every ESP32 burst is decoded into a `CsiFrame` by `wavetrace/adapters/source/wire_format.py`:
 - `grid` — shape `(A, S)` complex64: amplitude + phase per antenna × subcarrier
 - `timestamp` — float seconds
 - `node_id` — which node TX'd the burst
 
-`saveRecording` writes these to disk as `grid.npy` (F, A, S), `t.npy` (F,), `node_id.npy` (F,), `meta.json`.
+`save_recording` writes these to disk as `grid.npy` (F, A, S), `t.npy` (F,), `node_id.npy` (F,), `meta.json`.
 
 ### Calibration
 
@@ -89,7 +89,7 @@ Output goes to `output/calib/`:
 
 ### Feature window loop
 
-`Frontend.iterWindows` slides a window of `window` frames with stride `hop` across the recording. Per window it extracts three things in this order:
+`frontend.iter_windows` slides a window of `window` frames with stride `hop` across the recording. Per window it extracts three things in this order:
 
 1. **IC features** — 27 numbers from **raw (pre-lock)** magnitudes. Structure: 3 series (µ, σ², CV) × 9 statistics = 27. This must be computed before gain lock. Gain lock removes the per-packet amplitude variance that distinguishes metal from body tissue — apply it first and σ²[p] disappears.
 2. **Presence features** — gain lock applied, then K=12 NBVI subcarriers selected, then 9 statistics per subcarrier → 9·K = 108 numbers.
@@ -97,7 +97,7 @@ Output goes to `output/calib/`:
 
 ### Dataset
 
-`buildDataset` runs the window loop with a labeler attached and collects:
+`build_dataset` runs the window loop with a labeler attached and collects:
 
 | field | shape | content |
 |---|---|---|
@@ -107,7 +107,7 @@ Output goes to `output/calib/`:
 | `y` | `(n,)` | class labels |
 | `session_ids`, `subject_ids` | `(n,)` | group IDs for LOGO cross-validation |
 
-`saveDataset` writes: `features.npy`, `images.npy`, `features_ic.npy`, `manifest.jsonl`, `meta.json`.
+`save_dataset` writes: `features.npy`, `images.npy`, `features_ic.npy`, `manifest.jsonl`, `meta.json`.
 
 ### Training
 
@@ -124,7 +124,7 @@ Each run saves `output/model/model.pkl` and `metrics.json` with LOGO accuracy.
 
 ### Serving
 
-`modeSession(mode, model_path)` loads the trained head and returns an `InferenceSession`. The session's `_servingPlan` tells the front-end what to extract:
+`open_session(mode, model_path)` loads the trained head and returns an `InferenceSession`. `plan_input(mode, head)` tells the front-end what to extract:
 
 | backend | input | gain lock? |
 |---|---|---|
@@ -156,7 +156,7 @@ Each run saves `output/model/model.pkl` and `metrics.json` with LOGO accuracy.
 | Dependency | Version | Purpose |
 |---|---|---|
 | Python | 3.10+ | Main host language |
-| CMake + C++ compiler | CMake 3.16+ | Compiles `src/` into the Python package |
+| CMake + C++ compiler | CMake 3.16+ | Compiles `native/` into the Python package |
 | ESP-IDF | v5.3 | Flashes the ESP32 firmware |
 | Node.js | 18+ | Web dashboard only (optional) |
 | numpy, scikit-learn | via `pip install -e .` | Signal processing and ML |
@@ -174,7 +174,7 @@ Each run saves `output/model/model.pkl` and `metrics.json` with LOGO accuracy.
 ### Network setup
 
 - Lock the router to **channel 6, 2.4 GHz, 40 MHz (HT40)**. All ESP32 boards join it as STAs, which automatically locks every board to channel 6 so they hear each other's ESP-NOW traffic. Do not change the channel after flashing without a full wipe-and-reflash.
-- Give the Mac a **static DHCP lease** on the router. Set that IP as `PC_IP` in `config.h`. If the IP changes, boards send CSI into the void.
+- Give the Mac a **static DHCP lease** on the router. Set that IP as `PC_IP` in `Config.h`. If the IP changes, boards send CSI into the void.
 - Allow incoming UDP on these ports through the Mac firewall (`System Settings → Network → Firewall → Options`):
   - **9876** — CSI datagrams from all nodes
   - **9877** — per-node health heartbeats
@@ -189,20 +189,27 @@ Each run saves `output/model/model.pkl` and `metrics.json` with LOGO accuracy.
 ```
 firmware/
 ├── esp32_node/     unified mesh firmware (one binary; NODE_ID set per-board by flash.sh)
+├── esp32_rx/ esp32_tx/  legacy 1-TX/6-RX rig
 └── pi/             Nexmon CSI capture + UDP stream scripts for the Raspberry Pi
 
-src/                C++ signal processing (compiled into the wavetrace package via pybind11)
+native/             C++ signal processing (compiled into the wavetrace package via pybind11)
 ├── core/           CsiFrame type (one frame = complex amplitude per subcarrier + timestamp + node_id)
 ├── hardware/       UDP datagram parser + multi-node frame assembler
 ├── signal/         conjugate-multiply, Hampel filter, phase unwrap, gain lock, NBVI, features, spectrogram
 └── util/           radix-2 FFT, ring buffers
 
 wavetrace/          the Python library
-├── Source.py       CSI frame sources: live UDP, recorded file, synthetic (tests)
-├── Frontend.py     shared pipeline loop: source → preprocess → features → emit windows
-├── Calibration.py  saves/loads per-session calibration: gain-lock scalar, NBVI mask, quiet baseline
-├── Cli.py          `wavetrace` CLI: capture / calibrate / collect-data / train / localize / run
-├── Config.py       runtime config: mode, backend, head, subcarrier count, window/hop sizes
+├── frontend.py     shared pipeline loop: source → preprocess → features → emit windows
+├── calibration.py  saves/loads per-session calibration: gain-lock scalar, NBVI mask, quiet baseline
+├── cli.py          `wavetrace` CLI: capture / calibrate / collect-data / train / localize / run
+├── config/         runtime config: mode, backend, head, subcarrier count, window/hop sizes
+├── localize.py     AoA / delay MUSIC localization (parked: needs ≥ 2 phase-coherent RX antennas)
+├── synthetic.py    synthetic CSI + paired labels for `--synthetic` mode
+├── domain/         pure pipeline descriptions, no I/O: PipelineContract, LinkKey, presence/weapon heads, dsp/ resampling
+├── application/    use-cases (calibrate, collect, localize, serve) + ports (the Protocols adapters implement)
+├── adapters/       behind the ports: source/ (CSI frame sources: live UDP, serial, Pi, recorded file, synthetic;
+│                   wire-format parsers) and recognition/ (MLP, SVM, CNN, variance backends; head construction)
+├── source.py       compatibility path for the old `wavetrace.source` imports (the golden test uses it)
 ├── recognition/    heads (presence, people-count, occupancy heatmap, weapon) + training, inference, voting, multi-node fusion, evaluation, CIR
 ├── groundtruth/    camera labeler, timestamp alignment, dataset serializer
 ├── output/         result publisher (JSONL default; WebSocket seam for the dashboard)
@@ -231,7 +238,7 @@ web/
 ├── device_ctl.py     DeviceHub — serial monitor, firmware flash, Pi SSH, script runner
 └── ui/               React + Vite + TypeScript dashboard
 
-tests/                pytest suite (295 tests; all offline on synthetic data — no hardware needed)
+tests/                pytest suite (369 tests; all offline on synthetic data — no hardware needed)
 data/                 git-ignored; created by the collect scripts
 ```
 
@@ -279,7 +286,7 @@ Run `source .venv/bin/activate` in every new terminal.
 Full steps are in [`firmware/README.md`](firmware/README.md). Summary:
 
 1. Install ESP-IDF v5.3 (once, ~30–60 min).
-2. Open `firmware/esp32_node/main/config.h`. Set `ROUTER_SSID`, `ROUTER_PASS`, and `PC_IP` (your Mac's LAN IP — `ipconfig getifaddr en0`). `NODE_ID` is set per-board by `flash.sh` — no manual edit needed.
+2. Open `firmware/esp32_node/main/Config.h`. Set `ROUTER_SSID`, `ROUTER_PASS`, and `PC_IP` (your Mac's LAN IP — `ipconfig getifaddr en0`). `NODE_ID` is set per-board by `flash.sh` — no manual edit needed.
 3. Flash board 1, then board 2. Plug in one at a time:
 
 ```bash
@@ -310,7 +317,7 @@ python scripts/mesh_verify.py
 
 With 2 boards, expect links `1->2` and `2->1` at a non-zero frame rate. With 6 boards: 30 links (6×5). Typical rate per link: 20–100 Hz depending on channel load.
 
-If nothing appears: wrong `PC_IP` in `config.h`, Mac firewall blocking UDP 9876, or boards haven't associated yet (wait ~10 s after power-on).
+If nothing appears: wrong `PC_IP` in `Config.h`, Mac firewall blocking UDP 9876, or boards haven't associated yet (wait ~10 s after power-on).
 
 ```bash
 python scripts/health_monitor.py    # per-node uptime and free heap; Ctrl-C to stop
@@ -479,7 +486,7 @@ Voting is handled automatically by `run_weapon.py` — each link contributes wei
 
 A random train/test split on CSI data is meaningless. Consecutive frames in the same session are nearly identical — a model can learn to recognize the session rather than the class. This produces fake 97–99% accuracy that collapses on new data.
 
-The correct evaluation is **leave-one-session-out (LOGO)**: train on all sessions except one, test on the held-out session, repeat for every session, report the average. `Evaluate.py` does this automatically.
+The correct evaluation is **leave-one-session-out (LOGO)**: train on all sessions except one, test on the held-out session, repeat for every session, report the average. `evaluate.py` does this automatically.
 
 For weapon mode, also do **leave-one-subject-out (LOSO)**: hold out all sessions from one person, train on everyone else.
 
@@ -488,15 +495,15 @@ For weapon mode, also do **leave-one-subject-out (LOSO)**: hold out all sessions
 | Metric | How to compute | Minimum bar |
 |---|---|---|
 | Presence accuracy | LOGO cross-validation, all sessions | Clearly above majority-class baseline |
-| Weapon TPR | `tierVerdict` in `Evaluate.py` | ≥ 90% |
-| Weapon FP rate | `tierVerdict` | ≤ 10% |
+| Weapon TPR | `tier_verdict` in `evaluate.py` | ≥ 90% |
+| Weapon FP rate | `tier_verdict` | ≤ 10% |
 | Per-tier verdict | Run separately for each tier | Beat chance on each tier before moving to the next |
 
 ### What "works" means at each stage
 
 - **Presence**: LOGO accuracy is clearly above the majority-class baseline (e.g. 60% empty → baseline is 60%; your model should be ≥ 85%).
 - **Weapon tier 1**: σ²[p] distributions for metal vs no-metal are visually separated on held-out data.
-- **Weapon tier 2**: `tierVerdict` returns True (FP ≤ 10% ∧ TPR ≥ 90%) on held-out data.
+- **Weapon tier 2**: `tier_verdict` returns True (FP ≤ 10% ∧ TPR ≥ 90%) on held-out data.
 - **Weapon tier 3**: Same verdict gate, evaluated on moving-subject sessions from held-out subjects.
 
 Do not report accuracy from a random within-session split.
@@ -510,16 +517,16 @@ Do not report accuracy from a random within-session split.
 - Full C++ signal processing pipeline: frame parsing, conjugate-multiply, Hampel filter, phase unwrap, EMA detrend, gain lock, NBVI subcarrier selection, FFT, 9-feature extractor, inter-subcarrier σ²[p], spectrogram builder.
 - Full Python presence pipeline: calibration, dataset builder, MLP/SVM training, LOGO evaluation, live inference, per-node voting, multi-node fusion, result publishing.
 - People-count pipeline: a standalone path (`collect_count.py` + `run_count.py`) with a four-class head per node and live voting across all links. On real hardware it reaches 53–61% accuracy against a 25% random baseline (see projectProgress.md §9.10). It runs today; more sessions raise the score.
-- Occupancy-heatmap pipeline: a camera-supervised CNN (`HeatmapHead`, trained with BCE plus soft-Dice), a `SegmentationLabeler` that turns YOLO masks into a 16×16 occupancy grid, temporal smoothing in `Occupancy.py` (a per-cell Bayesian grid plus a 2D Kalman tracker that follows the hottest cell without jumping), `collect_camera.py --train`, live serving in `web/streamer.py`, and the `OccupancyHeatmap` and `OccupancyGrid3D` panels in the dashboard. All parts are built and covered by unit tests across the vision-labeler, segmentation, webcam, and ground-truth (alignment and dataset) suites. The one thing left is a full webcam-to-model run on real hardware; until a model is trained the live path uses an energy-based estimate (see projectProgress.md §9.11).
+- Occupancy-heatmap pipeline: a camera-supervised CNN (`HeatmapHead`, trained with BCE plus soft-Dice), a `SegmentationLabeler` that turns YOLO masks into a 16×16 occupancy grid, temporal smoothing in `occupancy.py` (a per-cell Bayesian grid plus a 2D Kalman tracker that follows the hottest cell without jumping), `collect_camera.py --train`, live serving in `web/streamer.py`, and the `OccupancyHeatmap` and `OccupancyGrid3D` panels in the dashboard. All parts are built and covered by unit tests across the vision-labeler, segmentation, webcam, and ground-truth (alignment and dataset) suites. The one thing left is a full webcam-to-model run on real hardware; until a model is trained the live path uses an energy-based estimate (see projectProgress.md §9.11).
 - Automatic camera labeling: `collect_camera.py` captures every node's CSI and the MacBook webcam at the same time, runs a YOLO segmentation model live on each frame, and time-aligns the labels to every node's CSI windows. This produces a labeled presence and heatmap dataset in one pass, with no hand-labeling. The camera is used only for collection; the deployed detector needs no camera.
-- Weapon pipeline: σ²[p] variance baseline, sklearn head, CNN head, `SegmentVoter`, `tierVerdict` gate.
-- Extra recognition tools built and tested, used by the dashboard and the fusion path: model explainability (`Explain.py` — CNN channel-ablation importance, permutation importance for MLP/SVM, confusion matrices), per-link decision fusion with automatic blockage recovery (`Link.py` — a link that loses sight of the target drops its own weight so the others take over), learned late fusion across radio bands (`Stack.py`), and label-free in-room adaptation (`Adapt.py` — refresh input statistics and recalibrate without retraining weights).
-- Spatial localization (`Localize.py`): a joint 2D delay-and-angle MUSIC estimator (SpotFi-style) plus a MUSIC/Bartlett angle spectrum and a Kalman position tracker. It is fully implemented but **parked**, because it needs at least two phase-coherent receive antennas on one radio and the current boards have one receive chain (see §13).
+- Weapon pipeline: σ²[p] variance baseline, sklearn head, CNN head, `SegmentVoter`, `tier_verdict` gate.
+- Extra recognition tools built and tested, used by the dashboard and the fusion path: model explainability (`explain.py` — CNN channel-ablation importance, permutation importance for MLP/SVM, confusion matrices), per-link decision fusion with automatic blockage recovery (`link.py` — a link that loses sight of the target drops its own weight so the others take over), learned late fusion across radio bands (`stack.py`), and label-free in-room adaptation (`adapt.py` — refresh input statistics and recalibrate without retraining weights).
+- Spatial localization (`localize.py`): a joint 2D delay-and-angle MUSIC estimator (SpotFi-style) plus a MUSIC/Bartlett angle spectrum and a Kalman position tracker. It is fully implemented but **parked**, because it needs at least two phase-coherent receive antennas on one radio and the current boards have one receive chain (see §13).
 - Ground-truth tools: camera labeler (YOLO/SAM), segmentation labeler, scripted labeler, timestamp alignment, dataset serializer.
 - CLI: `wavetrace capture / calibrate / collect-data / train / localize / run`.
 - Web dashboard: spectrograms, node health, live predictions. (Train button returns placeholder metrics — real training runs from the terminal.)
-- Pi 5 GHz node: `firmware/pi/` is implemented and tested against `wavetrace/Source.py` via `TestPiPublisher.py`. Not yet validated on real Pi hardware.
-- All 295 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
+- Pi 5 GHz node: `firmware/pi/` is implemented and tested against `wavetrace/adapters/source/wire_format.py` via `test_pi_publisher.py`. Not yet validated on real Pi hardware.
+- All 369 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
 
 ### What to Verify on Real Hardware Before Trusting Results
 
@@ -535,7 +542,7 @@ These must be verified on a real capture before trusting any results:
 
 ### What is not built and not planned
 
-- AoA localization (`Localize.py` exists but is parked — needs ≥ 2 phase-coherent antennas; the ESP32-S3 has one receive chain).
+- AoA localization (`localize.py` exists but is parked — needs ≥ 2 phase-coherent antennas; the ESP32-S3 has one receive chain).
 - Through-wall sensing, vitals detection (breathing/heartbeat).
 - On-device model updates — the adaptation mechanism is recalibration plus retraining on the Mac.
 - HomeKit / Matter / MQTT integrations.
@@ -546,7 +553,7 @@ These must be verified on a real capture before trusting any results:
 
 ### `mesh_verify.py` shows nothing
 
-1. Check `PC_IP` in `firmware/esp32_node/main/config.h`. It must match your Mac's current LAN IP (`ipconfig getifaddr en0`). If the IP changed, reflash with the correct value.
+1. Check `PC_IP` in `firmware/esp32_node/main/Config.h`. It must match your Mac's current LAN IP (`ipconfig getifaddr en0`). If the IP changed, reflash with the correct value.
 2. Check the Mac firewall: `System Settings → Network → Firewall → Options`. UDP 9876 must be allowed.
 3. Check that the boards associated to the router. In the serial monitor after flashing, you should see a log line confirming the Wi-Fi connection. If not, `ROUTER_SSID`/`ROUTER_PASS` are wrong, or the router is on a different band.
 4. If one specific node is missing, that board has stale NVS. Wipe and reflash: `idf.py erase-flash`, then `rm -rf build` and flash again.
@@ -600,7 +607,7 @@ The illuminator is not running or the Mac is not associated to modem B. An idle 
 
 **Do not mix 2.4 GHz and 5 GHz data in the same model.** They have different subcarrier counts (K). Fuse at the decision level (vote) if you want to combine them.
 
-**Do not implement AoA localization with the ESP32 nodes.** Each ESP32-S3 has one receive chain. The "diversity switch" selects between two antennas on that one chain — it is not a 2-antenna MIMO receiver. `Localize.py` exists but is parked.
+**Do not implement AoA localization with the ESP32 nodes.** Each ESP32-S3 has one receive chain. The "diversity switch" selects between two antennas on that one chain — it is not a 2-antenna MIMO receiver. `localize.py` exists but is parked.
 
 **Do not use LOS-blocking ("doorway") geometry for weapon detection.** Placing TX and RX on opposite sides of a door so the person walks between them creates a strong direct path that masks the weapon's signal. Use non-LOS geometry.
 
@@ -619,9 +626,9 @@ source .venv/bin/activate
 pytest tests/ -q
 ```
 
-All tests run on synthetic data. No hardware needed. Expected: 295 passed. If a test fails after a code change, fix the test and the code in the same commit.
+All tests run on synthetic data. No hardware needed. Expected: 369 passed. If a test fails after a code change, fix the test and the code in the same commit.
 
-### Rebuilding the C++ extension after a change in `src/`
+### Rebuilding the C++ extension after a change in `native/`
 
 ```bash
 pip install -e . --no-build-isolation
@@ -640,7 +647,7 @@ wavetrace train ./dataset --stage presence --backend svm
 wavetrace train ./dataset --stage weapon   --backend cnn --feature-mode cnn
 ```
 
-The saved `model.joblib` is backend-agnostic at load time — `Infer.py` detects the type automatically.
+The saved `model.joblib` is backend-agnostic at load time — `infer.py` detects the type automatically.
 
 ### Switching modes (presence ↔ weapon)
 
@@ -674,7 +681,7 @@ If you add hardware with a different bandwidth (e.g. HT80 on the Pi), create a n
 | NBVI | Narrowband variance index — ranks subcarriers by how much their amplitude changes when a person enters. The top-K are kept; the rest are discarded to reduce noise and computation. Run offline during calibration. |
 | ESP-NOW | Espressif's connectionless 802.11 protocol used for the TX burst. No association required; RX nodes capture CSI from the packet preamble without decoding the payload. |
 | Non-LOS | Non-line-of-sight geometry: TX and RX are positioned so there is no direct unobstructed path between them. The measured signal comes from reflections. Recommended for weapon detection. |
-| Wire format v2/v3 | Binary UDP datagram layout shared between `firmware/pi/publisher.py` and `wavetrace/Source.py`. v2 = int8 I/Q (ESP32 nodes); v3 = int16 I/Q with fixed scale (Pi node — preserves absolute amplitude for weapon detection). |
+| Wire format v2/v3 | Binary UDP datagram layout shared between `firmware/pi/publisher.py` and `wavetrace/adapters/source/wire_format.py`. v2 = int8 I/Q (ESP32 nodes); v3 = int16 I/Q with fixed scale (Pi node — preserves absolute amplitude for weapon detection). |
 | ESP-IDF | Espressif IoT Development Framework — the build toolchain and SDK used to compile and flash the ESP32 firmware. |
 | Nexmon CSI | A firmware patch for Broadcom/Cypress Wi-Fi chips (including the Pi's CYW43455) that exposes raw CSI over a local UDP socket. |
 
@@ -689,8 +696,9 @@ If you add hardware with a different bandwidth (e.g. HT80 on the Pi), create a n
 | Python library — modules and subfolders | [`wavetrace/README.md`](wavetrace/README.md) |
 | Web dashboard endpoints and startup | [`web/README.md`](web/README.md) |
 | Data directory layout | [`data/README.md`](data/README.md) |
-| CLI flags (all subcommands) | [`wavetrace/Cli.py`](wavetrace/Cli.py) |
+| CLI flags (all subcommands) | [`wavetrace/cli.py`](wavetrace/cli.py) |
 | Development history and design decisions | `projectProgress.md` |
+| Next radio front end (UWB) — hardware research | [`docs/HARDWARE_SELECTION.md`](docs/HARDWARE_SELECTION.md) |
 
 ---
 
@@ -698,11 +706,11 @@ If you add hardware with a different bandwidth (e.g. HT80 on the Pi), create a n
 
 The following identifiers cross a hardware or wire-format boundary. Renaming one side without the other corrupts the data stream silently, and no test will catch it.
 
-- UDP datagram struct fields and header layout — `wavetrace/Source.py` ↔ `firmware/pi/publisher.py` ↔ `firmware/esp32_node/main/main.cpp`
+- UDP datagram struct fields and header layout — `wavetrace/adapters/source/wire_format.py` ↔ `firmware/pi/publisher.py` ↔ `firmware/esp32_node/main/Main.cpp`
 - Wire format version bytes and JSON header keys: `v`, `node`, `tx`, `ntp_ms`
-- `config.h` macro names: `NODE_ID`, `PC_IP`, `ROUTER_SSID`, `ROUTER_PASS`, `CHANNEL`
+- `Config.h` macro names: `NODE_ID`, `PC_IP`, `ROUTER_SSID`, `ROUTER_PASS`, `CHANNEL`
 - ESP-IDF sdkconfig keys in `sdkconfig.defaults`
 - CLI flag names: `--root`, `--node`, `--carry`, `--subject`, `--head-mode`, `--stage`, `--vote`
 - `data/` subdirectory names: `cal/`, `model/`, `model_weapon/`, `model_count/`, `2g4_ht20/`, `2g4_ht40/`, `5g_ht40/`, `5g_ht80/`
-- pybind11 binding names in `src/Bindings.cpp` and `wavetrace/_wavetrace.pyi`
+- pybind11 binding names in `native/Bindings.cpp` and `wavetrace/_wavetrace.pyi`
 - UDP ports: 9876 (CSI mesh), 5566 (legacy 1-TX rig), 9877 (health monitor), 9878 (node discovery), 8000 (web dashboard)

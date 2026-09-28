@@ -16,38 +16,38 @@ import time
 
 import numpy as np
 
-from wavetrace.Source import (parseBatchLinks, resampleUniform, bindUdp, saveRecording,
-                              RecordingSource)
-from wavetrace.Calibration import loadCalibration
+from wavetrace.adapters.source import parse_batch_by_link, bind_udp_socket, save_recording, RecordingSource
+from wavetrace.domain.dsp.resample import resample_uniform
+from wavetrace.calibration import load_calibration
 from wavetrace.application.collect import collect_source
-from wavetrace.Config import ModelConfig
-from wavetrace.groundtruth.DatasetBuilder import buildDatasetStacked, saveDataset
-from wavetrace.recognition import trainPresence
-from wavetrace.groundtruth.CameraLabeler import (YoloLabelerOptions, YoloSegLabeler, presenceLabelFn,
-                                                 weaponLabelFn)
-from wavetrace.groundtruth.Webcam import (WebcamCapture, WebcamOptions, recordLabelsOnline,
+from wavetrace.config import ModelConfig
+from wavetrace.groundtruth.dataset_builder import build_stacked_dataset, save_dataset
+from wavetrace.recognition import train_presence
+from wavetrace.groundtruth.camera_labeler import (YoloLabelerOptions, YoloSegLabeler, presence_label_fn,
+                                                 weapon_label_fn)
+from wavetrace.groundtruth.webcam import (WebcamCapture, WebcamOptions, record_labels_online,
                                           COCO_WEAPON_CLASSES)
 from wavetrace.domain.contracts import (DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPLE_RATE_HZ,
                                         DEFAULT_WINDOW_FRAMES)
 
 
-def captureCsi(duration_s, port, node_ids):
+def capture_csi(duration_s, port, node_ids):
     """Returns {rx_node: [frames]} for `duration_s` of capture, every tx link merged into its rx node."""
-    perNode = collections.defaultdict(list)
-    sock = bindUdp(port, timeout=1.0)
-    tEnd = time.monotonic() + duration_s
+    frames_by_node = collections.defaultdict(list)
+    sock = bind_udp_socket(port, timeout_s=1.0)
+    end_time_s = time.monotonic() + duration_s
     try:
-        while time.monotonic() < tEnd:
+        while time.monotonic() < end_time_s:
             try:
                 payload, _ = sock.recvfrom(65535)
             except socket.timeout:
                 continue
-            for (_tx, rx), frames in parseBatchLinks(payload).items():
+            for (_tx, rx), frames in parse_batch_by_link(payload).items():
                 if not node_ids or rx in node_ids:
-                    perNode[rx].extend(frames)
+                    frames_by_node[rx].extend(frames)
     finally:
         sock.close()
-    return dict(perNode)
+    return dict(frames_by_node)
 
 
 def main():
@@ -71,26 +71,26 @@ def main():
     args = p.parse_args()
     args.cal = args.cal or f"{args.root}/cal"
     args.model = args.model or f"{args.root}/model"
-    weaponClasses = tuple(args.weapon_classes) if args.weapon_classes else COCO_WEAPON_CLASSES
+    weapon_classes = tuple(args.weapon_classes) if args.weapon_classes else COCO_WEAPON_CLASSES
 
     calibs = {}
     for d in sorted(glob.glob(f"{args.cal}/node*")):
         base = os.path.basename(d)
         if base[4:].isdigit():
-            calibs[int(base[4:])] = loadCalibration(d)
+            calibs[int(base[4:])] = load_calibration(d)
     if not calibs:
         print(f"[ERROR] no calibrations in {args.cal}/node* — run collect_baseline.py first.")
         return
-    calNodes = sorted(calibs)
-    print(f"nodes: {calNodes}. loading YOLO-seg (first run downloads weights)...")
+    calibrated_node_ids = sorted(calibs)
+    print(f"nodes: {calibrated_node_ids}. loading YOLO-seg (first run downloads weights)...")
 
-    labelFn = weaponLabelFn if args.stage == "weapon" else presenceLabelFn
+    label_fn = weapon_label_fn if args.stage == "weapon" else presence_label_fn
     labeler = YoloSegLabeler(
-        options=YoloLabelerOptions(weights_path=args.weights, weapon_classes=weaponClasses),
-        conf=args.conf, grid=args.grid, label_fn=labelFn)
+        options=YoloLabelerOptions(weights_path=args.weights, weapon_classes=weapon_classes),
+        conf=args.conf, grid=args.grid, label_fn=label_fn)
 
     pos = {"n": 0, "tot": 0, "last": time.monotonic()}
-    def onLabel(lab):
+    def on_label(lab):
         pos["tot"] += 1
         pos["n"] += int(lab.class_id == 1)
         now = time.monotonic()
@@ -100,19 +100,19 @@ def main():
             pos["last"] = now
 
     box = {}
-    def camWorker():
+    def run_camera_labeler():
         try:
             with WebcamCapture(WebcamOptions(index=args.cam_index)) as cap:
-                box["labels"] = recordLabelsOnline(cap.read, labeler, args.duration,
-                                                     fps=args.fps, onLabel=onLabel)
+                box["labels"] = record_labels_online(cap.read, labeler, args.duration,
+                                                     fps=args.fps, on_label=on_label)
         except Exception as e:  # camera permission or busy; reported after the join
             box["error"] = e
 
     print(f"\n>> capturing {args.duration:g}s — keep the subject in camera view and the mesh zone. Press Enter...")
     input()
-    th = threading.Thread(target=camWorker, daemon=True)
+    th = threading.Thread(target=run_camera_labeler, daemon=True)
     th.start()
-    csi = captureCsi(args.duration, args.port, calNodes)
+    csi = capture_csi(args.duration, args.port, calibrated_node_ids)
     th.join()
     print()
     if "error" in box:
@@ -122,66 +122,67 @@ def main():
     if not labels:
         print("[ERROR] no webcam frames labeled — check camera permission and --cam-index.")
         return
-    nPos = sum(l.class_id == 1 for l in labels)
-    print(f"labeled {nPos}/{len(labels)} frames positive "
+    positive_count = sum(l.class_id == 1 for l in labels)
+    print(f"labeled {positive_count}/{len(labels)} frames positive "
           f"({'weapon' if args.stage=='weapon' else 'present'}).")
 
     res = {}
     for nid, frs in csi.items():
-        rf = resampleUniform(frs, DEFAULT_TARGET_SAMPLE_RATE_HZ)
+        rf = resample_uniform(frs, DEFAULT_TARGET_SAMPLE_RATE_HZ)
         for f in rf:
             f.node_id = nid
         res[nid] = rf
 
     sess = f"{args.subject}_cam_s0"
-    presBuilt = []
-    for nid in calNodes:
+    presence_node_ids = []
+    for nid in calibrated_node_ids:
         fr = res.get(nid, [])
         if len(fr) < DEFAULT_WINDOW_FRAMES:
             print(f"   [SKIP presence] node {nid}: {len(fr)} frames (< {DEFAULT_WINDOW_FRAMES})")
             continue
         rec = f"{args.root}/cam_rec/{sess}/node{nid}"
         ds = f"{args.root}/cam_ds/{args.stage}/node{nid}/{sess}"
-        saveRecording(fr, rec)
+        save_recording(fr, rec)
         collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [], stage=args.stage,
                        labeler=labels, session_id=sess, subject_id=args.subject,
                        subtract_ic_baseline=(args.stage == "weapon"))
-        presBuilt.append(nid)
+        presence_node_ids.append(nid)
         print(f"   [OK presence] node {nid} -> {ds}")
 
-    merged = [f for nid in calNodes for f in res.get(nid, [])]
-    hmDir = f"{args.root}/cam_ds/heatmap/{sess}"
-    hmDs = None
+    merged = [f for nid in calibrated_node_ids for f in res.get(nid, [])]
+    heatmap_dir = f"{args.root}/cam_ds/heatmap/{sess}"
+    heatmap_dataset = None
     if merged:
-        hmDs = buildDatasetStacked(merged, calibs, labels, window=DEFAULT_WINDOW_FRAMES,
-                                    hop=DEFAULT_HOP_FRAMES,
-                                    session_id=sess, subject_id=args.subject)
-        saveDataset(hmDs, hmDir)
-        nMask = sum(1 for lb in hmDs.labels if lb.mask)
-        print(f"   [OK heatmap]  stacked {len(calNodes)} nodes -> {hmDir} "
-              f"({hmDs.X_image.shape[0]} windows, {nMask} with masks)")
+        heatmap_dataset = build_stacked_dataset(merged, calibs, labels, window=DEFAULT_WINDOW_FRAMES,
+                                                hop=DEFAULT_HOP_FRAMES,
+                                                session_id=sess, subject_id=args.subject)
+        save_dataset(heatmap_dataset, heatmap_dir)
+        masked_window_count = sum(1 for lb in heatmap_dataset.labels if lb.mask)
+        print(f"   [OK heatmap]  stacked {len(calibrated_node_ids)} nodes -> {heatmap_dir} "
+              f"({heatmap_dataset.X_image.shape[0]} windows, {masked_window_count} with masks)")
 
-    if not presBuilt and hmDs is None:
+    if not presence_node_ids and heatmap_dataset is None:
         print("[ERROR] no usable CSI — is the mesh streaming on this port?")
         return
 
     if args.train:
         print("\ntraining...")
-        for nid in presBuilt:
+        for nid in presence_node_ids:
             dirs = sorted(glob.glob(f"{args.root}/cam_ds/{args.stage}/node{nid}/*"))
             if dirs:
-                trainPresence(dirs, out_dir=f"{args.model}/node{nid}")
+                train_presence(dirs, out_dir=f"{args.model}/node{nid}")
                 print(f"   [OK] presence node {nid} -> {args.model}/node{nid}")
-        if hmDs is not None:
-            _trainHeatmap(hmDir, f"{args.model}/heatmap.joblib", args.grid)
+        if heatmap_dataset is not None:
+            _train_heatmap(heatmap_dir, f"{args.model}/heatmap.joblib", args.grid)
 
-    print(f"\ndone. presence nodes {presBuilt}; heatmap {'built' if hmDs is not None else 'skipped'}.")
+    print(f"\ndone. presence nodes {presence_node_ids}; "
+          f"heatmap {'built' if heatmap_dataset is not None else 'skipped'}.")
 
 
-def _trainHeatmap(dataset_dir, out_path, grid):
-    from wavetrace.groundtruth import loadDataset
-    from wavetrace.recognition.Heatmap import HeatmapHead
-    ds = loadDataset(dataset_dir)
+def _train_heatmap(dataset_dir, out_path, grid):
+    from wavetrace.groundtruth import load_dataset
+    from wavetrace.recognition.heatmap import HeatmapHead
+    ds = load_dataset(dataset_dir)
     masks = [lb.mask for lb in ds.labels if lb.mask]
     if not masks:
         print("   [SKIP] heatmap: no masks — need a person/weapon visible to the camera.")

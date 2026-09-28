@@ -3,13 +3,13 @@ a persisted room map."""
 
 import numpy as np
 
-from wavetrace.Localize import Localizer, Tracker, saveLocalization
+from wavetrace.localize import Localizer, Tracker, save_localization
 from wavetrace import RecognitionResult
 
 
 def _spatial_result(timestamp, x_m, y_m, angle_deg, range_m, confidence, located):
     """A spatial fix -> RecognitionResult on the wire schema: location rides in bbox [x, y, 0, 0]
-    (Publisher.resultToDict emits it), azimuth + range in keypoints. class_id = 1 when this frame
+    (Publisher.result_to_dict emits it), azimuth + range in keypoints. class_id = 1 when this frame
     carries a real (measured/confident) fix, 0 when it is a coasted/low-confidence estimate. nan
     range -> -1 (JSON-safe)."""
     result = RecognitionResult()
@@ -39,7 +39,7 @@ def localize_source(source, out_dir, *, num_antennas, antenna_spacing_wavelength
                            num_ranges=num_ranges, range_enabled=range_enabled)
     tracker = Tracker(range_enabled=range_enabled) if filter_track else None
     frames = list(source.frames())
-    for localization in localizer.locateStream(frames):
+    for localization in localizer.locate_stream(frames):
         if publisher is None:
             continue
         if tracker is not None:
@@ -52,4 +52,4 @@ def localize_source(source, out_dir, *, num_antennas, antenna_spacing_wavelength
                                                localization.peak_angle_deg, localization.peak_range_m,
                                                localization.confidence, localization.confidence >= 0.5))
     aggregate_localization = localizer.aggregate(frames)
-    return saveLocalization(aggregate_localization, out_dir), aggregate_localization
+    return save_localization(aggregate_localization, out_dir), aggregate_localization

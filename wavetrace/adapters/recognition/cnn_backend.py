@@ -55,7 +55,7 @@ class CnnBackend:
         shape = self._image_shape or (1, self.config.k, self.config.window)
         return np.ascontiguousarray(X.reshape(X.shape[0], *shape))
 
-    def fit(self, X, y, *, epochs: int = 30, lr: float = 1e-3, batch_size: int = 32,
+    def fit(self, X, y, *, epochs: int = 30, learning_rate: float = 1e-3, batch_size: int = 32,
             report=None, **_ignored) -> None:
         torch = _torch()
         images = self._as_images(np.asarray(X, dtype=np.float32))  # (n, C, K, W) — 4-D
@@ -69,7 +69,7 @@ class CnnBackend:
         net = _build_net(torch, self.config.hidden, int(self._classes.size), in_channels=in_channels)
         x_tensor = torch.from_numpy((images - mean) / std)  # (n, C, K, W) — no unsqueeze
         y_tensor = torch.from_numpy(class_indices.astype(np.int64))
-        optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
         loss_fn = torch.nn.CrossEntropyLoss()
         generator = torch.Generator().manual_seed(self.config.seed)
         net.train()

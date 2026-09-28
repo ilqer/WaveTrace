@@ -11,5 +11,5 @@ sdkconfig.old
 # clangd / IDE local autocomplete index
 .cache/
 
-# Local Wi-Fi credentials + IP targets — keep a config.h.example template if others will build
-config.h
+# Local Wi-Fi credentials + IP targets — keep a Config.h.example template if others will build
+Config.h

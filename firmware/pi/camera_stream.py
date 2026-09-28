@@ -22,9 +22,9 @@ class StreamingOutput(io.BufferedIOBase):
         self.frame = None
         self.condition = Condition()
 
-    def write(self, buf):
+    def write(self, frame_bytes):
         with self.condition:
-            self.frame = buf
+            self.frame = frame_bytes
             self.condition.notify_all()
 
 
@@ -57,12 +57,12 @@ class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
     daemon_threads = True
 
 
-picam2 = Picamera2()
-picam2.configure(picam2.create_video_configuration(main={"size": SIZE}))
+camera = Picamera2()
+camera.configure(camera.create_video_configuration(main={"size": SIZE}))
 output = StreamingOutput()
-picam2.start_recording(MJPEGEncoder(), FileOutput(output))
+camera.start_recording(MJPEGEncoder(), FileOutput(output))
 print(f"streaming camera on http://0.0.0.0:{PORT}/stream.mjpg")
 try:
     StreamingServer(("", PORT), Handler).serve_forever()
 finally:
-    picam2.stop_recording()
+    camera.stop_recording()

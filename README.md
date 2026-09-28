@@ -58,12 +58,12 @@ The modes are independent. There is no gate between them.
 |---|---|
 | `firmware/esp32_node/` | unified mesh firmware; `NODE_ID` is the only per-board difference |
 | `firmware/pi/` | Nexmon CSI capture and UDP stream scripts for the Raspberry Pi |
-| `src/` | C++ signal processing compiled into the package via pybind11 |
+| `native/` | C++ signal processing compiled into the package via pybind11 |
 | `wavetrace/` | Python library: calibration, pipeline, training, inference, CLI |
 | `scripts/` | terminal scripts: calibrate, collect data, run live detection (see [scripts/README.md](scripts/README.md)) |
 | `experiments/` | offline analysis: σ²[p] litmus check, model bake-off |
 | `web/` | FastAPI backend and React dashboard |
-| `tests/` | pytest suite (~295 tests, all offline) |
+| `tests/` | pytest suite (369 tests, all offline) |
 | `data/` | captured data, models, calibration (git-ignored) |
 
 ## Tests

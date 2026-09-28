@@ -1,6 +1,4 @@
-import asyncio
 import json
-import base64
 import time
 from foxglove_websocket.server import FoxgloveServer
 

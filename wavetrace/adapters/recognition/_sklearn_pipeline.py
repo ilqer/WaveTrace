@@ -16,7 +16,7 @@ class SklearnPipelineBackend(ABC):
     StandardScaler is required: the input features live on wildly different scales (mean |H| ~1 vs
     lag-1 autocorrelation in [-1, 1]); every sklearn-based backend assumes standardized inputs.
 
-    `feature_mode` defaults to 'ic27' — the fallback `planInferenceInput` uses for any head saved
+    `feature_mode` defaults to 'ic27' — the fallback `plan_input` uses for any head saved
     before `feature_mode` was recorded. 'fusion' is also a legal training-time choice for this
     backend and is then recorded explicitly on the head, overriding this default."""
 

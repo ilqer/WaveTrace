@@ -29,9 +29,9 @@ cd esp-idf && ./install.sh esp32s3
 . ~/esp/esp-idf/export.sh    # you must run this in every new shell before flashing
 ```
 
-### Step 2 — Configure `config.h` (once per deployment)
+### Step 2 — Configure `Config.h` (once per deployment)
 
-Open `firmware/esp32_node/main/config.h` and set the four values that are specific to your network:
+Open `firmware/esp32_node/main/Config.h` and set the four values that are specific to your network:
 
 ```c
 #define ROUTER_SSID  "your-router-ssid"
@@ -39,11 +39,11 @@ Open `firmware/esp32_node/main/config.h` and set the four values that are specif
 #define PC_IP        "192.168.x.x"    // your Mac's LAN IP (run: ipconfig getifaddr en0)
 ```
 
-`NODE_ID` is injected per-board by `flash.sh` as a build flag — no manual edit in `config.h`. The mesh discovers the node count at runtime; no constant needs updating when boards are added.
+`NODE_ID` is injected per-board by `flash.sh` as a build flag — no manual edit in `Config.h`. The mesh discovers the node count at runtime; no constant needs updating when boards are added.
 
 To find your Mac's IP: `System Settings → Network → your connection → IP address`, or run `ipconfig getifaddr en0`. Give the Mac a static DHCP lease on the router so this IP never changes between sessions.
 
-The remaining settings in `config.h` are tuned for the current 6-node, HT40, channel-6 setup and do not need to change:
+The remaining settings in `Config.h` are tuned for the current 6-node, HT40, channel-6 setup and do not need to change:
 
 | Setting | Value | Meaning |
 |---|---|---|
@@ -89,11 +89,11 @@ Then verify CSI is arriving (venv active, boards powered — USB only needed for
 python mesh_verify.py
 ```
 
-Expected output: one line per directed link. With 2 boards: `1->2` and `2->1`, both at a non-zero frame rate. With 6 boards: 30 links (6×5). If nothing appears: wrong `PC_IP` in `config.h`, Mac firewall blocking UDP 9876, or boards not yet associated (wait ~10 s after power-on). Check that the firewall also allows UDP 9877 (health) and 9878 (discovery).
+Expected output: one line per directed link. With 2 boards: `1->2` and `2->1`, both at a non-zero frame rate. With 6 boards: 30 links (6×5). If nothing appears: wrong `PC_IP` in `Config.h`, Mac firewall blocking UDP 9876, or boards not yet associated (wait ~10 s after power-on). Check that the firewall also allows UDP 9877 (health) and 9878 (discovery).
 
 ### Wipe and flash from scratch
 
-Do this when a board fails to associate (stale NVS), after changing `config.h`, or to guarantee a clean image.
+Do this when a board fails to associate (stale NVS), after changing `Config.h`, or to guarantee a clean image.
 
 ```bash
 . ~/esp/esp-idf/export.sh
@@ -108,7 +108,7 @@ Use `rm -rf build`, **not** `idf.py fullclean`. `fullclean` can leave stamp file
 
 ### Scale up
 
-Flash each new board with the next `NODE_ID`. No `config.h` edit and no Python change needed — the mesh discovers the node count at runtime and the host aggregator handles any count dynamically.
+Flash each new board with the next `NODE_ID`. No `Config.h` edit and no Python change needed — the mesh discovers the node count at runtime and the host aggregator handles any count dynamically.
 
 ---
 
@@ -120,7 +120,7 @@ Six ESP32-S3 boards act as RX-only nodes; a seventh is the dedicated TX. All sen
 TX (ESP-NOW broadcast, ch 11) ──► 6× RX (ESP32-S3) ──UDP:5566──► PC (UdpSource)
 ```
 
-**RF constraint:** each RX uses its one radio for both AP association (to send UDP) and CSI capture (to hear the TX's ESP-NOW). The AP, TX, and all RX boards must be on the **same channel** (default 11). Set `PC_IP` in `esp32_rx/main/config.h` to a static IP on that LAN; if the IP changes, the boards can't reach the Mac.
+**RF constraint:** each RX uses its one radio for both AP association (to send UDP) and CSI capture (to hear the TX's ESP-NOW). The AP, TX, and all RX boards must be on the **same channel** (default 11). Set `PC_IP` in `esp32_rx/main/Config.h` to a static IP on that LAN; if the IP changes, the boards can't reach the Mac.
 
 ### Install ESP-IDF (once)
 
@@ -145,10 +145,10 @@ Same as the mesh path above — see Step 1.
 
 ```bash
 .venv/bin/python -c "
-from wavetrace.Source import UdpSource
+from wavetrace.adapters.source import UdpSource, UdpSourceOptions
 import collections
 c = collections.Counter()
-for f in UdpSource(5566, timeout_s=10).frames():
+for f in UdpSource(UdpSourceOptions(port=5566, timeout_seconds=10)).frames():
     c.update([f.node_id])
 print(c)"
 ```

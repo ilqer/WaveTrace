@@ -3,7 +3,6 @@
 Nodes beat every 2 s, so STALE_S allows three missed beats.
 """
 
-import collections
 import json
 import socket
 import sys
@@ -18,18 +17,18 @@ sock.settimeout(0.5)
 
 # nodes learn this PC's IP from this broadcast
 DISCOVERY_PORT = 9878
-discoverySock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-discoverySock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-lastPing = 0
+discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+last_ping_time_s = 0
 
 last = {}
 print(f"health monitor on udp/{PORT}  (Ctrl+C to stop)\n")
 try:
     while True:
         now = time.time()
-        if now - lastPing > 2.0:
-            discoverySock.sendto(b"WAVETRACE_PING", ("255.255.255.255", DISCOVERY_PORT))
-            lastPing = now
+        if now - last_ping_time_s > 2.0:
+            discovery_socket.sendto(b"WAVETRACE_PING", ("255.255.255.255", DISCOVERY_PORT))
+            last_ping_time_s = now
 
         try:
             payload, addr = sock.recvfrom(2048)

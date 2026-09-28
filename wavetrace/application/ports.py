@@ -1,6 +1,6 @@
 """Application ports: the Protocols concrete adapters implement.
 
-`Labeler` (`wavetrace/groundtruth/CameraLabeler.py`) and `Publisher` (`wavetrace/output/Publisher.py`)
+`Labeler` (`wavetrace/groundtruth/camera_labeler.py`) and `Publisher` (`wavetrace/output/publisher.py`)
 remain ABCs in their own modules, not Protocols here.
 """
 
@@ -12,7 +12,7 @@ import numpy as np
 
 class CsiSource(Protocol):
     """A stream of CsiFrames feeding the front-end. Implementations: `SyntheticSource`,
-    `RecordingSource`, `UdpSource`, `SerialReader`, `NexmonSource` (`wavetrace/Source.py`)."""
+    `RecordingSource`, `UdpSource`, `SerialReader`, `NexmonSource` (`wavetrace/adapters/source/`)."""
 
     @abstractmethod
     def frames(self):

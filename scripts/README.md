@@ -29,7 +29,7 @@ python scripts/health_monitor.py   # optional, shows per-node status
 python scripts/mesh_verify.py      # confirm CSI links are arriving before you collect anything
 ```
 
-`mesh_verify.py` should print something like `aa:bb->1:45  cc:dd->2:38` — one line per second, with non-zero frame rates. If it's silent, the boards aren't reaching the Mac (wrong `PC_IP` in `config.h`, firewall, or boards not powered).
+`mesh_verify.py` should print something like `aa:bb->1:45  cc:dd->2:38` — one line per second, with non-zero frame rates. If it's silent, the boards aren't reaching the Mac (wrong `PC_IP` in `Config.h`, firewall, or boards not powered).
 
 ---
 
@@ -91,6 +91,7 @@ You capture levels 0, 1, 2, 3 (and 3 means "3 or more"). The script prompts for 
 | `collect_weapon.py` | Records clear/weapon session pairs and retrains the weapon head on the full cumulative pool. |
 | `collect_count.py` | Records one session per people count (0…N) and trains a per-node multi-class count head. |
 | `collect_camera.py` | Simultaneous CSI + webcam capture with live YOLO-seg labeling. Builds both per-node presence datasets and a stacked heatmap dataset. |
+| `link_capture.py` | Not run directly: the node discovery and per-link UDP capture loop the `collect_*` scripts share. |
 | `run_live_mesh.py` | Live presence detection over all active (tx, rx) links. Votes are weighted by each node's LOGO accuracy. |
 | `run_weapon.py` | Live weapon detection. Loads per-link or per-node weapon heads and fuses them via LinkVoter. |
 | `run_count.py` | Live people count. Same architecture as presence, multi-class. |

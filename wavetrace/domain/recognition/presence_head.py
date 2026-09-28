@@ -6,7 +6,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-from wavetrace.Config import ModelConfig
+from wavetrace.config import ModelConfig
 from wavetrace.domain.contracts import SCHEMA_VERSION, PipelineContract, derive_pipeline_contract
 
 

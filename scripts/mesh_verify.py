@@ -15,12 +15,13 @@ import time
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9876
 RUN_S = float(sys.argv[2]) if len(sys.argv) > 2 else 1e9  # default: until Ctrl+C
 
-_HDR = struct.Struct("<BBBQH")  # 13 bytes; must match wavetrace/Source.py
+_HDR = struct.Struct("<BBBQH")  # 13 bytes; must match wavetrace/adapters/source/wire_format.py
 _MAGIC = 0x57
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 try:
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)  # absorb bursts, as Source.bindUdp does
+    # absorb bursts, as Source.bind_udp_socket does
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
 except OSError:
     pass
 sock.bind(("0.0.0.0", PORT))
@@ -29,11 +30,11 @@ sock.settimeout(1.0)
 total = collections.Counter()   # (tx, rx) -> all-time frames
 window = collections.Counter()  # (tx, rx) -> frames this second
 dgrams = 0
-start = lastPrint = time.time()
+start = last_print_time_s = time.time()
 print(f"listening on udp/{PORT}  (Ctrl+C to stop)")
 
 
-def countLinks(payload):
+def count_links(payload):
     """Tally (tx_short, rx_node) per record in one batch, stepping over the CSI bytes undecoded."""
     if len(payload) < _HDR.size:
         return
@@ -63,14 +64,14 @@ try:
             payload = None
         if payload:
             dgrams += 1
-            countLinks(payload)
+            count_links(payload)
         now = time.time()
-        if now - lastPrint >= 1.0:
+        if now - last_print_time_s >= 1.0:
             links = " ".join(f"{tx}->{rx}:{window[(tx, rx)]}"
                              for (tx, rx) in sorted(total)) or "(no frames)"
             print(f"[{now - start:5.1f}s] hz  {links}")
             window.clear()
-            lastPrint = now
+            last_print_time_s = now
 except KeyboardInterrupt:
     pass
 finally:

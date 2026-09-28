@@ -1,11 +1,7 @@
 import pytest
 
-from wavetrace.Source import (
-    NexmonSourceOptions,
-    SerialSourceOptions,
-    SourceOptions,
-    UdpSourceOptions,
-)
+from wavetrace.adapters.source import (NexmonSourceOptions, SerialSourceOptions, SourceOptions,
+                                       UdpSourceOptions)
 
 
 def test_source_options_defaults():

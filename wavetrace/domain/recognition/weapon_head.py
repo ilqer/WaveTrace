@@ -6,7 +6,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-from wavetrace.Config import ModelConfig
+from wavetrace.config import ModelConfig
 from wavetrace.domain.contracts import SCHEMA_VERSION, PipelineContract, derive_pipeline_contract
 
 # Column 9 of the 27-wide inter-carrier block: the window mean of the per-packet σ²[p] series
@@ -52,7 +52,7 @@ class WeaponHead:
         """What the backend expects when the artifact recorded no `feature_mode` of its own."""
         return self._backend.feature_mode
 
-    def fit(self, X, y, *, epochs: int = 30, lr: float = 1e-3, batch_size: int = 32,
+    def fit(self, X, y, *, epochs: int = 30, learning_rate: float = 1e-3, batch_size: int = 32,
             report=None) -> "WeaponHead":
         """Fit on inter-carrier blocks or images. Returns self."""
         y = np.asarray(y, dtype=np.int64)
@@ -63,7 +63,7 @@ class WeaponHead:
                 f"WeaponHead.fit: training data has a single class {classes.tolist()}; need both "
                 "weapon and no-weapon windows (check weapon label spans / --weapon-depth)"
             )
-        self._backend.fit(X, y, epochs=epochs, lr=lr, batch_size=batch_size, report=report)
+        self._backend.fit(X, y, epochs=epochs, learning_rate=learning_rate, batch_size=batch_size, report=report)
         self._fitted = True
         return self
 

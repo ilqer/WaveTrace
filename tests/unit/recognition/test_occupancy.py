@@ -1,7 +1,7 @@
 """Pins OccupancyGrid/_GridKalman/HeatmapTrack behaviour and their options-object validation.
 
 None of the three is exported from wavetrace/recognition/__init__.py and nothing outside
-Occupancy.py constructs them, so the module is otherwise dead code. These tests exist so that it can
+occupancy.py constructs them, so the module is otherwise dead code. These tests exist so that it can
 be wired into the heatmap serving path or deleted safely, without first having to characterize
 undocumented behaviour.
 """
@@ -9,7 +9,7 @@ undocumented behaviour.
 import numpy as np
 import pytest
 
-from wavetrace.recognition.Occupancy import (
+from wavetrace.recognition.occupancy import (
     HeatmapTrack,
     KalmanOptions,
     OccupancyGrid,
@@ -70,9 +70,9 @@ def test_grid_kalman_options_rejects_non_positive_fields():
 
 def test_grid_kalman_first_update_passes_through_then_smooths():
     kf = _GridKalman()
-    r0, c0, measured0 = kf.update(1.0, 2.0, t=0.0)
+    r0, c0, measured0 = kf.update(1.0, 2.0, timestamp_s=0.0)
     assert (r0, c0, measured0) == (1.0, 2.0, True)  # first sample seeds state directly
-    r1, c1, measured1 = kf.update(1.0, 2.0, t=1.0, confidence=1.0)
+    r1, c1, measured1 = kf.update(1.0, 2.0, timestamp_s=1.0, confidence=1.0)
     assert measured1 is True
     assert r1 == pytest.approx(1.0, abs=0.5) and c1 == pytest.approx(2.0, abs=0.5)
 
@@ -81,7 +81,7 @@ def test_heatmap_track_defaults_and_update_shape():
     track = HeatmapTrack()
     measurement = np.zeros((16, 16), dtype=np.float32)
     measurement[8, 8] = 1.0
-    out = track.update(measurement, confidence=1.0, t=0.0)
+    out = track.update(measurement, confidence=1.0, timestamp_s=0.0)
     assert set(out.keys()) == {"grid", "peak", "track"}
     assert len(out["grid"]) == 16 * 16
     assert set(out["track"].keys()) == {"x", "y", "measured"}
@@ -97,8 +97,8 @@ def test_heatmap_track_reset_honors_its_own_kalman_options_not_defaults():
 
     measurement = np.zeros((4, 4), dtype=np.float32)
     measurement[0, 0] = 1.0
-    track.update(measurement, confidence=1.0, t=0.0)
-    track.update(measurement, confidence=1.0, t=1.0)  # perturb the Kalman's internal state
+    track.update(measurement, confidence=1.0, timestamp_s=0.0)
+    track.update(measurement, confidence=1.0, timestamp_s=1.0)  # perturb the Kalman's internal state
 
     track.reset()
 

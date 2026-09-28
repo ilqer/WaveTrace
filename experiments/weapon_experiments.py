@@ -7,7 +7,7 @@ Reports leave-one-SESSION-out (LOGO) for three families:
      so one CNN sees the whole mesh at once (NOT feature vectors glued side by side).
 
 Only SESSION-LOGO is meaningful here: there is 1 subject and 1 carry pose, so subject/carry folds
-degenerate and are skipped by _logoMetrics. Static-subject capture -> the per-link channels are
+degenerate and are skipped by _logo_metrics. Static-subject capture -> the per-link channels are
 stationary, so the combined stack aligns the 12 links index-wise per (session,condition) (identical
 100 Hz grid + hop); a 1-2 window phase slip is immaterial for a stationary signal.
 
@@ -22,10 +22,11 @@ import os
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
-from wavetrace.Config import ModelConfig
-from wavetrace.groundtruth import loadDataset
+from wavetrace.config import ModelConfig
+from wavetrace.groundtruth import load_dataset
 from wavetrace.adapters.recognition.heads import build_weapon_head
-from wavetrace.recognition.Train import _logoMetrics, trainWeapon
+from wavetrace.recognition import parse_link_tag
+from wavetrace.recognition.train import _logo_metrics, train_weapon
 
 WINDOW, HOP, FS = 128, 32, 100.0
 
@@ -35,8 +36,8 @@ def _cfg(backend, k, **kw):
 
 
 def _session_logo(X, y, sess, subj, make_head):
-    """Run _logoMetrics and return only the session fold (the valid one) or None."""
-    m = _logoMetrics(np.asarray(X), np.asarray(y), np.asarray(sess), np.asarray(subj), make_head)
+    """Run _logo_metrics and return only the session fold (the valid one) or None."""
+    m = _logo_metrics(np.asarray(X), np.asarray(y), np.asarray(sess), np.asarray(subj), make_head)
     return m.get("session")
 
 
@@ -48,11 +49,6 @@ def _fmt(tag, n, s):
             f"{'BEATS' if s['accuracy'] > s['majority_accuracy'] + 1e-9 else 'below'} majority")
 
 
-def _linkTag(d):
-    b = os.path.basename(d)
-    return b.split("_link")[-1] if "_link" in b else None
-
-
 def discover(root):
     """{node -> {tag -> [ds dirs]}} for the latest ilker4node_metal pool, plus the 12-link order."""
     nodes = {}
@@ -60,7 +56,7 @@ def discover(root):
         nid = int(os.path.basename(nd)[4:])
         bytag = collections.defaultdict(list)
         for d in sorted(glob.glob(f"{nd}/*")):
-            t = _linkTag(d)
+            t = parse_link_tag(d)
             if t:
                 bytag[t].append(d)
         if bytag:
@@ -75,7 +71,7 @@ def exp_per_node(nodes, root):
     deploy = {}
     for nid in sorted(nodes):
         dirs = [d for t in nodes[nid] for d in nodes[nid][t]]
-        dss = [loadDataset(d) for d in dirs]
+        dss = [load_dataset(d) for d in dirs]
         X_ic = np.concatenate([d.X_intercarrier for d in dss]).astype(np.float32)
         X_im = np.concatenate([d.X_image for d in dss]).astype(np.float32)
         y = np.concatenate([d.y for d in dss])
@@ -99,7 +95,7 @@ def exp_per_link(nodes):
     rows = []
     for nid in sorted(nodes):
         for tag in sorted(nodes[nid]):
-            dss = [loadDataset(d) for d in nodes[nid][tag]]
+            dss = [load_dataset(d) for d in nodes[nid][tag]]
             X_ic = np.concatenate([d.X_intercarrier for d in dss]).astype(np.float32)
             y = np.concatenate([d.y for d in dss])
             sess = np.concatenate([d.session_ids for d in dss])
@@ -127,7 +123,7 @@ def build_aligned(nodes, links, field):
     chan = {lk: i for i, lk in enumerate(links)}          # (node,tag) -> channel index
     sessions = sorted({os.path.basename(d).split("_metal_")[1].split("_")[0]
                        for nid in nodes for t in nodes[nid] for d in nodes[nid][t]})
-    Xs, ys, ss = [], [], []
+    X_blocks, ys, ss = [], [], []
     for s in sessions:
         for cond, lab in (("clear", 0), ("weapon", 1)):
             blocks = {}                                    # channel -> field array (m,*)
@@ -135,16 +131,16 @@ def build_aligned(nodes, links, field):
                 hit = [d for d in nodes[nid][tag]
                        if f"_metal_{s}_{cond}_link{tag}" in os.path.basename(d)]
                 if hit:
-                    blocks[ci] = getattr(loadDataset(hit[0]), field).astype(np.float32)
+                    blocks[ci] = getattr(load_dataset(hit[0]), field).astype(np.float32)
             if len(blocks) != len(links):                  # skip unless all channels present
                 print(f"   [skip] {s}/{cond}: only {len(blocks)}/{len(links)} links")
                 continue
             m = min(b.shape[0] for b in blocks.values())
             stack = np.stack([blocks[ci][:m] for ci in range(len(links))], axis=1)  # (m,12,*)
-            Xs.append(stack)
+            X_blocks.append(stack)
             ys.append(np.full(m, lab, dtype=np.int64))
             ss.append(np.array([s] * m))
-    X = np.concatenate(Xs).astype(np.float32)
+    X = np.concatenate(X_blocks).astype(np.float32)
     return X, np.concatenate(ys), np.concatenate(ss)
 
 
@@ -199,7 +195,7 @@ def exp_weighted_fusion(nodes, links):
     reliability on the TRAIN sessions only; the fused score is judged on the held-out session. This is
     exactly what run_weapon serves (LinkVoter keyed per link)."""
     print("\n=== D. FLAT PER-LINK FUSION — 12 independent link voters -> one 0..1 score (session-LOGO) ===")
-    IC, y, sess = build_aligned(nodes, links, "X_intercarrier")  # (n,12,27)
+    X_intercarrier, y, sess = build_aligned(nodes, links, "X_intercarrier")  # (n,12,27)
     names = [f"n{nid}/{tag}" for nid, tag in links]              # link id = (tx_tag -> rx_node)
     folds = sorted(set(sess.tolist()))
     L = len(links)
@@ -210,17 +206,17 @@ def exp_weighted_fusion(nodes, links):
     for st in folds:
         tr, te = sess != st, sess == st
         W = np.zeros(L)                                  # per-LINK weights (independent)
-        Ptr = np.zeros((int(tr.sum()), L))               # per-LINK train probs (for the train threshold)
-        Pte = np.zeros((int(te.sum()), L))               # per-LINK test probs
+        P_train = np.zeros((int(tr.sum()), L))               # per-LINK train probs (for the train threshold)
+        P_test = np.zeros((int(te.sum()), L))               # per-LINK test probs
         for i in range(L):
-            head = build_weapon_head(_cfg("variance", 12)).fit(IC[tr, i, :], y[tr])
-            W[i] = _reliability(IC[tr, i, :], y[tr], sess[tr])
-            Ptr[:, i] = head.predict_proba(IC[tr, i, :])[:, 1]
-            Pte[:, i] = head.predict_proba(IC[te, i, :])[:, 1]
+            head = build_weapon_head(_cfg("variance", 12)).fit(X_intercarrier[tr, i, :], y[tr])
+            W[i] = _reliability(X_intercarrier[tr, i, :], y[tr], sess[tr])
+            P_train[:, i] = head.predict_proba(X_intercarrier[tr, i, :])[:, 1]
+            P_test[:, i] = head.predict_proba(X_intercarrier[te, i, :])[:, 1]
         wsum += W
         ws = W.sum() if W.sum() > 0 else 1.0             # all-junk fold -> plain mean fallback
-        ftr = Ptr @ W / ws if W.sum() > 0 else Ptr.mean(axis=1)
-        fte = Pte @ W / ws if W.sum() > 0 else Pte.mean(axis=1)
+        ftr = P_train @ W / ws if W.sum() > 0 else P_train.mean(axis=1)
+        fte = P_test @ W / ws if W.sum() > 0 else P_test.mean(axis=1)
         thr = _best_threshold(ftr, y[tr])                # threshold from TRAIN only (no leak)
         thrs.append(thr)
         acc05.append(float(((fte >= 0.5).astype(int) == y[te]).mean()))
@@ -228,24 +224,25 @@ def exp_weighted_fusion(nodes, links):
         if np.unique(y[te]).size == 2:
             aucs.append(float(roc_auc_score(y[te], fte)))  # threshold-free: is there ANY ranking signal?
         tru.append(y[te]); fus.append(fte)
-        last = (st, Pte, W, fte, y[te])
+        last = (st, P_test, W, fte, y[te])
 
     tru = np.concatenate(tru); fus = np.concatenate(fus)
-    avgW = wsum / len(folds)
+    mean_link_weights = wsum / len(folds)
 
     print("   per-LINK vote WEIGHT (avg over folds, reliability = max(LOGO-0.5,0)*2; links independent):")
-    for i in np.argsort(-avgW):
-        print(f"      {names[i]:<10} w={avgW[i]:.3f}  {'#' * int(round(avgW[i] * 40))}")
+    for i in np.argsort(-mean_link_weights):
+        print(f"      {names[i]:<10} w={mean_link_weights[i]:.3f}  "
+              f"{'#' * int(round(mean_link_weights[i] * 40))}")
 
     a, m, t, fp = _fused_metrics(tru, fus)
-    print(f"\n   FUSED SYSTEM score (0..1) -> threshold 0.5  (link->link-weight->result):")
+    print("\n   FUSED SYSTEM score (0..1) -> threshold 0.5  (link->link-weight->result):")
     print(f"      clear={fus[tru == 0].mean():.3f} weapon={fus[tru == 1].mean():.3f}"
           f" (sep {fus[tru == 1].mean() - fus[tru == 0].mean():+.3f})  "
           f"LOGO={a:.3f} maj={m:.3f} TPR={t:.3f} FP={fp:.3f}  {'BEATS' if a > m + 1e-9 else 'below'} majority")
 
     # ---- Gemini hypothesis: "hidden signal squashed by a misplaced 0.5 threshold"? Settle it honestly.
     auc = float(np.mean(aucs)) if aucs else float("nan")
-    print(f"\n   GEMINI TEST — is signal hidden behind a bad threshold, or just absent?")
+    print("\n   GEMINI TEST — is signal hidden behind a bad threshold, or just absent?")
     print(f"      ROC-AUC (threshold-FREE, mean/fold) = {auc:.3f}   (0.50 = no ranking signal at all)")
     print(f"      acc @ fixed 0.5         = {np.mean(acc05):.3f}")
     print(f"      acc @ TRAIN-picked thr  = {np.mean(acctr):.3f}   (per-fold thr {[round(x, 2) for x in thrs]})")
@@ -275,11 +272,11 @@ def exp_weighted_fusion(nodes, links):
 
 
 # ---- E. drift-fix ablation: do the literature-backed preprocessing fixes help threshold transfer? ---
-def _mad_clip(IC, sess, k=3.0):
+def _mad_clip(X_intercarrier, sess, k=3.0):
     """Hampel-style robust clip per (link,feature) WITHIN each session: clamp to median ± k·1.4826·MAD.
     Label-free (uses only the feature distribution → leak-safe on the test session). Kills CSI spikes
     that inflate the variance feature and worsen cross-session drift (Non-Obtrusive/espectre)."""
-    out = IC.copy()
+    out = X_intercarrier.copy()
     for s in set(sess.tolist()):
         m = sess == s
         sub = out[m]                                   # (ns, L, 27)
@@ -289,12 +286,12 @@ def _mad_clip(IC, sess, k=3.0):
     return out
 
 
-def _zscore_sess(IC, sess):
+def _zscore_sess(X_intercarrier, sess):
     """Per-session z-norm per (link,feature): subtract the session mean, divide by session std. Label-
     FREE — the test session is normalized by its OWN unlabeled stats (transductive, no label leak). This
     removes the absolute σ² baseline drift that breaks a fixed threshold across sessions (the diagnosed
     failure; cross-domain survey: subtract running baseline)."""
-    out = IC.copy()
+    out = X_intercarrier.copy()
     for s in set(sess.tolist()):
         m = sess == s
         sub = out[m]
@@ -302,7 +299,7 @@ def _zscore_sess(IC, sess):
     return out
 
 
-def _fusion_eval(IC, y, sess, links, *, augment=0, seed=0):
+def _fusion_eval(X_intercarrier, y, sess, links, *, augment=0, seed=0):
     """Flat per-link fusion under session-LOGO; returns pooled AUC + acc@0.5 + acc@train-threshold + sep.
     Heads fit on (optionally) augmented TRAIN; weights come from the ORIGINAL train (no aug leak); the
     augmented copies are train-only (never test). augment = #jittered copies appended (factor augment+1;
@@ -312,27 +309,27 @@ def _fusion_eval(IC, y, sess, links, *, augment=0, seed=0):
     tru = []; fus = []; aucs = []; acc05 = []; acctr = []
     for st in folds:
         tr, te = sess != st, sess == st
-        Xtr0, ytr0, str0 = IC[tr], y[tr], sess[tr]
-        Xte, yte = IC[te], y[te]
+        X_train_raw, ytr0, str0 = X_intercarrier[tr], y[tr], sess[tr]
+        X_test, yte = X_intercarrier[te], y[te]
         if augment > 0:
-            sd = np.std(Xtr0, axis=0, keepdims=True) + 1e-6
-            blocks = [Xtr0]; ys = [ytr0]
+            sd = np.std(X_train_raw, axis=0, keepdims=True) + 1e-6
+            blocks = [X_train_raw]; ys = [ytr0]
             for _ in range(augment):
-                jit = Xtr0 + rng.normal(0, 0.05, Xtr0.shape) * sd        # jitter ~5% robust std
-                jit = jit * (1 + rng.normal(0, 0.03, (Xtr0.shape[0], 1, 1)))  # magnitude warp
+                jit = X_train_raw + rng.normal(0, 0.05, X_train_raw.shape) * sd        # jitter ~5% robust std
+                jit = jit * (1 + rng.normal(0, 0.03, (X_train_raw.shape[0], 1, 1)))  # magnitude warp
                 blocks.append(jit); ys.append(ytr0)
-            Xtr = np.concatenate(blocks); ytr = np.concatenate(ys)
+            X_train = np.concatenate(blocks); ytr = np.concatenate(ys)
         else:
-            Xtr, ytr = Xtr0, ytr0
-        W = np.zeros(L); Ptr = np.zeros((len(ytr), L)); Pte = np.zeros((int(te.sum()), L))
+            X_train, ytr = X_train_raw, ytr0
+        W = np.zeros(L); P_train = np.zeros((len(ytr), L)); P_test = np.zeros((int(te.sum()), L))
         for i in range(L):
-            head = build_weapon_head(_cfg("variance", 12)).fit(Xtr[:, i, :], ytr)
-            W[i] = _reliability(Xtr0[:, i, :], ytr0, str0)   # reliability on ORIGINAL train (no aug leak)
-            Ptr[:, i] = head.predict_proba(Xtr[:, i, :])[:, 1]
-            Pte[:, i] = head.predict_proba(Xte[:, i, :])[:, 1]
+            head = build_weapon_head(_cfg("variance", 12)).fit(X_train[:, i, :], ytr)
+            W[i] = _reliability(X_train_raw[:, i, :], ytr0, str0)   # reliability on ORIGINAL train (no aug leak)
+            P_train[:, i] = head.predict_proba(X_train[:, i, :])[:, 1]
+            P_test[:, i] = head.predict_proba(X_test[:, i, :])[:, 1]
         ws = W.sum() if W.sum() > 0 else 1.0
-        ftr = Ptr @ W / ws if W.sum() > 0 else Ptr.mean(axis=1)
-        fte = Pte @ W / ws if W.sum() > 0 else Pte.mean(axis=1)
+        ftr = P_train @ W / ws if W.sum() > 0 else P_train.mean(axis=1)
+        fte = P_test @ W / ws if W.sum() > 0 else P_test.mean(axis=1)
         thr = _best_threshold(ftr, ytr)
         acc05.append(float(((fte >= 0.5).astype(int) == yte).mean()))
         acctr.append(float(((fte >= thr).astype(int) == yte).mean()))
@@ -350,18 +347,18 @@ def exp_drift_ablation(nodes, links):
     augmentation) against the drift problem, leak-free, on the flat per-link fusion. AUC = ranking
     signal; acc@trThr rising toward/above acc@0.5 with the gap closed = a threshold finally TRANSFERS."""
     print("\n=== E. DRIFT-FIX ABLATION — do denoise / per-session norm / augment help? (session-LOGO) ===")
-    IC0, y, sess = build_aligned(nodes, links, "X_intercarrier")
-    den = _mad_clip(IC0, sess)
+    X_intercarrier_raw, y, sess = build_aligned(nodes, links, "X_intercarrier")
+    den = _mad_clip(X_intercarrier_raw, sess)
     configs = [
-        ("baseline (current)", IC0, 0),
+        ("baseline (current)", X_intercarrier_raw, 0),
         ("+Hampel/MAD denoise", den, 0),
         ("+denoise +per-session z-norm", _zscore_sess(den, sess), 0),
         ("+denoise +z-norm +augment x5", _zscore_sess(den, sess), 4),
     ]
     print(f"   {'config':<32}  AUC    acc@0.5  acc@trThr   sep")
     print("   " + "-" * 64)
-    for name, IC, aug in configs:
-        r = _fusion_eval(IC, y, sess, links, augment=aug)
+    for name, X_intercarrier, aug in configs:
+        r = _fusion_eval(X_intercarrier, y, sess, links, augment=aug)
         print(f"   {name:<32} {r['auc']:.3f}   {r['acc05']:.3f}    {r['acctr']:.3f}    {r['sep']:+.3f}")
     print("   (AUC↑ = more ranking signal; acc@trThr↑ with small gap to acc@0.5 = threshold TRANSFERS)")
 
@@ -389,7 +386,7 @@ def main():
     # canonical deployable: retrain the per-node ic27/variance heads run_weapon serves
     print("\n=== Retraining canonical per-node ic27 heads -> model_weapon/node* (deployable) ===")
     for nid in sorted(deploy):
-        _, m = trainWeapon(deploy[nid], out_dir=f"{args.root}/model_weapon/node{nid}",
+        _, m = train_weapon(deploy[nid], out_dir=f"{args.root}/model_weapon/node{nid}",
                             feature_mode="ic27")
         lg = (m.get("logo") or {}).get("session", {})
         print(f"   node{nid}: LOGO={lg.get('accuracy', float('nan')):.3f} "

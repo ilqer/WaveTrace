@@ -20,7 +20,7 @@ _REGISTRY: dict[str, type[RecognitionBackend]] = {
     "cnn": CnnBackend,
 }
 
-# The backend `trainWeapon` picks by default for each feature_mode when the caller supplies no
+# The backend `train_weapon` picks by default for each feature_mode when the caller supplies no
 # explicit `ModelConfig` — a training-time convenience, not a per-backend property (several
 # backends can consume the same feature_mode; this just names the canonical one).
 DEFAULT_BACKEND_BY_FEATURE_MODE: dict[str, str] = {

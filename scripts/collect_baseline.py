@@ -10,21 +10,12 @@ import os
 import sys
 import time
 
-from wavetrace.Source import RecordingSource, UdpSource, UdpSourceOptions, saveRecording
+from wavetrace.adapters.source import RecordingSource, UdpSource, UdpSourceOptions, save_recording
 from wavetrace.application.calibrate import calibrate_source
+from link_capture import detect_nodes
 
 
-def detectNodes(port, timeout_seconds=3.0):
-    """Node ids heard in one short listen, sorted."""
-    print("listening for active nodes...")
-    detected = collections.Counter()
-    source = UdpSource(UdpSourceOptions(port=port, timeout_seconds=timeout_seconds, max_frames=150))
-    for fr in source.frames():
-        detected[fr.node_id] += 1
-    return sorted(detected.keys())
-
-
-def captureAll(n, port, node_ids, timeout_seconds=20.0, max_capture_s=60.0):
+def capture_per_node(max_frames_per_node, port, node_ids, timeout_seconds=20.0, max_capture_s=60.0):
     """Collect up to n frames per node in one pass. Returns {node_id: [frames]}, each node reduced to
     its dominant subcarrier width, because widths differ across boards and bands. The wall-clock
     deadline is needed because the receive timeout only fires on total silence, so one node going
@@ -32,22 +23,22 @@ def captureAll(n, port, node_ids, timeout_seconds=20.0, max_capture_s=60.0):
     frames = {nid: [] for nid in node_ids}
     source = UdpSource(UdpSourceOptions(port=port, timeout_seconds=timeout_seconds, max_frames=None))
     start = time.time()
-    lastPrint = start
+    last_print_time_s = start
     for fr in source.frames():
         buf = frames.get(fr.node_id)
-        if buf is not None and len(buf) < n:
+        if buf is not None and len(buf) < max_frames_per_node:
             buf.append(fr)
-        if frames and all(len(b) >= n for b in frames.values()):
+        if frames and all(len(b) >= max_frames_per_node for b in frames.values()):
             break
         now = time.time()
         if now - start > max_capture_s:
-            short = [k for k, v in sorted(frames.items()) if len(v) < n]
-            print(f"\n[WARN] deadline {max_capture_s:g}s hit; nodes short of {n}: {short}")
+            short = [k for k, v in sorted(frames.items()) if len(v) < max_frames_per_node]
+            print(f"\n[WARN] deadline {max_capture_s:g}s hit; nodes short of {max_frames_per_node}: {short}")
             break
-        if now - lastPrint >= 1.0:
+        if now - last_print_time_s >= 1.0:
             counts = "  ".join(f"N{k}:{len(v)}" for k, v in sorted(frames.items()))
-            print(f"   {counts}  (target {n}/node)...", end="\r")
-            lastPrint = now
+            print(f"   {counts}  (target {max_frames_per_node}/node)...", end="\r")
+            last_print_time_s = now
     print()
     for nid in frames:
         if frames[nid]:
@@ -69,7 +60,7 @@ def main():
 
     os.makedirs(f"{args.root}/cal", exist_ok=True)
 
-    nodes = detectNodes(args.port)
+    nodes = detect_nodes(args.port)
     if not nodes:
         print(f"\n[ERROR] no active nodes on UDP port {args.port}. "
               "Check the mesh boards are powered and flooding, or run `scripts/mesh_verify.py`.", file=sys.stderr)
@@ -87,7 +78,7 @@ def main():
         time.sleep(1)
     print("\n   [CAPTURING] keep the room still and empty...")
 
-    frames = captureAll(args.frames, args.port, nodes)
+    frames = capture_per_node(args.frames, args.port, nodes)
 
     calibrated = []
     for nid in nodes:
@@ -95,7 +86,7 @@ def main():
         if len(fr) < args.min_frames:
             print(f"   [SKIP] node {nid}: only {len(fr)} frames (< {args.min_frames}), not calibrated.")
             continue
-        saveRecording(fr, f"{args.root}/baseline_raw/node{nid}")
+        save_recording(fr, f"{args.root}/baseline_raw/node{nid}")
         calibrate_source(RecordingSource(f"{args.root}/baseline_raw/node{nid}"), f"{args.root}/cal/node{nid}",
                           baseline_packets=min(2000, len(fr)))
         print(f"   [OK]   node {nid}: {len(fr)} frames, {fr[0].num_subcarriers} subcarriers "

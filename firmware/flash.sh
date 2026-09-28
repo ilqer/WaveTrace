@@ -7,7 +7,7 @@
 #
 # NODE_ID is the ONLY per-board difference; it is injected as a compile definition.
 # node = unified full-mesh firmware (every board identical). Edit PC_IP / ROUTER_* once in the
-# matching main/config.h before the first flash (esp32_node for node, esp32_rx for rx).
+# matching main/Config.h before the first flash (esp32_node for node, esp32_rx for rx).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROLE="${1:-}"
