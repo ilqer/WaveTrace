@@ -4,13 +4,18 @@ from wavetrace.adapters.recognition.session import open_session
 from wavetrace.adapters.store.calibration import load_calibration, save_calibration
 from wavetrace.adapters.store.dataset import save_dataset
 from wavetrace.adapters.store.localization import save_localization
+from wavetrace.application.behaviours import (
+    AlertGuardBehaviour, DriftMonitoredSource, SegmentVoteBehaviour,
+)
 from wavetrace.application.calibrate import calibrate
 from wavetrace.application.collect import collect_dataset
 from wavetrace.application.localize import localize
 from wavetrace.application.serve import infer_windows
 from wavetrace.domain.calibration import Calibration
 from wavetrace.domain.contracts import DEFAULT_HOP_FRAMES, DEFAULT_WINDOW_FRAMES
+from wavetrace.domain.guard import AlertGuard, DriftMonitor
 from wavetrace.domain.localize import Localizer, Tracker
+from wavetrace.domain.recognition.vote import SegmentVoter
 
 
 def calibrate_source(source, out_dir, *, baseline_packets=300, use_gain_lock=True, nbvi_max=12):
@@ -34,11 +39,20 @@ def collect_source(source, calibration_dir, out_dir, spans, *, stage="presence",
 
 
 def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=False, guard=False):
-    """mode: 'presence' or 'weapon', picks the head loader. Returns the published verdicts."""
+    """mode: 'presence' or 'weapon', picks the head loader. guard adds recalibration advisories
+    (O(S) extra per frame) and, in weapon mode only, debounced weapon alerts; vote appends one soft-vote verdict over the
+    stream. Returns the published verdicts."""
     calibration_result, gain_lock = load_calibration(calibration_dir)
     session = open_session(mode, model_path)
+    behaviours = []
+    if guard:
+        source = DriftMonitoredSource(source, DriftMonitor(calibration_result.baseline_mag), publisher)
+        if mode == "weapon":
+            behaviours.append(AlertGuardBehaviour(AlertGuard()))
+    if vote:
+        behaviours.append(SegmentVoteBehaviour(SegmentVoter()))
     return infer_windows(source, calibration_result, gain_lock, session, mode, publisher,
-                         vote=vote, guard=guard)
+                         behaviours=behaviours)
 
 
 def localize_source(source, out_dir, *, num_antennas, antenna_spacing_wavelengths=0.5,

@@ -5,16 +5,18 @@ import time
 import numpy as np
 
 from wavetrace.adapters.recognition.session import InferenceSession
+from wavetrace.domain.recognition.verdict import decide_class
 
 
 def measure_latency(session: InferenceSession, feature_vector, iters: int = 200) -> dict:
     """Latency stats in ms over `iters` timed calls, after 5 warm-up calls."""
+    classes = session.head.classes_
     for _ in range(5):
-        session.predict_window(feature_vector)
+        decide_class(session.predict_window_proba(feature_vector), classes)
     samples = np.empty(iters)
     for i in range(iters):
         start_time = time.perf_counter()
-        session.predict_window(feature_vector)
+        decide_class(session.predict_window_proba(feature_vector), classes)
         samples[i] = time.perf_counter() - start_time
     return {
         "mean_ms": float(samples.mean() * 1e3),

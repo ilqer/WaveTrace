@@ -38,9 +38,9 @@ def main():
               f"{args.cal}/node*/. Run collect_baseline.py then collect_weapon.py first.")
         return
     # ordering validated equal in load_weapon_links
-    weapon_class_index = next(iter(entries.values()))["weapon_i"]
+    weapon_class_index = next(iter(entries.values())).positive_class_index
     # banner only: every head is trained at the same rate today (not enforced)
-    sample_rate_hz = next(iter(entries.values()))["session"].head.contract.target_sample_rate_hz
+    sample_rate_hz = next(iter(entries.values())).session.head.contract.target_sample_rate_hz
 
     buffers = collections.defaultdict(collections.deque)  # keyed by (tx_short, rx_node)
     last_seen_time_s = {}
@@ -51,7 +51,7 @@ def main():
     def _wlabel(key):
         tag, node_id = key
         return f"{tag}->{node_id}" if tag is not None else f"*->{node_id}"
-    weight_summary = "  ".join(f"{_wlabel(entry_key)}:w={entries[entry_key]['weight']:.2f}"
+    weight_summary = "  ".join(f"{_wlabel(entry_key)}:w={entries[entry_key].weight:.2f}"
                                for entry_key in sorted(entries))
     print(f"WEAPON detection on udp/{args.port} (fs={sample_rate_hz:g}Hz, "
           f"{'per-link' if has_per_link_heads else 'per-node'} heads; vote weights {weight_summary}). "
@@ -64,9 +64,8 @@ def main():
             try:
                 payload, _ = sock.recvfrom(65535)
                 for key, frames in parse_batch_by_link(payload).items():
-                    entry = find_weapon_entry(entries,
-                                              *key)  # key=(tx_short, rx_node) -> per-link, then per-node
-                    if entry is not None and frames[0].num_subcarriers >= entry["min_width"]:
+                    entry = find_weapon_entry(entries, *key)
+                    if entry is not None and frames[0].num_subcarriers >= entry.min_num_subcarriers:
                         buffers[key].extend(frames)
                         last_seen_time_s[key] = now
                         link_ids.setdefault(key, len(link_ids))
@@ -84,7 +83,7 @@ def main():
                         link_frames.popleft()
 
             # LinkVoter multiplies static reliability by live margin; uniform when nothing is weighted
-            static_link_weights = {link_id: find_weapon_entry(entries, *key)["weight"]
+            static_link_weights = {link_id: find_weapon_entry(entries, *key).weight
                                    for key, link_id in link_ids.items()}
             static = (static_link_weights
                       if any(weight > 0 for weight in static_link_weights.values()) else None)
@@ -95,11 +94,11 @@ def main():
                     continue
                 entry = find_weapon_entry(entries, *key)
                 proba, *_ = dwell_proba(
-                    list(buffers[key]), entry["session"].head.contract.target_sample_rate_hz, entry
+                    list(buffers[key]), entry.session.head.contract.target_sample_rate_hz, entry
                 )
                 if proba is None:
                     continue
-                weapon_index = entry["weapon_i"]
+                weapon_index = entry.positive_class_index
                 weapon_proba = float(proba[weapon_index]) if weapon_index >= 0 else 0.0
                 quality = abs(weapon_proba - 0.5) * 2.0  # decision margin -> 0 (unsure) .. 1 (confident)
                 voter.add(link_ids[key], proba, quality=quality)

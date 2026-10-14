@@ -18,7 +18,8 @@ from wavetrace.adapters.source import parse_batch_by_link, bind_udp_socket
 from wavetrace.adapters.store.calibration import load_calibration
 from wavetrace.domain.recognition.input_plan import plan_input
 from wavetrace.recognition.link import LinkVoter, accuracy_weights
-from wavetrace.recognition.serving import last_window_proba, load_logo_accuracy, required_subcarrier_width
+from wavetrace.recognition.serving import (NodeServer, last_window_proba, load_logo_accuracy,
+                                            required_subcarrier_width)
 
 
 CHUNK_S = 1.5          # fuse + print at this cadence
@@ -44,21 +45,21 @@ def load_node_models(calibration_root, model_root, mode="presence"):
         session = open_session(mode, model_path)
         should_apply_lock, intercarrier, pick = plan_input(mode, session.head)
         classes = list(session.head.classes_)
-        nodes[node_id] = dict(
-            result=result, lock=gain_lock if should_apply_lock else None,
-            intercarrier=intercarrier, pick=pick, session=session, cfg=session.head.config,
-            min_width=required_subcarrier_width(result), present_i=classes.index(1) if 1 in classes else -1,
+        nodes[node_id] = NodeServer(
+            calibration=result, gain_lock=gain_lock if should_apply_lock else None,
+            should_use_intercarrier=intercarrier, pick_input=pick, session=session,
+            config=session.head.config, min_num_subcarriers=required_subcarrier_width(result),
+            positive_class_index=classes.index(1) if 1 in classes else -1,
         )
         logo_accuracy_by_node[node_id] = load_logo_accuracy(os.path.join(model_dir, "metrics.json"))
-    # a node with no LOGO number keeps weight 1.0
     weights = accuracy_weights({node_id: logo_accuracy
                                 for node_id, logo_accuracy in logo_accuracy_by_node.items()
                                 if logo_accuracy is not None})
     for node_id in nodes:
-        nodes[node_id]["weight"] = weights.get(node_id, 1.0)
+        nodes[node_id].weight = weights.get(node_id, 1.0)
     # blending raw proba vectors is only valid when the heads share a class ordering
-    orders = {tuple(int(class_id) for class_id in node_model["session"].head.classes_)
-              for node_model in nodes.values()}
+    orders = {tuple(int(class_id) for class_id in node.session.head.classes_)
+              for node in nodes.values()}
     if len(orders) > 1:
         raise ValueError(f"per-node heads disagree on class ordering {orders}; retrain consistently")
     return nodes
@@ -83,17 +84,17 @@ def main():
               f"{args.cal}/node*/. Run collect_baseline.py then collect_presence.py first.")
         return
     # ordering validated equal in load_node_models
-    present_class_index = next(iter(nodes.values()))["present_i"]
+    present_class_index = next(iter(nodes.values())).positive_class_index
     # banner only: every head is trained at the same rate today (not enforced)
-    sample_rate_hz = next(iter(nodes.values()))["session"].head.contract.target_sample_rate_hz
+    sample_rate_hz = next(iter(nodes.values())).session.head.contract.target_sample_rate_hz
 
     # keyed by (tx_short, rx_node)
     buffers = collections.defaultdict(collections.deque)
     last_seen_time_s = {}
-    link_ids = {}  # stable int id per link for LinkVoter
+    link_ids = {}
 
     sock = bind_udp_socket(args.port, timeout_s=0.5)
-    weight_summary = "  ".join(f"N{node_id}:w={nodes[node_id]['weight']:.2f}" for node_id in sorted(nodes))
+    weight_summary = "  ".join(f"N{node_id}:w={nodes[node_id].weight:.2f}" for node_id in sorted(nodes))
     print(f"ALL-PAIRS presence on udp/{args.port} (fs={sample_rate_hz:g}Hz, "
           f"rx nodes={sorted(nodes)}; vote weights {weight_summary}). "
           "move in and out of the links. Ctrl+C to stop.\n")
@@ -106,8 +107,8 @@ def main():
                 payload, _ = sock.recvfrom(65535)
                 for key, frames in parse_batch_by_link(payload).items():
                     # key = (tx_short, rx_node); cal+head belong to the RX node
-                    node_model = nodes.get(key[1])
-                    if node_model is not None and frames[0].num_subcarriers >= node_model["min_width"]:
+                    node = nodes.get(key[1])
+                    if node is not None and frames[0].num_subcarriers >= node.min_num_subcarriers:
                         buffers[key].extend(frames)
                         last_seen_time_s[key] = now
                         link_ids.setdefault(key, len(link_ids))
@@ -125,7 +126,7 @@ def main():
                         link_frames.popleft()
 
             # LinkVoter multiplies static reliability by live margin; uniform when nothing is weighted
-            static_link_weights = {link_id: nodes[link_key[1]]["weight"]
+            static_link_weights = {link_id: nodes[link_key[1]].weight
                                    for link_key, link_id in link_ids.items()}
             static = (static_link_weights
                       if any(weight > 0 for weight in static_link_weights.values()) else None)
@@ -134,14 +135,14 @@ def main():
             for key in sorted(buffers):
                 if now - last_seen_time_s.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
-                node_model = nodes[key[1]]
+                node = nodes[key[1]]
                 proba = last_window_proba(
-                    list(buffers[key]), node_model["session"].head.contract.target_sample_rate_hz,
-                    node_model["result"], node_model["lock"], node_model["cfg"], node_model["intercarrier"],
-                    node_model["pick"], node_model["session"])
+                    list(buffers[key]), node.session.head.contract.target_sample_rate_hz,
+                    node.calibration, node.gain_lock, node.config, node.should_use_intercarrier,
+                    node.pick_input, node.session)
                 if proba is None:
                     continue
-                present_index = node_model["present_i"]
+                present_index = node.positive_class_index
                 present_proba = float(proba[present_index]) if present_index >= 0 else 0.0
                 quality = abs(present_proba - 0.5) * 2.0  # decision margin -> 0 (unsure) .. 1 (confident)
                 voter.add(link_ids[key], proba, quality=quality)

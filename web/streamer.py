@@ -15,6 +15,7 @@ from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.recognition.input_plan import plan_input
 from wavetrace.pipeline import calibrate_source, collect_source
 from wavetrace.recognition import find_weapon_entry, train_presence, train_weapon
+from wavetrace.recognition.serving import NodeServer
 
 _OCCUPANCY_GRID_SIZE = 16
 # labels change slowly next to the 1.28 s CSI window, so 5 Hz is enough and costs
@@ -325,18 +326,19 @@ class WaveTraceRunner:
                 node_intercarrier_baseline = (
                     node_result.baseline_mag
                     if getattr(node_session.head.config, "subtract_ic_baseline", False) else None)
-                nodes[node_id] = dict(
-                    result=node_result,
-                    lock=node_gain_lock if (should_apply_node_lock and use_gain_lock) else None,
-                    intercarrier=node_intercarrier, pick=node_pick, session=node_session,
-                    cfg=node_session.head.config, classes=classes, ic_baseline=node_intercarrier_baseline
+                node = nodes[node_id] = NodeServer(
+                    calibration=node_result,
+                    gain_lock=node_gain_lock if (should_apply_node_lock and use_gain_lock) else None,
+                    should_use_intercarrier=node_intercarrier, pick_input=node_pick, session=node_session,
+                    config=node_session.head.config, classes=classes,
+                    intercarrier_baseline=node_intercarrier_baseline
                 )
                 try:
                     with open(os.path.join(node_model_dir, "metrics.json")) as metrics_file:
                         accuracy = float(json.load(metrics_file).get("logo", {}).get("session", {})
                                          .get("accuracy", 1.0))
                 except: accuracy = 1.0
-                nodes[node_id]["acc"] = accuracy
+                node.accuracy = accuracy
             
             if not nodes:
                 self.log(f"ERROR: No valid mesh models found in {model_path}")
@@ -344,16 +346,16 @@ class WaveTraceRunner:
                 return
 
             if mode == "count":
-                global_classes = sorted(set().union(*[set(entry["classes"]) for entry in nodes.values()]))
-                for entry in nodes.values():
-                    entry["col_map"] = [global_classes.index(class_id) for class_id in entry["classes"]]
-                    entry["weight"] = max(entry["acc"] - (1.0/len(global_classes)), 0) / max(1.0 - (1.0/len(global_classes)), 1e-9)
+                global_classes = sorted(set().union(*[set(node.classes) for node in nodes.values()]))
+                for node in nodes.values():
+                    node.global_class_columns = [global_classes.index(class_id) for class_id in node.classes]
+                    node.weight = max(node.accuracy - (1.0/len(global_classes)), 0) / max(1.0 - (1.0/len(global_classes)), 1e-9)
             else:
-                global_classes = list(next(iter(nodes.values()))["session"].head.classes_)
-                weights = accuracy_weights({node_id: entry["acc"] for node_id, entry in nodes.items()})
-                for node_id, entry in nodes.items(): entry["weight"] = weights.get(node_id, 1.0)
+                global_classes = list(next(iter(nodes.values())).session.head.classes_)
+                weights = accuracy_weights({node_id: node.accuracy for node_id, node in nodes.items()})
+                for node_id, node in nodes.items(): node.weight = weights.get(node_id, 1.0)
 
-            config = next(iter(nodes.values()))["cfg"]
+            config = next(iter(nodes.values())).config
             positive_class_index = global_classes.index(1) if 1 in global_classes else -1
             antenna_weights = None
         else:
@@ -375,7 +377,8 @@ class WaveTraceRunner:
                 channel_weights = cnn_channel_weights(session.head)
                 antenna_weights = channel_weights.tolist() if channel_weights is not None else None
             except: antenna_weights = None
-            nodes = {0: dict(result=result, lock=gain_lock, intercarrier=intercarrier, pick=pick, session=session, cfg=config)}
+            nodes = {0: NodeServer(calibration=result, gain_lock=gain_lock, should_use_intercarrier=intercarrier,
+                                   pick_input=pick, session=session, config=config)}
 
         model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
         heatmap_path = os.path.join(model_dir, "heatmap.joblib")
@@ -403,8 +406,7 @@ class WaveTraceRunner:
                     weapon_entries = load_weapon_links(calibration_dir, model_path)
                     for (tag, node_id), link_entry in weapon_entries.items():
                         if node_id in nodes:
-                            nodes[node_id]["weight"] = max(nodes[node_id].get("weight", 0.0),
-                                                           link_entry.get("weight", 1.0))
+                            nodes[node_id].weight = max(nodes[node_id].weight, link_entry.weight)
                     self.log(f"[WEAPON] {len(weapon_entries)} per-link entries loaded")
                 except Exception as link_load_error:
                     self.log(f"[WEAPON] per-link load failed ({link_load_error}), using per-node")
@@ -415,8 +417,8 @@ class WaveTraceRunner:
             return _nodes.get(key.rx_node_id)
 
         # the single calibration has no node id of its own, so it covers every node the stream carries
-        health_meter = (NodeHealthMeter(calibration_by_node={node_id: entry["result"]
-                                                             for node_id, entry in nodes.items()})
+        health_meter = (NodeHealthMeter(calibration_by_node={node_id: node.calibration
+                                                             for node_id, node in nodes.items()})
                         if is_mesh else NodeHealthMeter(default_calibration=result))
         alert_guard = AlertGuard()
         voter_trace: deque[float] = deque(maxlen=60)
@@ -467,7 +469,7 @@ class WaveTraceRunner:
                     link_weights = {}
                     for link_key, link_id in link_ids.items():
                         entry = _find_entry(link_key)
-                        link_weights[link_id] = entry["weight"] if entry else 1.0
+                        link_weights[link_id] = entry.weight if entry else 1.0
                     voter = LinkVoter(link_weights if any(weight > 0 for weight in link_weights.values())
                                       else None)
 
@@ -475,7 +477,7 @@ class WaveTraceRunner:
                     display_features = None
                     display_intercarrier_features = None
                     node_power = {node_id: 0.0 for node_id in nodes}
-                    link_stats = []  # per tx→rx: delivered Hz and missing-frame fraction
+                    link_stats = []
 
                     for key in sorted(buffers):
                         if now - last_seen_time_s.get(key, 0) > 3.0 or len(buffers[key]) < 2: continue
@@ -489,14 +491,14 @@ class WaveTraceRunner:
                                            "hz": round(delivered_hz, 1), "miss": round(missing_fraction, 3)})
 
                         link_proba, image, features, intercarrier_features, _window_count = dwell_proba(
-                            list(buffers[key]), entry["session"].head.contract.target_sample_rate_hz, entry)
+                            list(buffers[key]), entry.session.head.contract.target_sample_rate_hz, entry)
                         if link_proba is None: continue
                         display_image, display_features, display_intercarrier_features = (
                             image, features, intercarrier_features)
 
                         if mode == "count":
                             global_proba = np.zeros(len(global_classes), dtype=np.float64)
-                            for j, global_column in enumerate(entry["col_map"]):
+                            for j, global_column in enumerate(entry.global_class_columns):
                                 global_proba[global_column] = link_proba[j]
                             sorted_proba = np.sort(link_proba)[::-1]
                             quality = (float(sorted_proba[0] - sorted_proba[1]) if link_proba.size > 1

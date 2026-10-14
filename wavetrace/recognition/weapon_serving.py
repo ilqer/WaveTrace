@@ -13,30 +13,29 @@ from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
 from wavetrace.domain.recognition.input_plan import plan_input
 from wavetrace.recognition.link import accuracy_weights
-from wavetrace.recognition.serving import load_logo_accuracy, required_subcarrier_width
+from wavetrace.recognition.serving import NodeServer, load_logo_accuracy, required_subcarrier_width
 
 
 def dwell_proba(frames, sample_rate_hz, entry):
-    """One link's serving math, shared by `run_weapon` and the web streamer. `entry` is a dict from
-    `load_weapon_links` or a mesh node dict (result/lock/cfg/intercarrier/pick/session, optional ic_baseline).
+    """One link's serving math, shared by `run_weapon` and the web streamer. `entry` is a NodeServer
+    from `load_weapon_links` or a mesh node.
 
     Returns the mean class probability over every window in the buffer (soft, so it composes with the
     cross-link LinkVoter), the last window's (image, features, intercarrier_features) for the web
-    spectrogram, and the window count; (None, None, None, None, 0) when no full window fits.
-    ic_baseline is subtracted from the inter-carrier path and must match training."""
+    spectrogram, and the window count; (None, None, None, None, 0) when no full window fits."""
     resampled = resample_uniform(frames, sample_rate_hz)
-    config = entry["cfg"]
+    config = entry.config
     if len(resampled) < config.window:
         return None, None, None, None, 0
     window_probas = []
     image = features = intercarrier_features = None
     for _window_timestamp_s, features, image, intercarrier_features in iter_windows(
-        resampled, entry["result"].subcarriers, entry["lock"],
-        window=config.window, hop=config.hop, intercarrier=entry["intercarrier"],
-        image_subcarriers=entry["result"].image_subcarriers, intercarrier_baseline=entry.get("ic_baseline"),
+        resampled, entry.calibration.subcarriers, entry.gain_lock,
+        window=config.window, hop=config.hop, intercarrier=entry.should_use_intercarrier,
+        image_subcarriers=entry.calibration.image_subcarriers, intercarrier_baseline=entry.intercarrier_baseline,
     ):
         window_probas.append(
-            entry["session"].predict_window_proba(entry["pick"](features, image, intercarrier_features))
+            entry.session.predict_window_proba(entry.pick_input(features, image, intercarrier_features))
         )
     if not window_probas:
         return None, None, None, None, 0
@@ -64,7 +63,7 @@ def load_weapon_links(calibration_root, model_root):
         if not os.path.isdir(calibration_dir):
             continue
         link_models = sorted(glob.glob(os.path.join(model_dir, "link*", "model.joblib")))
-        if link_models:  # per-link: tag from the link<tag> dir name
+        if link_models:
             found = [
                 (os.path.basename(os.path.dirname(path))[len("link"):], path) for path in link_models
             ]
@@ -78,23 +77,24 @@ def load_weapon_links(calibration_root, model_root):
             should_apply_lock, intercarrier, pick = plan_input("weapon", session.head)
             classes = list(session.head.classes_)
             # rebuilt from the node's calibration, so serving subtracts the baseline training did
-            ic_baseline = (result.baseline_mag
-                           if getattr(session.head.config, "subtract_ic_baseline", False) else None)
+            intercarrier_baseline = (result.baseline_mag
+                                     if getattr(session.head.config, "subtract_ic_baseline", False) else None)
             key = (link_tag, node_id)
-            entries[key] = dict(
-                result=result, lock=gain_lock if should_apply_lock else None,
-                intercarrier=intercarrier, pick=pick, session=session, cfg=session.head.config,
-                min_width=required_subcarrier_width(result), weapon_i=classes.index(1) if 1 in classes else -1,
-                ic_baseline=ic_baseline,
+            entries[key] = NodeServer(
+                calibration=result, gain_lock=gain_lock if should_apply_lock else None,
+                should_use_intercarrier=intercarrier, pick_input=pick, session=session,
+                config=session.head.config, min_num_subcarriers=required_subcarrier_width(result),
+                positive_class_index=classes.index(1) if 1 in classes else -1,
+                intercarrier_baseline=intercarrier_baseline,
             )
             accuracy_by_key[key] = load_logo_accuracy(
                 os.path.join(os.path.dirname(model_path), "metrics.json"))
     weights = accuracy_weights(
         {key: accuracy for key, accuracy in accuracy_by_key.items() if accuracy is not None})
     for key in entries:
-        entries[key]["weight"] = weights.get(key, 1.0)
+        entries[key].weight = weights.get(key, 1.0)
     orders = {
-        tuple(int(class_id) for class_id in entry["session"].head.classes_) for entry in entries.values()
+        tuple(int(class_id) for class_id in entry.session.head.classes_) for entry in entries.values()
     }
     if len(orders) > 1:
         raise ValueError(f"weapon heads disagree on class ordering {orders}; retrain consistently")

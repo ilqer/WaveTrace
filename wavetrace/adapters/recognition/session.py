@@ -2,6 +2,7 @@ import numpy as np
 
 from wavetrace.adapters.recognition.heads import load_presence_head, load_weapon_head
 from wavetrace.domain.recognition import PresenceHead, WeaponHead
+from wavetrace.domain.recognition.verdict import decide_class
 
 
 class InferenceSession:
@@ -26,9 +27,7 @@ class InferenceSession:
 
     def predict_window(self, feature_vector) -> tuple[int, float]:
         """One emitted window's feature vector (d,) -> (class_id, probability). O(1)."""
-        proba = self.predict_window_proba(feature_vector)
-        i = int(np.argmax(proba))
-        return int(self._head.classes_[i]), float(proba[i])
+        return decide_class(self.predict_window_proba(feature_vector), self._head.classes_)
 
 
 def open_session(mode: str, model_path) -> InferenceSession:

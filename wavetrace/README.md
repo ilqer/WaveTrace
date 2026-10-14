@@ -32,7 +32,7 @@ All machine learning: training, evaluation, inference, and fusion.
 | `explain.py` | Feature importance and CNN channel weight introspection |
 | `occupancy.py` | Temporal fusion of heatmap frames: per-cell Bayesian filter + 2D position Kalman smoother |
 | `count.py` | Display naming for the people-count head's classes |
-| `serving.py` | Per-link serving math shared by every live front end (presence, count and weapon) |
+| `serving.py` | Per-link serving math shared by every live front end (presence, count and weapon); `NodeServer` holds one rx node's calibration, head and vote state |
 | `weapon_serving.py` | Live multi-link weapon serving: loads per-link/per-node weapon heads, shared per-window/per-link math |
 
 ### `groundtruth/`
@@ -79,6 +79,7 @@ Pure descriptions of the pipeline's shape, no I/O. `adapters/` and `recognition/
 | `recognition/presence_head.py` | `PresenceHead`: is a person in the room? One verdict per window of CSI features |
 | `recognition/weapon_head.py` | `WeaponHead`: is the person carrying metal? One verdict per window of inter-carrier features |
 | `recognition/vote.py` | `SegmentVoter`: soft majority vote over a motion segment for a stable verdict |
+| `recognition/verdict.py` | `decide_class`: one window's class probabilities -> (class id, confidence) |
 
 ### `application/`
 
@@ -88,7 +89,9 @@ Use-cases and ports, no concrete I/O: each use-case takes loaded values and retu
 |---|---|
 | `calibrate.py` | `calibrate`: a source + a `Calibration` -> a `CalibrationResult` |
 | `collect.py` | `collect_dataset`: a source + a loaded calibration + a label source -> a labeled `Dataset` |
-| `serve.py` | `infer_windows`: stream a source through the front-end and an inference session, publishing one verdict per window |
+| `serve.py` | `infer_windows`: stream a source through the front-end and an inference session, publishing one verdict per window (one forward pass each) and each window behaviour's events right after it, then the behaviours' extra rows after the last window |
+| `behaviours/window.py` | `WindowBehaviour` hooks run after each window's verdict: `AlertGuardBehaviour` (debounced weapon alerts), `SegmentVoteBehaviour` (one soft-vote verdict at the end) |
+| `behaviours/drift.py` | `DriftMonitoredSource`: a `CsiSource` wrapper that publishes recalibration advisories from raw per-frame magnitudes |
 | `localize.py` | `localize`: stream a source through the AoA `Localizer` (and optional `Tracker`) -> a published track + the room map |
 | `ports.py` | The Protocols concrete adapters implement |
 

@@ -8,11 +8,13 @@ from wavetrace.adapters.source import SyntheticSource
 from wavetrace.application.calibrate import calibrate
 from wavetrace.application.collect import collect_dataset
 from wavetrace.application.localize import localize
+from wavetrace.application.behaviours import AlertGuardBehaviour, SegmentVoteBehaviour
 from wavetrace.application.serve import infer_windows
 from wavetrace.domain.calibration import Calibration
-from wavetrace.domain.guard import WeaponAlertEvent
+from wavetrace.domain.guard import AlertGuard, WeaponAlertEvent
 from wavetrace.domain.localize import Localizer, Tracker
 from wavetrace.domain.model_config import ModelConfig
+from wavetrace.domain.recognition.vote import SegmentVoter
 from wavetrace.synthetic import generate_paired_recording, generate_stream
 
 NUM_ANTENNAS, NUM_SUBCARRIERS, SAMPLE_RATE_HZ = 2, 32, 100.0
@@ -32,16 +34,21 @@ class _RecordingPublisher:
 
 
 class _FixedVerdictSession:
-    """Always answers class 1; `head.predict_proba` feeds the segment voter."""
+    """Always answers class 1 with probability 0.75."""
 
     def __init__(self):
+        self.num_forward_passes = 0
         self.head = SimpleNamespace(
             config=ModelConfig(stage="presence", k=4, window=WINDOW_FRAMES, hop=HOP_FRAMES),
             classes_=np.array([0, 1]),
-            predict_proba=lambda rows: np.tile([0.25, 0.75], (len(rows), 1)))
+            predict_proba=self._predict_proba)
 
-    def predict_window(self, feature_vector):
-        return 1, 0.75
+    def _predict_proba(self, rows):
+        self.num_forward_passes += 1
+        return np.tile([0.25, 0.75], (len(rows), 1))
+
+    def predict_window_proba(self, feature_vector):
+        return self.head.predict_proba(np.asarray(feature_vector).reshape(1, -1))[0]
 
 
 def _calibrated():
@@ -106,9 +113,12 @@ def test_infer_windows_publishes_one_verdict_per_window_plus_the_vote(vote, extr
     num_windows = collect_dataset(SyntheticSource(frames), calibration_result, gain_lock, [],
                                   **_collect_options()).y.size
     publisher = _RecordingPublisher()
+    session = _FixedVerdictSession()
+    behaviours = [SegmentVoteBehaviour(SegmentVoter())] if vote else []
     results = infer_windows(SyntheticSource(frames), calibration_result, gain_lock,
-                            _FixedVerdictSession(), "presence", publisher, vote=vote, guard=False)
+                            session, "presence", publisher, behaviours=behaviours)
     assert len(results) == len(publisher.results) == num_windows + extra_rows
+    assert session.num_forward_passes == num_windows
     assert all(result.class_id == 1 for result in results)
     if vote:
         assert results[-1].confidence == pytest.approx(0.75)
@@ -118,11 +128,11 @@ def test_infer_windows_with_the_guard_fires_an_alert_and_keeps_the_verdicts():
     calibration_result, gain_lock = _calibrated()
     frames = _recording(presence_spans=[PRESENCE_SPAN_S], presence_turbulence_std=0.20)
     unguarded = infer_windows(SyntheticSource(frames), calibration_result, gain_lock,
-                              _FixedVerdictSession(), "presence", _RecordingPublisher(),
-                              vote=False, guard=False)
+                              _FixedVerdictSession(), "presence", _RecordingPublisher())
     publisher = _RecordingPublisher()
     guarded = infer_windows(SyntheticSource(frames), calibration_result, gain_lock,
-                            _FixedVerdictSession(), "presence", publisher, vote=False, guard=True)
+                            _FixedVerdictSession(), "presence", publisher,
+                            behaviours=[AlertGuardBehaviour(AlertGuard())])
     assert len(guarded) == len(unguarded)
     assert any(isinstance(event, WeaponAlertEvent) for event in publisher.events)
 

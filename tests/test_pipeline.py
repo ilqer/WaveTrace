@@ -14,6 +14,7 @@ from fixtures.synthetic_csi import generate_quiet_baseline
 from wavetrace.synthetic import generate_paired_recording
 from wavetrace import CsiFrame, Label, RecognitionResult
 from wavetrace.domain.calibration import Calibration
+from wavetrace.domain.guard import AlertClearedEvent, WeaponAlertEvent
 from wavetrace.adapters.store.calibration import load_calibration, save_calibration
 from wavetrace.pipeline import calibrate_source, collect_source, run_inference
 from wavetrace.domain.dsp.frontend import iter_windows
@@ -211,6 +212,36 @@ def test_run_vote_appends_segment_verdict(tmp_path):
     voted = run_inference(SyntheticSource(frames), tmp_path / "cal", tmp_path / "m" / "model.joblib",
                           "weapon", JsonlPublisher(io.StringIO()), vote=True)
     assert len(voted) == len(plain) + 1  # one extra soft-vote verdict at the end
+
+
+class _EventRecorder:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, result):
+        pass
+
+    def publish_event(self, event):
+        self.events.append(event)
+
+
+@pytest.mark.parametrize("mode, should_alert", [("presence", False), ("weapon", True)])
+def test_guard_raises_weapon_alerts_only_in_weapon_mode(tmp_path, mode, should_alert):
+    frames = _weapon_recording() if mode == "weapon" else _presence_recording()
+    span = (2.5, 7.5) if mode == "weapon" else (3.0, 7.0)
+    calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
+    collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [span],
+                   stage=mode, window=32, hop=16, session_id="s0", subject_id="u0")
+    if mode == "weapon":
+        train_weapon([tmp_path / "ds"], out_dir=tmp_path / "m", feature_mode="ic27")
+    else:
+        train_presence([tmp_path / "ds"], out_dir=tmp_path / "m")
+    recorder = _EventRecorder()
+    run_inference(SyntheticSource(frames), tmp_path / "cal", tmp_path / "m" / "model.joblib",
+                  mode, recorder, guard=True)
+    alert_events = [event for event in recorder.events
+                    if isinstance(event, (WeaponAlertEvent, AlertClearedEvent))]
+    assert bool(alert_events) is should_alert
 
 
 def test_inference_latency_under_8ms(tmp_path):

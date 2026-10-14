@@ -1,9 +1,34 @@
 import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 import numpy as np
 
+from wavetrace import GainLock
+from wavetrace.adapters.recognition.session import InferenceSession
+from wavetrace.domain.calibration import CalibrationResult
 from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
+from wavetrace.domain.model_config import ModelConfig
+
+
+@dataclass(slots=True)
+class NodeServer:
+    """One rx node's calibration and head as the live loops serve it. `global_class_columns`,
+    `accuracy` and `weight` are filled in after all nodes load, so it stays mutable."""
+    calibration: CalibrationResult
+    gain_lock: GainLock | None
+    should_use_intercarrier: bool
+    pick_input: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]
+    session: InferenceSession
+    config: ModelConfig
+    min_num_subcarriers: int = 0
+    classes: list[int] = field(default_factory=list)
+    global_class_columns: list[int] = field(default_factory=list)  # `classes` positions in the global class space
+    positive_class_index: int = -1
+    intercarrier_baseline: np.ndarray | None = None  # subtracted from the inter-carrier path; must match training
+    accuracy: float = 1.0
+    weight: float = 1.0
 
 
 def required_subcarrier_width(result):
