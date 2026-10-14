@@ -1,17 +1,13 @@
-"""Uniform-rate resampling of a CsiFrame stream."""
-
 import numpy as np
 
 from wavetrace import CsiFrame
 
 
 def resample_uniform(frames, sample_rate_hz):
-    """Resample stream to uniform 1/sample_rate_hz grid (linear interpolation). O(n·A·S).
+    """Linear interpolation onto a uniform 1/sample_rate_hz grid; output is time-sorted. O(n·A·S).
 
-    Mesh rate jitters (30-300 Hz). Resampling pins the rate to sample_rate_hz, preventing dropped
-    windows and smeared spectrograms.
-
-    Pass a single-link stream. Output is sorted."""
+    Mesh rate jitters (30-300 Hz); pinning it prevents dropped windows and smeared spectrograms.
+    Pass a single-link stream."""
     if sample_rate_hz <= 0:
         raise ValueError("resample_uniform: sample_rate_hz must be positive")
     if len(frames) < 2:
@@ -20,7 +16,7 @@ def resample_uniform(frames, sample_rate_hz):
     timestamps_s = np.array([frame.timestamp for frame in frames], dtype=np.float64)
     order = np.argsort(timestamps_s, kind="stable")
     timestamps_s = timestamps_s[order]
-    flat = np.stack([frames[i].grid.reshape(-1) for i in order]).astype(np.complex64)  # (n, A·S)
+    flat_grids = np.stack([frames[i].grid.reshape(-1) for i in order]).astype(np.complex64)  # (n, A·S)
     num_resampled_frames = max(2, int((timestamps_s[-1] - timestamps_s[0]) * sample_rate_hz) + 1)
     uniform_timestamps_s = (timestamps_s[0]
                             + np.arange(num_resampled_frames, dtype=np.float64) / sample_rate_hz)
@@ -28,8 +24,8 @@ def resample_uniform(frames, sample_rate_hz):
     imaginary_parts = np.empty_like(real_parts)
     # per-cell 1-D interp; A·S is small (≈64 for HT20) so this is cheap
     for cell in range(num_antennas * num_subcarriers):
-        real_parts[:, cell] = np.interp(uniform_timestamps_s, timestamps_s, flat[:, cell].real)
-        imaginary_parts[:, cell] = np.interp(uniform_timestamps_s, timestamps_s, flat[:, cell].imag)
+        real_parts[:, cell] = np.interp(uniform_timestamps_s, timestamps_s, flat_grids[:, cell].real)
+        imaginary_parts[:, cell] = np.interp(uniform_timestamps_s, timestamps_s, flat_grids[:, cell].imag)
     resampled_grids = (real_parts + 1j * imaginary_parts).astype(np.complex64).reshape(
         num_resampled_frames, num_antennas, num_subcarriers
     )

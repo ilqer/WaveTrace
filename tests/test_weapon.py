@@ -6,11 +6,9 @@ The synthetic weapon signature is a flattening that lowers inter-carrier varianc
 import numpy as np
 import pytest
 
-from wavetrace.synthetic import generate_stream
 from wavetrace.synthetic import generate_paired_recording
-from wavetrace.calibration import Calibration
 from wavetrace.config import ModelConfig
-from wavetrace.groundtruth import build_dataset, load_dataset, save_dataset, weapon_label_fn
+from wavetrace.groundtruth import build_dataset, load_dataset, save_dataset, weapon_label_function
 from wavetrace.groundtruth.camera_labeler import ScriptedLabeler
 from wavetrace.adapters.recognition.heads import build_weapon_head, load_weapon_head
 from wavetrace.recognition import (
@@ -23,48 +21,41 @@ from wavetrace.recognition import (
     open_session,
     tier_verdict,
 )
+from fixtures.synthetic_csi import calibrate_quiet_baseline
 
-NUM_ANT = 2
-NUM_SUB = 32
-FS = 100.0
+NUM_ANTENNAS = 2
+NUM_SUBCARRIERS = 32
+SAMPLE_RATE_HZ = 100.0
 WEAPON_SPAN = (2.5, 7.5)
 # Flattening depth interleaved across subjects to prevent shift.
 RECORDINGS = [("s0", "u0", 200, 0.40), ("s1", "u1", 201, 0.55),
               ("s2", "u1", 202, 0.45), ("s3", "u0", 203, 0.60)]
 
 
-def _calibrate():
-    baseline, _ = generate_stream(
-        num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS, num_frames=60,
-        perturbation_hz=0.0, perturbation_depth=0.0, cfo_hz=0.0, noise_std=0.005, seed=7,
-    )
-    cal = Calibration(baseline_packets=50)
-    for fr in baseline:
-        cal.observe(fr)
-    return cal.finalize()
-
-
-def _weapon_recording(sess, subj, seed, depth, duration=10.0):
+def _weapon_recording(session_id, subject_id, seed, signature_depth, duration_s=10.0):
     """Body present throughout recording. Weapon span adds only flattening to the presence turbulence."""
     frames, _, truth = generate_paired_recording(
-        num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS, duration_s=duration,
-        camera_fps=30.0, presence_spans=[(0.0, duration)], presence_turbulence_std=0.10,
-        weapon_spans=[WEAPON_SPAN], weapon_signature_depth=depth,
-        amplitude_hz=2.0, amplitude_depth=0.45, session_id=sess, subject_id=subj, seed=seed,
+        num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS,
+        sample_rate_hz=SAMPLE_RATE_HZ, duration_s=duration_s,
+        camera_frame_rate_hz=30.0, presence_spans=[(0.0, duration_s)], presence_turbulence_std=0.10,
+        weapon_spans=[WEAPON_SPAN], weapon_signature_depth=signature_depth,
+        amplitude_hz=2.0, amplitude_depth=0.45, session_id=session_id, subject_id=subject_id, seed=seed,
     )
     return frames, truth
 
 
 @pytest.fixture(scope="module")
 def weapon_data():
-    result = _calibrate()
+    result, _ = calibrate_quiet_baseline(
+        num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS, sample_rate_hz=SAMPLE_RATE_HZ,
+        num_frames=60, seed=7, baseline_packets=50)
     datasets = []
-    for sess, subj, seed, depth in RECORDINGS:
-        frames, _ = _weapon_recording(sess, subj, seed, depth)
-        labeler = ScriptedLabeler([(*WEAPON_SPAN, True)], label_fn=weapon_label_fn)
+    for session_id, subject_id, seed, signature_depth in RECORDINGS:
+        frames, _ = _weapon_recording(session_id, subject_id, seed, signature_depth)
+        labeler = ScriptedLabeler([(*WEAPON_SPAN, True)], label_function=weapon_label_function)
         # Weapon dataset contract: RAW magnitudes (gain_lock=None, intercarrier=True).
         datasets.append(build_dataset(frames, result, None, labeler, window=32, hop=16,
-                                      session_id=sess, subject_id=subj, intercarrier=True))
+                                      session_id=session_id, subject_id=subject_id, intercarrier=True))
     _, y, session_ids, subject_ids = concat_datasets(datasets)
     return {
         "datasets": datasets,
@@ -76,56 +67,53 @@ def weapon_data():
     }
 
 
-def _cfg(backend, k=12, **kw):
-    return ModelConfig(stage="weapon", k=k, backend=backend, **kw)
+def _weapon_config(backend, subcarrier_count=12, **overrides):
+    return ModelConfig(stage="weapon", k=subcarrier_count, backend=backend, **overrides)
 
 
 def test_weapon_signature_lowers_sigma2(weapon_data):
     # Column 9 is window mean of per-packet inter-carrier variance.
-    s2 = weapon_data["X_ic"][:, 9]
+    inter_carrier_variance = weapon_data["X_ic"][:, 9]
     y = weapon_data["y"]
-    assert np.median(s2[y == 1]) < 0.5 * np.median(s2[y == 0])  # Metal signature lowers variance.
+    # Metal signature lowers variance.
+    assert np.median(inter_carrier_variance[y == 1]) < 0.5 * np.median(inter_carrier_variance[y == 0])
 
 
 def test_weapon_signature_touches_only_spans():
-    kwargs = dict(num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS, duration_s=2.0,
-                  camera_fps=30.0, presence_spans=[(0.0, 2.0)], presence_turbulence_std=0.10,
+    kwargs = dict(num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS, sample_rate_hz=SAMPLE_RATE_HZ,
+                  duration_s=2.0, camera_frame_rate_hz=30.0, presence_spans=[(0.0, 2.0)],
+                  presence_turbulence_std=0.10,
                   weapon_spans=[(0.5, 1.0)], seed=21)
     plain, _, _ = generate_paired_recording(**kwargs)
     flat, _, truth = generate_paired_recording(**kwargs, weapon_signature_depth=0.5)
-    for fp, ft in zip(plain, flat):
-        same = np.array_equal(np.asarray(fp.grid), np.asarray(ft.grid))
-        assert same != (0.5 <= fp.timestamp < 1.0)  # Modulated inside weapon span only.
+    for plain_frame, flat_frame in zip(plain, flat):
+        same = np.array_equal(np.asarray(plain_frame.grid), np.asarray(flat_frame.grid))
+        assert same != (0.5 <= plain_frame.timestamp < 1.0)
     assert truth["weapon_signature_depth"] == pytest.approx(0.5)
 
 
 def test_dual_block_build_with_gain_lock():
     """intercarrier=True + gain_lock makes dual-block dataset: IC from raw mags, features from locked mags."""
-    result = _calibrate()
-    cal = Calibration(baseline_packets=50)
-    baseline, _ = generate_stream(num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS,
-                                 num_frames=60, perturbation_hz=0.0, perturbation_depth=0.0,
-                                 cfo_hz=0.0, noise_std=0.005, seed=7)
-    for fr in baseline:
-        cal.observe(fr)
-    cal.finalize()
-    frames, _ = _weapon_recording("sX", "uX", 210, 0.5, duration=2.0)
-    labeler = ScriptedLabeler([(0.5, 1.0, True)], label_fn=weapon_label_fn)
-    ds = build_dataset(frames, result, cal.gain_lock, labeler, window=32, hop=16, intercarrier=True)
-    K = len(result.subcarriers)
-    assert ds.X_intercarrier is not None
-    assert ds.X_intercarrier.shape == (ds.y.size, 27)
-    assert ds.X_features.shape == (ds.y.size, 9 * K)
-    assert ds.meta["gain_locked"] is True and ds.meta["intercarrier"] is True
+    result, gain_lock = calibrate_quiet_baseline(
+        num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS, sample_rate_hz=SAMPLE_RATE_HZ,
+        num_frames=60, seed=7, baseline_packets=50)
+    frames, _ = _weapon_recording("sX", "uX", 210, 0.5, duration_s=2.0)
+    labeler = ScriptedLabeler([(0.5, 1.0, True)], label_function=weapon_label_function)
+    dataset = build_dataset(frames, result, gain_lock, labeler, window=32, hop=16,
+                            intercarrier=True)
+    subcarrier_count = len(result.subcarriers)
+    assert dataset.X_intercarrier is not None
+    assert dataset.X_intercarrier.shape == (dataset.y.size, 27)
+    assert dataset.X_features.shape == (dataset.y.size, 9 * subcarrier_count)
+    assert dataset.meta["gain_locked"] is True and dataset.meta["intercarrier"] is True
 
 
 def test_train_weapon_ic27_and_fusion(weapon_data, tmp_path):
     from wavetrace.recognition import train_weapon
-    d = weapon_data
-    K = d["K"]
-    dataset_paths = [save_dataset(ds, tmp_path / f"ds{i}") for i, ds in enumerate(d["datasets"])]
+    data = weapon_data
+    subcarrier_count = data["K"]
+    dataset_paths = [save_dataset(dataset, tmp_path / f"ds{i}") for i, dataset in enumerate(data["datasets"])]
 
-    # ic27: 27-feature inter-carrier block
     inter_carrier_head, inter_carrier_metrics = train_weapon(dataset_paths, out_dir=tmp_path / "w_ic",
                                                              feature_mode="ic27")
     assert inter_carrier_metrics["feature_mode"] == "ic27" and inter_carrier_metrics["n_features"] == 27
@@ -136,8 +124,10 @@ def test_train_weapon_ic27_and_fusion(weapon_data, tmp_path):
     # fusion: hstack(X_ic, X_features). X_features is raw-magnitude 9*K block. Width is 27 + 9*K.
     fusion_head, fusion_metrics = train_weapon(dataset_paths, out_dir=tmp_path / "w_fu",
                                                feature_mode="fusion",
-                                               config=ModelConfig(stage="weapon", k=K, backend="mlp"))
-    assert fusion_metrics["feature_mode"] == "fusion" and fusion_metrics["n_features"] == 27 + 9 * K
+                                               config=ModelConfig(stage="weapon", k=subcarrier_count,
+                                                                  backend="mlp"))
+    assert (fusion_metrics["feature_mode"] == "fusion"
+            and fusion_metrics["n_features"] == 27 + 9 * subcarrier_count)
     assert fusion_metrics["train_accuracy"] > 0.7
 
 
@@ -148,13 +138,13 @@ def test_train_weapon_validates_mode():
 
 
 def test_intercarrier_roundtrip_and_backcompat(weapon_data, tmp_path):
-    ds = weapon_data["datasets"][0]
-    assert ds.X_intercarrier.shape == (ds.y.size, 27) and ds.meta["intercarrier"] is True
-    reloaded = load_dataset(save_dataset(ds, tmp_path / "w"))
-    assert np.array_equal(reloaded.X_intercarrier, ds.X_intercarrier)
+    dataset = weapon_data["datasets"][0]
+    assert dataset.X_intercarrier.shape == (dataset.y.size, 27) and dataset.meta["intercarrier"] is True
+    reloaded = load_dataset(save_dataset(dataset, tmp_path / "w"))
+    assert np.array_equal(reloaded.X_intercarrier, dataset.X_intercarrier)
     # Legacy datasets built without intercarrier block load correctly without it.
-    frames, _ = _weapon_recording("sY", "uY", 211, 0.0, duration=2.0)
-    labeler = ScriptedLabeler([(0.5, 1.0, True)], label_fn=weapon_label_fn)
+    frames, _ = _weapon_recording("sY", "uY", 211, 0.0, duration_s=2.0)
+    labeler = ScriptedLabeler([(0.5, 1.0, True)], label_function=weapon_label_function)
     old = build_dataset(frames, weapon_data["result"], None, labeler, window=32, hop=16)
     assert old.X_intercarrier is None
     assert load_dataset(save_dataset(old, tmp_path / "old")).X_intercarrier is None
@@ -165,7 +155,7 @@ def test_variance_head_learns_threshold_and_direction(tmp_path):
     X = rng.normal(0.0, 0.1, (200, 27)).astype(np.float32)
     y = (np.arange(200) % 2).astype(np.int64)
     X[y == 1, 9] -= 1.0                      # Physics direction: weapon lowers variance.
-    head = build_weapon_head(_cfg("variance")).fit(X, y)
+    head = build_weapon_head(_weapon_config("variance")).fit(X, y)
     assert (head.predict(X) == y).mean() == 1.0
     proba = head.predict_proba(X)
     assert proba.shape == (200, 2) and np.allclose(proba.sum(axis=1), 1.0)
@@ -173,76 +163,78 @@ def test_variance_head_learns_threshold_and_direction(tmp_path):
     assert np.allclose(loaded.predict_proba(X), proba)
 
     X_flipped = X.copy()
-    X_flipped[:, 9] *= -1.0                         # Flipped world: weapon increases variance. Model learns direction.
-    head2 = build_weapon_head(_cfg("variance")).fit(X_flipped, y)
-    assert (head2.predict(X_flipped) == y).mean() == 1.0
+    X_flipped[:, 9] *= -1.0    # Flipped world: weapon increases variance. Model learns direction.
+    flipped_head = build_weapon_head(_weapon_config("variance")).fit(X_flipped, y)
+    assert (flipped_head.predict(X_flipped) == y).mean() == 1.0
 
 
 def test_variance_head_validates():
     with pytest.raises(ValueError, match="not fitted"):
-        build_weapon_head(_cfg("variance")).predict(np.zeros((1, 27), np.float32))
+        build_weapon_head(_weapon_config("variance")).predict(np.zeros((1, 27), np.float32))
     X = np.zeros((9, 27), np.float32)
     with pytest.raises(ValueError, match="binary"):
-        build_weapon_head(_cfg("variance")).fit(X, np.arange(9) % 3)
+        build_weapon_head(_weapon_config("variance")).fit(X, np.arange(9) % 3)
     with pytest.raises(ValueError, match="constant"):
-        build_weapon_head(_cfg("variance")).fit(X, np.arange(9) % 2)
+        build_weapon_head(_weapon_config("variance")).fit(X, np.arange(9) % 2)
 
 
 def test_sklearn_weapon_backend(weapon_data):
-    head = build_weapon_head(_cfg("mlp", k=weapon_data["K"])).fit(weapon_data["X_ic"], weapon_data["y"])
+    head = build_weapon_head(_weapon_config("mlp", subcarrier_count=weapon_data["K"])).fit(
+        weapon_data["X_ic"], weapon_data["y"])
     assert (head.predict(weapon_data["X_ic"]) == weapon_data["y"]).mean() > 0.9
 
 
 def test_weapon_eval_gate_passes_on_synthetic(weapon_data):
     """Variance baseline beats majority on LOGO folds and passes tier gate (FP <= 10%, TPR >= 90%)."""
-    d = weapon_data
-    cfg = _cfg("variance", k=d["K"])
-    rep = evaluate_weapon(d["X_ic"], d["y"], session_ids=d["sess"], subject_ids=d["subj"],
-                          make_head=lambda: build_weapon_head(cfg))
+    data = weapon_data
+    config = _weapon_config("variance", subcarrier_count=data["K"])
+    report = evaluate_weapon(data["X_ic"], data["y"], session_ids=data["sess"], subject_ids=data["subj"],
+                             make_head=lambda: build_weapon_head(config))
     for split in ("session", "subject"):
-        r = rep[split]
-        assert r["accuracy"] >= 0.95
-        assert r["accuracy"] >= r["majority_accuracy"] + 0.30
-        assert {"tpr", "fp_rate"} <= r.keys()          # Binary rates ride along.
-    assert rep["verdict"]["verdict"] == "PASS"
-    assert rep["verdict"]["tpr"] >= 0.95 and rep["verdict"]["fp_rate"] <= 0.10
-    assert sorted(f["group"] for f in rep["session"]["folds"]) == ["s0", "s1", "s2", "s3"]
+        split_report = report[split]
+        assert split_report["accuracy"] >= 0.95
+        assert split_report["accuracy"] >= split_report["majority_accuracy"] + 0.30
+        assert {"tpr", "fp_rate"} <= split_report.keys()
+    assert report["verdict"]["verdict"] == "PASS"
+    assert report["verdict"]["tpr"] >= 0.95 and report["verdict"]["fp_rate"] <= 0.10
+    assert sorted(fold["group"] for fold in report["session"]["folds"]) == ["s0", "s1", "s2", "s3"]
 
 
 def test_concealment_gap_holds_out_concealed_tier(weapon_data):
     """Train on visible tiers, score concealed split separately.
     Concealed set (s3) passes with small gap and never leaks into visible LOGO folds."""
-    d = weapon_data
-    cfg = _cfg("variance", k=d["K"])
-    is_concealed = np.asarray(d["sess"]) == "s3"
-    rep = evaluate_concealment_gap(
-        d["X_ic"], d["y"], is_concealed, d["subj"], make_head=lambda: build_weapon_head(cfg))
+    data = weapon_data
+    config = _weapon_config("variance", subcarrier_count=data["K"])
+    is_concealed = np.asarray(data["sess"]) == "s3"
+    report = evaluate_concealment_gap(
+        data["X_ic"], data["y"], is_concealed, data["subj"], make_head=lambda: build_weapon_head(config))
 
-    assert rep["concealed"]["n"] == int(is_concealed.sum())
-    assert {"tpr", "fp_rate", "accuracy"} <= rep["concealed"].keys()
-    assert rep["verdict"] == "PASS"
-    assert rep["concealed"]["tpr"] >= 0.90 and rep["concealed"]["fp_rate"] <= 0.10
-    assert "s3" not in [f["group"] for f in rep["visible"]["folds"]]  # Concealed not in visible folds.
-    assert isinstance(rep["tpr_gap"], float)
+    assert report["concealed"]["n"] == int(is_concealed.sum())
+    assert {"tpr", "fp_rate", "accuracy"} <= report["concealed"].keys()
+    assert report["verdict"] == "PASS"
+    assert report["concealed"]["tpr"] >= 0.90 and report["concealed"]["fp_rate"] <= 0.10
+    assert "s3" not in [fold["group"] for fold in report["visible"]["folds"]]
+    assert isinstance(report["tpr_gap"], float)
 
 
 def test_concealment_gap_needs_both_splits(weapon_data):
-    d = weapon_data
-    cfg = _cfg("variance", k=d["K"])
+    data = weapon_data
+    config = _weapon_config("variance", subcarrier_count=data["K"])
     with pytest.raises(ValueError):
-        evaluate_concealment_gap(d["X_ic"], d["y"], np.zeros(d["y"].size, bool), d["subj"],
-                                 make_head=lambda: build_weapon_head(cfg))
+        evaluate_concealment_gap(data["X_ic"], data["y"], np.zeros(data["y"].size, bool), data["subj"],
+                                 make_head=lambda: build_weapon_head(config))
 
 
 def test_cnn_head_trains_roundtrips_deterministic(weapon_data, tmp_path):
     pytest.importorskip("torch")
-    d = weapon_data
-    X, y = d["X_image"], d["y"]
-    head = build_weapon_head(_cfg("cnn", k=d["K"], window=32, seed=3)).fit(X, y, epochs=15)
+    data = weapon_data
+    X, y = data["X_image"], data["y"]
+    head = build_weapon_head(
+        _weapon_config("cnn", subcarrier_count=data["K"], window=32, seed=3)).fit(X, y, epochs=15)
     assert (head.predict(X) == y).mean() > 0.85
     proba = head.predict_proba(X)
     assert proba.shape == (y.size, 2) and np.allclose(proba.sum(axis=1), 1.0, atol=1e-5)
-    assert np.allclose(head.predict_proba(X), proba)              # Predict is deterministic.
+    assert np.allclose(head.predict_proba(X), proba)
     flat = X.reshape(X.shape[0], -1)                              # predict_window seam
     assert np.allclose(head.predict_proba(flat), proba, atol=1e-5)
     loaded = load_weapon_head(head.save(tmp_path / "cnn.joblib"))
@@ -251,13 +243,14 @@ def test_cnn_head_trains_roundtrips_deterministic(weapon_data, tmp_path):
 
 def test_weapon_mode_is_standalone(weapon_data, tmp_path):
     # Weapon mode classifies every window independently without presence verdict.
-    d = weapon_data
-    head = build_weapon_head(_cfg("variance", k=d["K"])).fit(d["X_ic"], d["y"])
+    data = weapon_data
+    head = build_weapon_head(
+        _weapon_config("variance", subcarrier_count=data["K"])).fit(data["X_ic"], data["y"])
     session = open_session("weapon", head.save(tmp_path / "w.joblib"))
-    weapon_index = int(np.flatnonzero(d["y"] == 1)[0])
-    no_weapon_index = int(np.flatnonzero(d["y"] == 0)[0])
-    weapon_class, weapon_proba = session.predict_window(d["X_ic"][weapon_index])
-    no_weapon_class, _ = session.predict_window(d["X_ic"][no_weapon_index])
+    weapon_index = int(np.flatnonzero(data["y"] == 1)[0])
+    no_weapon_index = int(np.flatnonzero(data["y"] == 0)[0])
+    weapon_class, weapon_proba = session.predict_window(data["X_ic"][weapon_index])
+    no_weapon_class, _ = session.predict_window(data["X_ic"][no_weapon_index])
     assert (weapon_class, no_weapon_class) == (1, 0)
     assert 0.5 <= weapon_proba <= 1.0
 
@@ -272,33 +265,33 @@ def test_voter_recovers_segment_label_from_noisy_windows():
     rng = np.random.default_rng(5)
     voter = SegmentVoter()
     correct = 0
-    n = 40
-    for _ in range(n):
-        p1 = np.clip(0.55 + rng.normal(0, 0.15), 0.0, 1.0)
-        correct += p1 > 0.5
-        voter.add([1 - p1, p1])
-    assert correct / n < 0.75                     # Per-window head is weak.
-    cls, mean = voter.finalize()
-    assert cls == 1                               # Segment vote recovers true class.
+    window_count = 40
+    for _ in range(window_count):
+        weapon_probability = np.clip(0.55 + rng.normal(0, 0.15), 0.0, 1.0)
+        correct += weapon_probability > 0.5
+        voter.add([1 - weapon_probability, weapon_probability])
+    assert correct / window_count < 0.75                     # Per-window head is weak.
+    voted_class, mean_proba = voter.finalize()
+    assert voted_class == 1
     assert len(voter) == 0                        # finalize() resets for the next segment.
 
 
 def test_voter_middle_fraction_and_decimation():
     voter = SegmentVoter(middle_fraction=0.5)
     # Edge windows vote 0, mid-crossing windows vote 1.
-    for p in ([0.9, 0.1],) * 5 + ([0.1, 0.9],) * 6 + ([0.9, 0.1],) * 5:
-        voter.add(p)
+    for window_proba in ([0.9, 0.1],) * 5 + ([0.1, 0.9],) * 6 + ([0.9, 0.1],) * 5:
+        voter.add(window_proba)
     assert voter.finalize()[0] == 1               # Middle slice isolates the crossing.
-    full = SegmentVoter()
-    for p in ([0.9, 0.1],) * 5 + ([0.1, 0.9],) * 6 + ([0.9, 0.1],) * 5:
-        full.add(p)
-    assert full.finalize()[0] == 0                # Without middle slice, edges win.
+    full_voter = SegmentVoter()
+    for window_proba in ([0.9, 0.1],) * 5 + ([0.1, 0.9],) * 6 + ([0.9, 0.1],) * 5:
+        full_voter.add(window_proba)
+    assert full_voter.finalize()[0] == 0                # Without middle slice, edges win.
 
-    dec = SegmentVoter(decimate=2)
-    for p in ([0.2, 0.8], [0.8, 0.2]) * 4:
-        dec.add(p)
-    cls, mean = dec.finalize()                    # Decimated: only 0.8-class votes.
-    assert cls == 1 and mean[1] == pytest.approx(0.8)
+    decimated_voter = SegmentVoter(decimate=2)
+    for window_proba in ([0.2, 0.8], [0.8, 0.2]) * 4:
+        decimated_voter.add(window_proba)
+    voted_class, mean_proba = decimated_voter.finalize()                    # Decimated: only 0.8-class votes.
+    assert voted_class == 1 and mean_proba[1] == pytest.approx(0.8)
 
 
 def test_voter_correlated_windows_gain_is_nil_and_validation():
@@ -320,8 +313,8 @@ def test_voter_correlated_windows_gain_is_nil_and_validation():
 
 
 def test_binary_rates_and_tier_verdict_boundaries():
-    cm = np.array([[90, 10], [5, 95]])            # fp 0.10, tpr 0.95
-    rates = binary_rates(cm)
+    confusion_matrix = np.array([[90, 10], [5, 95]])            # fp 0.10, tpr 0.95
+    rates = binary_rates(confusion_matrix)
     assert rates == {"tpr": pytest.approx(0.95), "fp_rate": pytest.approx(0.10)}
     assert tier_verdict({"a": rates})["verdict"] == "PASS"          # Boundaries are inclusive.
 

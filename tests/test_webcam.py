@@ -1,7 +1,7 @@
 import threading
 
 from wavetrace.groundtruth.camera_labeler import (VisionLabeler, Detection, LabelerOptions,
-                                                 presence_label_fn, weapon_label_fn)
+                                                 presence_label_function, weapon_label_function)
 from wavetrace.groundtruth.webcam import (record_frames, record_labels_online, stream_labels,
                                           COCO_WEAPON_CLASSES)
 
@@ -16,63 +16,65 @@ def _stub_detector(image):
 
 
 def test_stream_labels_presence_sorted_and_classified():
-    lab = VisionLabeler(_stub_detector, label_fn=presence_label_fn)
-    out = stream_labels(lab, [(2.0, "person"), (1.0, "empty")])
-    assert [l.timestamp for l in out] == [1.0, 2.0]      # sorted by time (for align)
-    cls = {l.timestamp: l.class_id for l in out}
-    assert cls[2.0] == 1 and cls[1.0] == 0               # person -> present, empty -> absent
+    labeler = VisionLabeler(_stub_detector, label_function=presence_label_function)
+    out = stream_labels(labeler, [(2.0, "person"), (1.0, "empty")])
+    assert [label.timestamp for label in out] == [1.0, 2.0]      # sorted by time (for align)
+    class_id_by_timestamp = {label.timestamp: label.class_id for label in out}
+    # person -> present, empty -> absent
+    assert class_id_by_timestamp[2.0] == 1 and class_id_by_timestamp[1.0] == 0
 
 
 def test_stream_labels_open_carry_weapon():
-    lab = VisionLabeler(_stub_detector, options=LabelerOptions(weapon_classes=COCO_WEAPON_CLASSES),
-                        label_fn=weapon_label_fn)
-    out = stream_labels(lab, [(0.0, "weapon"), (1.0, "person")])
-    cls = {l.timestamp: l.class_id for l in out}
-    assert cls[0.0] == 1     # visible knife -> weapon
-    assert cls[1.0] == 0     # person only -> no weapon
+    labeler = VisionLabeler(_stub_detector, options=LabelerOptions(weapon_classes=COCO_WEAPON_CLASSES),
+                        label_function=weapon_label_function)
+    out = stream_labels(labeler, [(0.0, "weapon"), (1.0, "person")])
+    class_id_by_timestamp = {label.timestamp: label.class_id for label in out}
+    assert class_id_by_timestamp[0.0] == 1     # visible knife -> weapon
+    assert class_id_by_timestamp[1.0] == 0     # person only -> no weapon
 
 
 def test_stream_labels_max_frames():
-    lab = VisionLabeler(_stub_detector, label_fn=presence_label_fn)
-    out = stream_labels(lab, [(0.0, "person")] * 5, max_frames=2)
+    labeler = VisionLabeler(_stub_detector, label_function=presence_label_function)
+    out = stream_labels(labeler, [(0.0, "person")] * 5, max_frames=2)
     assert len(out) == 2
 
 
 def test_record_frames_buffers_every_grab():
-    seq = iter([0.0, 0.0, 0.05, 0.05, 0.10, 0.10, 0.15, 0.20, 0.30])
-    clock = lambda: next(seq, 999.0)
+    clock_readings_s = iter([0.0, 0.0, 0.05, 0.05, 0.10, 0.10, 0.15, 0.20, 0.30])
+    clock = lambda: next(clock_readings_s, 999.0)
     calls = {"n": 0}
     def grab():
         calls["n"] += 1
         return ("frame", calls["n"])
-    out = record_frames(grab, 0.2, fps=20.0, sleep=lambda s: None, clock=clock)
-    assert all(isinstance(x, tuple) and x[0] == "frame" for x in out)
-    assert len(out) == calls["n"]            # every grabbed frame is buffered
+    out = record_frames(grab, 0.2, frame_rate_hz=20.0, sleep=lambda seconds: None, clock=clock)
+    assert all(isinstance(item, tuple) and item[0] == "frame" for item in out)
+    assert len(out) == calls["n"]
 
 
 def test_record_frames_stop_event_returns_empty():
-    ev = threading.Event(); ev.set()
+    stop_event = threading.Event(); stop_event.set()
     calls = {"n": 0}
     def grab():
         calls["n"] += 1
         return ("f", 1)
-    out = record_frames(grab, 5.0, fps=10.0, stop=ev, sleep=lambda s: None, clock=lambda: 0.0)
+    out = record_frames(grab, 5.0, frame_rate_hz=10.0, stop=stop_event, sleep=lambda seconds: None,
+                        clock=lambda: 0.0)
     assert out == [] and calls["n"] == 0     # pre-set stop -> no capture
 
 
 def test_record_labels_online_labels_live_and_calls_back():
-    lab = VisionLabeler(_stub_detector, label_fn=presence_label_fn)
-    imgs = iter([(2.0, "person"), (1.0, "empty"), (0.5, "person")])
+    labeler = VisionLabeler(_stub_detector, label_function=presence_label_function)
+    timed_images = iter([(2.0, "person"), (1.0, "empty"), (0.5, "person")])
     ticks = {"t": 0.0}
     def clock():                       # advancing clock so the duration window actually closes
-        t = ticks["t"]; ticks["t"] += 0.001; return t
+        time_s = ticks["t"]; ticks["t"] += 0.001; return time_s
     seen = []
-    out = record_labels_online(lambda: next(imgs, None), lab, 0.05, fps=1000.0,
-                               on_label=lambda l: seen.append(l.class_id),
-                               sleep=lambda s: None, clock=clock)
-    assert [l.timestamp for l in out] == [0.5, 1.0, 2.0]   # sorted for align
-    assert len(seen) == 3                                    # live callback per frame
-    assert sum(l.class_id for l in out) == 2                # two 'person' -> present
+    out = record_labels_online(lambda: next(timed_images, None), labeler, 0.05, frame_rate_hz=1000.0,
+                               on_label=lambda label: seen.append(label.class_id),
+                               sleep=lambda seconds: None, clock=clock)
+    assert [label.timestamp for label in out] == [0.5, 1.0, 2.0]   # sorted for align
+    assert len(seen) == 3
+    assert sum(label.class_id for label in out) == 2                # two 'person' -> present
 
 
 def test_coco_weapon_default_is_knife():

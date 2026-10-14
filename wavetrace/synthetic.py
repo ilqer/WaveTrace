@@ -5,8 +5,8 @@ by tests.
   - CSI side  → a CsiFrame stream (`generate_stream`); frame.timestamp = the TRUE world time on the
                 CSI host clock. Validates the DSP pipeline only — it cannot fake real posture/weapon
                 signatures; recognition models train on real camera-labeled recordings.
-  - Camera side (`generate_paired_recording`) → per-frame "observations" at camera_fps on a shared
-                timeline. Each observation's CONTENT reflects the true world at its true capture
+  - Camera side (`generate_paired_recording`) → per-frame "observations" at camera_frame_rate_hz on a
+                shared timeline. Each observation's CONTENT reflects the true world at its true capture
                 time, but its recorded TIMESTAMP is on a *skewed* clock: cam_ts = true_t +
                 clock_offset_s + jitter — the make-or-break hazard a constant clock offset silently
                 mislabels CSI windows. With discrete camera frames the offset IS observable as the
@@ -49,19 +49,21 @@ def generate_stream(
 
     amplitude = rng.uniform(0.5, 1.5, size=(num_antennas, num_subcarriers))
     psi = rng.uniform(-np.pi, np.pi, size=(num_antennas, num_subcarriers))
-    h0 = (amplitude * np.exp(1j * psi)).astype(np.complex64)
+    static_channel = (amplitude * np.exp(1j * psi)).astype(np.complex64)
 
     # Per-subcarrier motion sensitivity in [-1, 1]; the difference between two subcarriers
     # carries the periodic motion into angle(s_i · conj(s_j)).
-    scale = np.linspace(-1.0, 1.0, num_subcarriers) if num_subcarriers > 1 else np.zeros(1)
-    # Per-subcarrier amplitude-modulation depth in [0.5, 1.5]; varies per subcarrier so it survives per-frame mean normalization.
+    motion_sensitivity = np.linspace(-1.0, 1.0, num_subcarriers) if num_subcarriers > 1 else np.zeros(1)
+    # Per-subcarrier amplitude-modulation depth in [0.5, 1.5]; varies per subcarrier so it survives
+    # per-frame mean normalization.
     amplitude_scale = np.linspace(0.5, 1.5, num_subcarriers) if num_subcarriers > 1 else np.ones(1)
 
     times = np.arange(num_frames) / sample_rate_hz
     frames: list[CsiFrame] = []
     for frame_index in range(num_frames):
         timestamp_s = times[frame_index]
-        motion_phase = perturbation_depth * scale * np.sin(2 * np.pi * perturbation_hz * timestamp_s)
+        motion_phase = (perturbation_depth * motion_sensitivity
+                        * np.sin(2 * np.pi * perturbation_hz * timestamp_s))
         cfo_phase = 2 * np.pi * cfo_hz * timestamp_s  # common-mode, cancels in the subcarrier ratio
         phase_rotor = np.exp(1j * (motion_phase + cfo_phase)).astype(np.complex64)  # (num_subcarriers,)
         # |H| envelope: 1 + depth·sens·sin(2π f t); stays positive for sane depths (amplitude_depth·1.5 < 1)
@@ -72,7 +74,8 @@ def generate_stream(
             rng.normal(0.0, noise_std, (num_antennas, num_subcarriers))
             + 1j * rng.normal(0.0, noise_std, (num_antennas, num_subcarriers))
         ).astype(np.complex64)
-        grid = (h0 * amplitude_envelope[None, :] * phase_rotor[None, :] + noise).astype(np.complex64)
+        grid = (static_channel * amplitude_envelope[None, :] * phase_rotor[None, :]
+                + noise).astype(np.complex64)
 
         frame = CsiFrame(num_antennas, num_subcarriers)
         frame.timestamp = float(timestamp_s)
@@ -103,7 +106,7 @@ def generate_paired_recording(
     num_subcarriers: int,
     sample_rate_hz: float,
     duration_s: float,
-    camera_fps: float,
+    camera_frame_rate_hz: float,
     clock_offset_s: float = 0.0,
     jitter_std_s: float = 0.0,
     presence_spans=(),
@@ -124,8 +127,8 @@ def generate_paired_recording(
     """Paired (CSI frames, camera observations, ground truth) on a shared timeline.
 
     presence_spans / weapon_spans: iterables of (start, end) in TRUE seconds where a person / weapon is
-    present. Camera observations are emitted at camera_fps with timestamps skewed by clock_offset_s +
-    N(0, jitter_std_s). O(num_frames·A·S + numCameraFrames).
+    present. Camera observations are emitted at camera_frame_rate_hz with timestamps skewed by
+    clock_offset_s + N(0, jitter_std_s). O(num_frames·A·S + numCameraFrames).
 
     presence_turbulence_std: inside a presence span each frame's grid gets a random
     per-(antenna, subcarrier) complex jitter (1+N(0,std))·e^{jN(0,std)} — the physical proxy for the
@@ -184,10 +187,10 @@ def generate_paired_recording(
                 grid *= (target / np.maximum(magnitude, 1e-9)).astype(np.complex64)
     # +1 keeps the camera clock's jitter stream independent of the CSI noise stream
     rng = np.random.default_rng(None if seed is None else seed + 1)
-    num_camera_frames = int(round(duration_s * camera_fps))
+    num_camera_frames = int(round(duration_s * camera_frame_rate_hz))
     observations: list[dict] = []
     for j in range(num_camera_frames):
-        true_timestamp_s = j / camera_fps
+        true_timestamp_s = j / camera_frame_rate_hz
         jitter = float(rng.normal(0.0, jitter_std_s)) if jitter_std_s > 0 else 0.0
         camera_timestamp_s = true_timestamp_s + clock_offset_s + jitter
         is_present = _in_spans(true_timestamp_s, presence)
@@ -206,7 +209,7 @@ def generate_paired_recording(
     truth = {
         "clock_offset_s": float(clock_offset_s),
         "jitter_std_s": float(jitter_std_s),
-        "camera_fps": float(camera_fps),
+        "camera_fps": float(camera_frame_rate_hz),
         "sample_rate_hz": float(sample_rate_hz),
         "duration_s": float(duration_s),
         "num_frames": num_frames,

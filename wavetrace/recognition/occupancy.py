@@ -1,11 +1,8 @@
 """Temporal fusion of heatmap frames: per-cell Bayesian filter + 2D position Kalman smoother.
 
-Two layers:
-  * OccupancyGrid — per-cell predict/update filter: PREDICT (decay toward empty + small spatial blur
-    models motion uncertainty) then UPDATE (blend the new measurement weighted by confidence).
-    This is a grid-wide Kalman predict/update; the blur is the process noise.
-  * _GridKalman — constant-velocity 2D Kalman in (row, col) grid coordinates, tracking the peak cell.
-    Smooths the peak indicator so it doesn't jump between frames (anti-teleport).
+OccupancyGrid is a grid-wide Kalman predict/update: PREDICT (decay toward empty + small spatial blur;
+the blur is the process noise, modelling motion uncertainty) then UPDATE (blend the new measurement
+weighted by confidence). _GridKalman smooths the peak cell so the indicator doesn't jump between frames.
 
 Not wavetrace.localize.Tracker: that one tracks azimuth and range, while this tracks grid cells directly.
 O(G²) per OccupancyGrid step.
@@ -18,9 +15,7 @@ import numpy as np
 
 @dataclass(frozen=True, slots=True)
 class OccupancyOptions:
-    """Tuning knobs for `OccupancyGrid` / `HeatmapTrack`.
-
-    `decay`: higher = forget faster. `blur`: 4-neighbour spatial coupling each predict step, i.e.
+    """`decay`: higher = forget faster. `blur`: 4-neighbour spatial coupling each predict step, i.e.
     motion uncertainty. `measurement_weight_floor`: minimum measurement weight so even
     low-confidence frames still update."""
 
@@ -42,8 +37,6 @@ class OccupancyOptions:
 
 @dataclass(frozen=True, slots=True)
 class KalmanOptions:
-    """Tuning knobs for `_GridKalman`, the constant-velocity peak smoother."""
-
     acceleration_std: float = 2.0
     measurement_std: float = 1.5
     gate: float = 9.0
@@ -58,8 +51,6 @@ class KalmanOptions:
 
 
 class OccupancyGrid:
-    """Per-cell predict/update filter over a G×G heatmap. See `OccupancyOptions` for the knobs."""
-
     def __init__(self, options: OccupancyOptions = OccupancyOptions()):
         self.g = options.grid
         self.decay = options.decay
@@ -69,7 +60,6 @@ class OccupancyGrid:
 
     def _predict(self) -> None:
         decayed = self.state * (1.0 - self.decay)
-        # 4-neighbour blur: spreads probability to neighbours = motion uncertainty
         blur_weight = self.blur
         blurred = decayed.copy()
         blurred[1:, :] += blur_weight * decayed[:-1, :]
@@ -79,8 +69,7 @@ class OccupancyGrid:
         self.state = np.clip(blurred / (1 + 4 * blur_weight), 0.0, 1.0)
 
     def update(self, measurement, confidence=1.0) -> np.ndarray:
-        """One step: predict then blend in the G×G measurement weighted by confidence.
-        Returns the fused grid."""
+        """Predict, then blend in the G×G measurement weighted by confidence."""
         self._predict()
         measured_grid = np.asarray(measurement, dtype=np.float32).reshape(self.g, self.g)
         measurement_weight = max(self.floor, float(confidence))
@@ -89,7 +78,6 @@ class OccupancyGrid:
         return self.state
 
     def peak(self) -> tuple[int, int, float]:
-        """(row, col, value) of the hottest cell."""
         i, j = np.unravel_index(int(np.argmax(self.state)), self.state.shape)
         return int(i), int(j), float(self.state[i, j])
 
@@ -99,8 +87,7 @@ class OccupancyGrid:
 
 class _GridKalman:
     """Constant-velocity 2D Kalman in grid coordinates (row, col).
-    State x = [row, col, row_rate, col_rate] in cells and cells/s, covariance P. Fuses measurement with
-    motion model; gates impossible jumps."""
+    State x = [row, col, row_rate, col_rate] in cells and cells/s, covariance P."""
 
     def __init__(self, options: KalmanOptions = KalmanOptions()):
         self._qa = options.acceleration_std ** 2    # σ_a², process (acceleration) variance
@@ -112,7 +99,6 @@ class _GridKalman:
 
     def update(self, row: float, col: float, timestamp_s: float,
                confidence=1.0) -> tuple[float, float, bool]:
-        """Returns (filtered_row, filtered_col, measurement_accepted)."""
         if self._x is None:
             self._x = np.array([row, col, 0.0, 0.0])
             self._P = np.diag([self._rs, self._rs, 100.0, 100.0])
@@ -150,11 +136,7 @@ class _GridKalman:
 
 
 class HeatmapTrack:
-    """Couples OccupancyGrid (per-cell Bayesian filter) with _GridKalman (peak smoother).
-    The UI shows both the fused grid AND a non-jumping peak marker.
-
-    cell_size_m: grid cell side in metres (default 0.25 m for a 4 m × 4 m room with G=16).
-    """
+    """cell_size_m: grid cell side in metres (default 0.25 m for a 4 m × 4 m room with G=16)."""
 
     def __init__(self, *, cell_size_m=0.25, occupancy: OccupancyOptions = OccupancyOptions(),
                  kalman: KalmanOptions = KalmanOptions()):
@@ -165,7 +147,6 @@ class HeatmapTrack:
         self._kalman = _GridKalman(kalman)
 
     def update(self, measurement, confidence: float, timestamp_s: float) -> dict:
-        """One step: fuse measurement into the grid, smooth the peak. Returns the telemetry dict."""
         fused = self.occ.update(measurement, confidence)
         peak_row, peak_col, peak_value = self.occ.peak()
         filtered_row, filtered_col, is_measurement_accepted = self._kalman.update(

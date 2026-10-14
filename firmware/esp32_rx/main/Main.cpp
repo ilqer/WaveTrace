@@ -22,8 +22,8 @@
 
 static const char *sTag = "wt_rx";
 
-static char sJsonScratchBuffer[384 * 8 + 8];  // scratch buffer for the JSON int array; CsiReceiveCallback is single-threaded
-static QueueHandle_t sCsiPacketQueue;        // queue of malloc'd (char *) UDP parse_batch packets
+static char sJsonScratchBuffer[384 * 8 + 8];  // shared by the single-threaded CSI callback
+static QueueHandle_t sCsiPacketQueue;        // malloc'd packets; the sender task frees them
 static volatile uint32_t sCsiFrameCount = 0;
 
 static void CsiReceiveCallback(void *context, wifi_csi_info_t *info) {
@@ -44,7 +44,8 @@ static void CsiReceiveCallback(void *context, wifi_csi_info_t *info) {
     sJsonScratchBuffer[dataBufferPosition++] = ']'; sJsonScratchBuffer[dataBufferPosition] = '\0';
     uint32_t timestampUs = (uint32_t)(esp_timer_get_time() & 0xFFFFFFFF);
 
-    // build the parse_batch packet and hand it to the UDP sender task
+    // v1 packet: JSON header line, then one esp-csi CSI_DATA line
+    // (host parse_batch accepts only binary v2/v3)
     size_t packetCapacityBytes = (size_t)dataBufferPosition + 200;
     char *packet = (char *)malloc(packetCapacityBytes);
     if (!packet) return;
@@ -60,7 +61,6 @@ static void CsiReceiveCallback(void *context, wifi_csi_info_t *info) {
     sCsiFrameCount++;
 }
 
-// 1-second heartbeat.
 static void StatsTask(void *) {
     uint32_t lastCsiCount = 0;
     for (;;) {
@@ -128,7 +128,6 @@ extern "C" void app_main(void) {
     esp_wifi_start();
     esp_wifi_connect();
 
-    // CSI capture configuration.
     wifi_csi_config_t csiConfig = {
         .lltf_en = true, .htltf_en = true, .stbc_htltf2_en = true,
         .ltf_merge_en = true, .channel_filter_en = false, .manu_scale = false,

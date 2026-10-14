@@ -1,7 +1,8 @@
 """Capture labeled empty/present sessions over UDP and train a presence model per mesh node.
 
-Each node is trained on its own, so live a node that drops just lowers the vote weight instead of
-taking the system down. Each session is part A (zone empty) then part B (stand and move in the zone).
+Each node is trained on its own, so live a node that drops only lowers the vote weight instead of
+taking the system down. Each session is part A (zone empty) then part B (stand and move in
+the zone).
 """
 
 import argparse
@@ -32,9 +33,9 @@ def main():
     if args.cal is None:
         args.cal = f"{args.root}/cal"
 
-    calibrated_node_ids = sorted(int(os.path.basename(d)[len("node"):])
-                                 for d in glob.glob(os.path.join(args.cal, "node*"))
-                                 if os.path.basename(d)[len("node"):].isdigit())
+    calibrated_node_ids = sorted(int(os.path.basename(node_dir)[len("node"):])
+                                 for node_dir in glob.glob(os.path.join(args.cal, "node*"))
+                                 if os.path.basename(node_dir)[len("node"):].isdigit())
     if not calibrated_node_ids:
         print(f"\n[ERROR] no per-node calibrations in {args.cal}/node*. Run collect_baseline.py first.",
               file=sys.stderr)
@@ -47,49 +48,53 @@ def main():
     print(f"training nodes: {calibrated_node_ids} (calibrated)")
 
     os.makedirs(f"{args.root}/model", exist_ok=True)
-    dataset_dirs = {nid: [] for nid in calibrated_node_ids}
+    dataset_dirs = {node_id: [] for node_id in calibrated_node_ids}
 
     for i in range(args.sessions):
-        empty = capture_links(f"session {i+1}/{args.sessions} — part A: keep the zone empty and still.",
-                            args.frames, args.port, calibrated_node_ids, countdown=5)
-        present = capture_links(f"session {i+1}/{args.sessions} — part B: stand and move in the zone.",
-                              args.frames, args.port, calibrated_node_ids)
-        for nid in calibrated_node_ids:
-            keys = sorted(k for k in set(empty) | set(present) if k[1] == nid)
-            used = 0
+        empty_capture = capture_links(
+            f"session {i+1}/{args.sessions} — part A: keep the zone empty and still.",
+            args.frames, args.port, calibrated_node_ids, countdown=5)
+        present_capture = capture_links(
+            f"session {i+1}/{args.sessions} — part B: stand and move in the zone.",
+            args.frames, args.port, calibrated_node_ids)
+        for node_id in calibrated_node_ids:
+            keys = sorted(link_key for link_key in set(empty_capture) | set(present_capture)
+                          if link_key[1] == node_id)
+            used_link_count = 0
             for key in keys:
                 # resampled apart: one resample across both would interpolate frames over the gap
-                e = resample_uniform(empty.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
-                p = resample_uniform(present.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
-                if len(e) < DEFAULT_WINDOW_FRAMES or len(p) < DEFAULT_WINDOW_FRAMES:
+                empty_frames = resample_uniform(empty_capture.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
+                present_frames = resample_uniform(present_capture.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
+                if len(empty_frames) < DEFAULT_WINDOW_FRAMES or len(present_frames) < DEFAULT_WINDOW_FRAMES:
                     continue  # too short on this grid to emit a window in each class
-                span = (p[0].timestamp, p[-1].timestamp + 1.0)
+                span = (present_frames[0].timestamp, present_frames[-1].timestamp + 1.0)
                 tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
-                rec, ds = f"{args.root}/sess_{i}/node{nid}/link_{tag}", f"{args.root}/ds_{i}/node{nid}/link_{tag}"
-                save_recording(e + p, rec)
-                collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
-                               stage="presence", session_id=f"sess{i}", subject_id=SUBJECT)
-                dataset_dirs[nid].append(ds)
-                used += 1
-            if used == 0:
-                print(f"   [SKIP] node {nid} session {i}: "
+                recording_dir, dataset_dir = (f"{args.root}/sess_{i}/node{node_id}/link_{tag}",
+                                              f"{args.root}/ds_{i}/node{node_id}/link_{tag}")
+                save_recording(empty_frames + present_frames, recording_dir)
+                collect_source(RecordingSource(recording_dir), f"{args.cal}/node{node_id}", dataset_dir,
+                               [span], stage="presence", session_id=f"sess{i}", subject_id=SUBJECT)
+                dataset_dirs[node_id].append(dataset_dir)
+                used_link_count += 1
+            if used_link_count == 0:
+                print(f"   [SKIP] node {node_id} session {i}: "
                       f"no link had >= {DEFAULT_WINDOW_FRAMES} frames/class.")
 
     print("\ntraining per-node presence models...")
     trained = []
-    for nid in calibrated_node_ids:
-        if not dataset_dirs[nid]:
-            print(f"   [SKIP] node {nid}: no usable sessions.")
+    for node_id in calibrated_node_ids:
+        if not dataset_dirs[node_id]:
+            print(f"   [SKIP] node {node_id}: no usable sessions.")
             continue
-        _, m = train_presence(dataset_dirs[nid], out_dir=f"{args.root}/model/node{nid}")
-        logo = m.get("logo", {}).get("session")
-        line = (f"   [OK]   node {nid}: samples={m['n_samples']} class_counts={m['class_counts']} "
-                f"train_acc={m['train_accuracy']:.3f}")
+        _, metrics = train_presence(dataset_dirs[node_id], out_dir=f"{args.root}/model/node{node_id}")
+        logo = metrics.get("logo", {}).get("session")
+        line = (f"   [OK]   node {node_id}: samples={metrics['n_samples']} "
+                f"class_counts={metrics['class_counts']} train_acc={metrics['train_accuracy']:.3f}")
         if logo:
             line += (f"  LOGO={logo['accuracy']:.3f} (majority {logo['majority_accuracy']:.3f}, "
                      f"TPR {logo.get('tpr', 0):.3f}, FP {logo.get('fp_rate', 0):.3f})")
         print(line)
-        trained.append(nid)
+        trained.append(node_id)
 
     if not trained:
         print("\n[ERROR] no node trained — check the boards or run mesh_verify.py.", file=sys.stderr)

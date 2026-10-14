@@ -23,33 +23,35 @@ def test_nbvi_scores_match_relative_variation():
 
 def test_select_is_non_consecutive_and_picks_top():
     sigma = [0.0, 0.0, 0.5, 0.45, 0.0, 0.3, 0.0, 0.1]
-    sel = select_subcarriers_nbvi(_alternating_matrix(sigma), max_subcarriers=12)
-    assert 2 in sel          # highest score
-    assert 3 not in sel      # adjacent to 2 -> blocked for spectral diversity
-    assert 5 in sel          # next non-adjacent high scorer
-    assert all(b - a > 1 for a, b in zip(sorted(sel), sorted(sel)[1:]))  # no two consecutive
+    selected = select_subcarriers_nbvi(_alternating_matrix(sigma), max_subcarriers=12)
+    assert 2 in selected          # highest score
+    assert 3 not in selected      # adjacent to 2 -> blocked for spectral diversity
+    assert 5 in selected          # next non-adjacent high scorer
+    assert all(right - left > 1
+               for left, right in zip(sorted(selected), sorted(selected)[1:]))  # no two consecutive
 
 
 def test_select_respects_max():
     sigma = np.linspace(0.01, 0.5, 32).astype(np.float32)  # all distinct, all gated-in
-    sel = select_subcarriers_nbvi(_alternating_matrix(sigma), max_subcarriers=6)
-    assert len(sel) <= 6
-    assert all(b - a > 1 for a, b in zip(sel, sel[1:]))
+    selected = select_subcarriers_nbvi(_alternating_matrix(sigma), max_subcarriers=6)
+    assert len(selected) <= 6
+    assert all(right - left > 1 for left, right in zip(selected, selected[1:]))
 
 
 def test_noise_gate_drops_low_amplitude_subcarrier():
     # Subcarrier 5 would top NBVI on sigma/mu^2 alone; the amplitude noise gate must drop it anyway.
     S = 10
     sigma = np.full(S, 0.05, dtype=np.float32)
-    amp = _alternating_matrix(sigma)            # mean ~1 everywhere
-    amp[:, 5] = np.where(np.arange(amp.shape[0]) % 2 == 0, 0.0015, 0.0005)  # mean ~0.001, high CV
-    raw_scores = np.array(nbvi_scores(amp))
+    amplitudes = _alternating_matrix(sigma)  # mean ~1 everywhere
+    # mean ~0.001, high CV
+    amplitudes[:, 5] = np.where(np.arange(amplitudes.shape[0]) % 2 == 0, 0.0015, 0.0005)
+    raw_scores = np.array(nbvi_scores(amplitudes))
     assert int(np.argmax(raw_scores)) == 5             # it WOULD win on score
-    sel = select_subcarriers_nbvi(amp, noise_gate_percentile=0.15)
-    assert 5 not in sel                                 # ...but the gate drops it
+    selected = select_subcarriers_nbvi(amplitudes, noise_gate_percentile=0.15)
+    assert 5 not in selected                                 # ...but the gate drops it
 
 
 def test_select_is_deterministic():
     sigma = np.linspace(0.01, 0.5, 20).astype(np.float32)
-    amp = _alternating_matrix(sigma)
-    assert select_subcarriers_nbvi(amp) == select_subcarriers_nbvi(amp)  # stable set
+    amplitudes = _alternating_matrix(sigma)
+    assert select_subcarriers_nbvi(amplitudes) == select_subcarriers_nbvi(amplitudes)  # stable set

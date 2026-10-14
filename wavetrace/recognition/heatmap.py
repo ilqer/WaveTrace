@@ -1,18 +1,13 @@
 """Camera-supervised G×G occupancy heatmap head.
 
-Same shape as WeaponHead (fit/predict/save/load), so the serving and UI paths reuse it. Whether
-it finds a human or a weapon depends only on which mask the SegmentationLabeler supervised on.
-
-Input  : X_image (n, C, K, window) — C = nodes (multi-node images), same tensor WeaponHead eats.
-Target : Y (n, G, G) occupancy in [0,1] from CameraLabeler (Label.mask reshaped to G×G).
-Output : (n, G, G) per-cell probability. 'exists' = heatmap.max() > threshold.
-Loss   : BCE + soft-Dice (Dice handles the mostly-empty grid; BCE keeps calibration).
-Architecture: small encoder->decoder that maps (C, K, W) CSI to (1, G, G); AdaptiveAvgPool
-makes it (K, W)-agnostic (band/size-agnostic) so training and serving can differ in window size.
-
-torch is a LAZY optional dep (pip install wavetrace[cnn]); everything else imports without it.
+Input  : X_image (n, C, K, window), C = nodes.
+Target : Y (n, G, G) occupancy in [0,1] from Label.mask.
+Output : (n, G, G) per-cell probability.
+Loss   : BCE + soft Dice (Dice handles the mostly-empty grid; BCE keeps per-cell calibration).
+AdaptiveAvgPool makes the net (K, W)-agnostic, so training and serving window sizes may differ.
 """
 
+import math
 from dataclasses import asdict
 from pathlib import Path
 
@@ -26,25 +21,22 @@ def _torch():
     try:
         import torch
         return torch
-    except ImportError as e:
-        raise ImportError("HeatmapHead needs PyTorch: pip install 'wavetrace[cnn]'") from e
+    except ImportError as error:
+        raise ImportError("HeatmapHead needs PyTorch: pip install 'wavetrace[cnn]'") from error
 
 
-def _build_unet(torch, in_channels: int, grid: int):
-    """Small CSI->heatmap CNN. AdaptiveAvgPool resolves any (K, W) -> (G, G). Pi-friendly."""
+def _build_heatmap_net(torch, in_channels: int, grid: int):
     nn = torch.nn
     return nn.Sequential(
         nn.Conv2d(in_channels, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
         nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(),
         nn.AdaptiveAvgPool2d((grid, grid)),
         nn.Conv2d(32, 16, 3, padding=1), nn.ReLU(),
-        nn.Conv2d(16, 1, 1),    # per-cell logit
+        nn.Conv2d(16, 1, 1),
     )
 
 
 class HeatmapHead:
-    """Camera-supervised CSI occupancy heatmap regressor (binary occupancy per cell)."""
-
     def __init__(self, config: ModelConfig, *, grid: int = 16):
         self.config = config
         self.grid = int(grid)
@@ -56,36 +48,36 @@ class HeatmapHead:
     def fit(self, X, Y, *, epochs=40, learning_rate=1e-3, batch_size=16,
             report=None) -> "HeatmapHead":
         """X: (n, C, K, W) images. Y: (n, G, G) or (n, G*G) occupancy in [0,1].
-        report: optional callback(epoch, {"loss": float}) for live UI metrics."""
+        report: optional callback(epoch, {"loss": float})."""
         torch = _torch()
         X = self._as_images(np.asarray(X, dtype=np.float32))
         self._image_shape = X.shape[1:]
         Y = np.asarray(Y, dtype=np.float32).reshape(X.shape[0], self.grid, self.grid)
-        mean, std = float(X.mean()), float(X.std()) or 1.0
-        self._norm = (mean, std)
+        mean, standard_deviation = float(X.mean()), float(X.std()) or 1.0
+        self._norm = (mean, standard_deviation)
         torch.manual_seed(self.config.seed)
-        net = _build_unet(torch, X.shape[1], self.grid)
-        xt = torch.from_numpy((X - mean) / std)
-        yt = torch.from_numpy(Y).unsqueeze(1)       # (n, 1, G, G)
-        opt = torch.optim.Adam(net.parameters(), lr=learning_rate)
-        bce = torch.nn.BCEWithLogitsLoss()
-        gen = torch.Generator().manual_seed(self.config.seed)
-        net.train()
-        for ep in range(epochs):
-            tot = 0.0; nb = 0
-            for idx in torch.randperm(xt.shape[0], generator=gen).split(batch_size):
-                opt.zero_grad()
-                logits = net(xt[idx])
-                p = torch.sigmoid(logits)
-                # soft Dice handles the mostly-empty grid; BCE keeps per-cell calibration
-                inter = (p * yt[idx]).sum(dim=(1, 2, 3))
-                dice = 1 - (2 * inter + 1) / (p.sum(dim=(1, 2, 3)) + yt[idx].sum(dim=(1, 2, 3)) + 1)
-                loss = bce(logits, yt[idx]) + dice.mean()
-                loss.backward(); opt.step()
-                tot += float(loss); nb += 1
+        network = _build_heatmap_net(torch, X.shape[1], self.grid)
+        x_tensor = torch.from_numpy((X - mean) / standard_deviation)
+        y_tensor = torch.from_numpy(Y).unsqueeze(1)       # (n, 1, G, G)
+        optimizer = torch.optim.Adam(network.parameters(), lr=learning_rate)
+        bce_loss = torch.nn.BCEWithLogitsLoss()
+        generator = torch.Generator().manual_seed(self.config.seed)
+        network.train()
+        for epoch in range(epochs):
+            loss_sum = 0.0; batch_count = 0
+            for batch_indices in torch.randperm(x_tensor.shape[0], generator=generator).split(batch_size):
+                optimizer.zero_grad()
+                logits = network(x_tensor[batch_indices])
+                probabilities = torch.sigmoid(logits)
+                intersection = (probabilities * y_tensor[batch_indices]).sum(dim=(1, 2, 3))
+                dice = 1 - (2 * intersection + 1) / (
+                    probabilities.sum(dim=(1, 2, 3)) + y_tensor[batch_indices].sum(dim=(1, 2, 3)) + 1)
+                loss = bce_loss(logits, y_tensor[batch_indices]) + dice.mean()
+                loss.backward(); optimizer.step()
+                loss_sum += float(loss); batch_count += 1
             if report is not None:
-                report(ep + 1, {"loss": tot / max(nb, 1)})
-        net.eval(); self._net = net
+                report(epoch + 1, {"loss": loss_sum / max(batch_count, 1)})
+        network.eval(); self._net = network
         return self
 
     def predict_heatmap(self, X) -> np.ndarray:
@@ -94,13 +86,12 @@ class HeatmapHead:
         X = self._as_images(np.asarray(X, dtype=np.float32))
         X_normalized = (X - self._norm[0]) / self._norm[1]
         with torch.no_grad():
-            p = torch.sigmoid(self._net(torch.from_numpy(X_normalized)))  # (n, 1, G, G)
-        return p.squeeze(1).numpy()
+            probabilities = torch.sigmoid(self._net(torch.from_numpy(X_normalized)))  # (n, 1, G, G)
+        return probabilities.squeeze(1).numpy()
 
     def predict_exists(self, X, threshold=0.5) -> np.ndarray:
-        """Binary 'is target present' from the heatmap (max cell > threshold)."""
-        hm = self.predict_heatmap(X)
-        return (hm.reshape(hm.shape[0], -1).max(axis=1) > threshold).astype(int)
+        heatmap = self.predict_heatmap(X)
+        return (heatmap.reshape(heatmap.shape[0], -1).max(axis=1) > threshold).astype(int)
 
     def _as_images(self, X: np.ndarray) -> np.ndarray:
         if X.ndim == 4:
@@ -112,15 +103,15 @@ class HeatmapHead:
 
     def save(self, path) -> Path:
         _torch()
-        p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
+        output_path = Path(path); output_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump({
             "config": asdict(self.config),
             "grid": self.grid,
-            "state": {k: v.cpu().numpy() for k, v in self._net.state_dict().items()},
+            "state": {name: weights.cpu().numpy() for name, weights in self._net.state_dict().items()},
             "norm": self._norm,
             "image_shape": tuple(self._image_shape),
-        }, p)
-        return p
+        }, output_path)
+        return output_path
 
     @classmethod
     def load(cls, path) -> "HeatmapHead":
@@ -129,7 +120,20 @@ class HeatmapHead:
         head = cls(ModelConfig(**blob["config"]), grid=blob["grid"])
         head._norm = blob["norm"]
         head._image_shape = tuple(blob["image_shape"])
-        net = _build_unet(torch, head._image_shape[0], head.grid)
-        net.load_state_dict({k: torch.from_numpy(v) for k, v in blob["state"].items()})
-        net.eval(); head._net = net
+        network = _build_heatmap_net(torch, head._image_shape[0], head.grid)
+        network.load_state_dict({name: torch.from_numpy(weights) for name, weights in blob["state"].items()})
+        network.eval(); head._net = network
         return head
+
+
+def train_heatmap(dataset, *, report=None) -> tuple[HeatmapHead, int]:
+    """Fits on the masked windows only, each paired with its own mask; returns the head and the
+    masked-window count. O(n) selection plus training. Raises ValueError when no window has a mask."""
+    masked_indices = [i for i, label in enumerate(dataset.labels) if label.mask]
+    if not masked_indices:
+        raise ValueError("dataset has no Label.mask; collect with SegmentationLabeler / YoloSegLabeler")
+    masks = np.asarray([dataset.labels[i].mask for i in masked_indices], dtype=np.float32)
+    grid = math.isqrt(masks.shape[1])
+    config = ModelConfig(stage="presence", k=int(dataset.meta["K"]))
+    head = HeatmapHead(config, grid=grid).fit(dataset.X_image[masked_indices], masks, report=report)
+    return head, len(masked_indices)

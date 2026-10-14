@@ -1,14 +1,9 @@
-"""MacBook (or any OpenCV) webcam frame source for camera-supervised CSI labeling.
-
-The labelers already exist (`VisionLabeler`/`YoloLabeler` → presence+weapon boxes, `YoloSegLabeler`
-→ occupancy-mask "where" target). The only missing piece for a laptop is a frame source whose
-timestamps share the CSI wall clock so `build_dataset`'s align step can match camera Labels to CSI
-windows. This module provides that.
+"""Webcam frame source for camera-supervised CSI labeling, with timestamps on the CSI wall clock so
+`build_dataset`'s align step can match camera Labels to CSI windows.
 
 Capture is split from inference on purpose: `record_frames` grabs (timestamp, RGB) cheaply into a
 buffer during the live CSI capture, then `stream_labels` runs YOLO OFFLINE over that buffer. That
-keeps the capture loop real-time (no per-frame model latency) and makes the model step testable with
-an injected detector. cv2 is imported lazily so importing this module never requires OpenCV.
+keeps the capture loop real-time (no per-frame model latency).
 
   Input:  webcam index (or an injected grab fn) + a Labeler.
   Output: list[Label] timestamped on the CSI wall clock → pass as collect_source(labeler=...).
@@ -21,8 +16,6 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class WebcamOptions:
-    """Capture geometry for `WebcamCapture`."""
-
     index: int = 0
     width: int = 1280
     height: int = 720
@@ -47,17 +40,17 @@ class WebcamCapture:
         self._index = options.index
         self._width, self._height = options.width, options.height
         self._clock = clock
-        self._proc = None
+        self._ffmpeg_process = None
 
     def open(self) -> "WebcamCapture":
         import shutil, subprocess
-        ffmpeg = shutil.which("ffmpeg")
-        if ffmpeg is None:
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path is None:
             raise RuntimeError(
                 "ffmpeg not found — install it: brew install ffmpeg"
             )
         ffmpeg_command = [
-            ffmpeg, "-hide_banner", "-loglevel", "error",
+            ffmpeg_path, "-hide_banner", "-loglevel", "error",
             "-f", "avfoundation",
             "-framerate", "30",
             "-video_size", f"{self._width}x{self._height}",
@@ -67,11 +60,12 @@ class WebcamCapture:
             "-pix_fmt", "rgb24",
             "-",
         ]
-        self._proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self._ffmpeg_process = subprocess.Popen(
+            ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         first_frame = self._frame_bytes()
         if first_frame is None:
-            self._proc.terminate()
-            self._proc = None
+            self._ffmpeg_process.terminate()
+            self._ffmpeg_process = None
             raise RuntimeError(
                 f"cannot open webcam index {self._index} via ffmpeg "
                 "(grant camera permission in System Settings → Privacy → Camera)"
@@ -84,7 +78,7 @@ class WebcamCapture:
         frame_size_bytes = self._width * self._height * 3
         received_bytes = b""
         while len(received_bytes) < frame_size_bytes:
-            chunk = self._proc.stdout.read(frame_size_bytes - len(received_bytes))
+            chunk = self._ffmpeg_process.stdout.read(frame_size_bytes - len(received_bytes))
             if not chunk:
                 return None
             received_bytes += chunk
@@ -93,7 +87,7 @@ class WebcamCapture:
     def read(self):
         """Grab one frame → (timestamp_s, RGB ndarray) or None on failure."""
         import numpy as np
-        if self._proc is None:
+        if self._ffmpeg_process is None:
             return None
         raw = getattr(self, "_first_frame", None)
         if raw is not None:
@@ -106,25 +100,25 @@ class WebcamCapture:
         return self._clock(), rgb_frame
 
     def close(self) -> None:
-        if self._proc is not None:
-            self._proc.terminate()
+        if self._ffmpeg_process is not None:
+            self._ffmpeg_process.terminate()
             try:
-                self._proc.wait(timeout=2)
+                self._ffmpeg_process.wait(timeout=2)
             except Exception:
-                self._proc.kill()
-            self._proc = None
+                self._ffmpeg_process.kill()
+            self._ffmpeg_process = None
 
     def __enter__(self):
         return self.open()
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exception_info):
         self.close()
 
 
-def _paced(grab, duration_s, *, fps, stop, sleep, clock):
-    """Yield non-None items from `grab` for `duration_s`, throttled to ~`fps`. Shared by the buffered
-    and online paths. `grab` is callable() -> item|None; `stop` an optional Event for early exit."""
-    period_s = 1.0 / fps if fps > 0 else 0.0
+def _paced(grab, duration_s, *, frame_rate_hz, stop, sleep, clock):
+    """Yield non-None items from `grab` for `duration_s`, throttled to ~`frame_rate_hz`.
+    `grab` is callable() -> item|None; `stop` an optional Event for early exit."""
+    period_s = 1.0 / frame_rate_hz if frame_rate_hz > 0 else 0.0
     end_time_s = clock() + duration_s
     next_grab_time_s = clock()
     while clock() < end_time_s and (stop is None or not stop.is_set()):
@@ -138,21 +132,21 @@ def _paced(grab, duration_s, *, fps, stop, sleep, clock):
             yield item
 
 
-def record_frames(grab, duration_s: float, *, fps: float = 10.0, stop=None,
+def record_frames(grab, duration_s: float, *, frame_rate_hz: float = 10.0, stop=None,
                   sleep=time.sleep, clock=time.monotonic) -> list:
-    """Buffer (timestamp_s, frame) from `grab` for `duration_s` at ~`fps` (label OFFLINE later via
-    `stream_labels`). Keeps capture real-time when you don't want per-frame model latency. O(frames)."""
-    return list(_paced(grab, duration_s, fps=fps, stop=stop, sleep=sleep, clock=clock))
+    """Buffer (timestamp_s, frame) from `grab` for `duration_s` at ~`frame_rate_hz`; label OFFLINE later
+    via `stream_labels`. O(frames)."""
+    return list(_paced(grab, duration_s, frame_rate_hz=frame_rate_hz, stop=stop, sleep=sleep, clock=clock))
 
 
-def record_labels_online(grab, labeler, duration_s: float, *, fps: float = 15.0, on_label=None,
+def record_labels_online(grab, labeler, duration_s: float, *, frame_rate_hz: float = 15.0, on_label=None,
                          stop=None, sleep=time.sleep, clock=time.monotonic) -> list:
-    """ONLINE path: grab a frame and run `labeler` LIVE per frame for `duration_s` → sorted
-    list[Label]. `on_label(label)` is an optional per-frame callback for live feedback (e.g. a rolling
-    present/weapon count). Labels carry the CSI wall-clock timestamp so `build_dataset` aligns them to
-    CSI windows. Heavier than buffering (YOLO runs in the loop) but gives live detections. O(frames·model)."""
+    """Grab a frame and run `labeler` LIVE per frame for `duration_s` → sorted list[Label].
+    `on_label(label)` is an optional per-frame callback. Runs the model inside the capture loop,
+    unlike `record_frames`. O(frames·model)."""
     labels = []
-    for timestamp_s, image in _paced(grab, duration_s, fps=fps, stop=stop, sleep=sleep, clock=clock):
+    for timestamp_s, image in _paced(grab, duration_s, frame_rate_hz=frame_rate_hz, stop=stop, sleep=sleep,
+                                     clock=clock):
         label = labeler.label(image, timestamp_s)
         labels.append(label)
         if on_label is not None:
@@ -163,9 +157,8 @@ def record_labels_online(grab, labeler, duration_s: float, *, fps: float = 15.0,
 
 def stream_labels(labeler, frames, *, max_frames=None) -> list:
     """Run `labeler` (a CameraLabeler — YoloLabeler / YoloSegLabeler / VisionLabeler) over an
-    iterable of (timestamp, image) → list[Label] sorted by time. This is the camera label stream
-    `collect_source(..., labeler=...)` / `build_dataset` aligns to CSI window timestamps. Pure and
-    detector-agnostic, so it unit-tests with a stub detector. O(frames · model)."""
+    iterable of (timestamp, image) → list[Label] sorted by time, the stream `collect_source(...,
+    labeler=...)` / `build_dataset` aligns to CSI window timestamps. O(frames · model)."""
     labels = []
     for i, (timestamp_s, image) in enumerate(frames):
         if max_frames is not None and i >= max_frames:

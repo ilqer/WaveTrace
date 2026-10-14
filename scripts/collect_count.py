@@ -45,9 +45,9 @@ def main():
         return
     counts = list(range(args.max_count + 1))  # class_id == the count
 
-    calibrated_node_ids = sorted(int(os.path.basename(d)[len("node"):])
-                                 for d in glob.glob(os.path.join(args.cal, "node*"))
-                                 if os.path.basename(d)[len("node"):].isdigit())
+    calibrated_node_ids = sorted(int(os.path.basename(node_dir)[len("node"):])
+                                 for node_dir in glob.glob(os.path.join(args.cal, "node*"))
+                                 if os.path.basename(node_dir)[len("node"):].isdigit())
     if not calibrated_node_ids:
         print(f"\n[ERROR] no per-node calibrations in {args.cal}/node*. Run collect_baseline.py first.",
               file=sys.stderr)
@@ -57,57 +57,60 @@ def main():
         if not calibrated_node_ids:
             print(f"\n[ERROR] node {args.node} has no calibration in {args.cal}.", file=sys.stderr)
             return
-    labels = [count_name(c, args.max_count) for c in counts]
+    labels = [count_name(count, args.max_count) for count in counts]
     print(f"training nodes: {calibrated_node_ids}; count classes: {labels}")
 
     os.makedirs(args.model, exist_ok=True)
-    dataset_dirs = {nid: [] for nid in calibrated_node_ids}
+    dataset_dirs = {node_id: [] for node_id in calibrated_node_ids}
 
     for i in range(args.sessions):
-        for c in counts:
-            label = count_name(c, args.max_count)
-            cap = capture_links(
+        for count in counts:
+            label = count_name(count, args.max_count)
+            capture = capture_links(
                 f"session {i+1}/{args.sessions} — put {label} people in the zone and have them move.",
-                args.frames, args.port, calibrated_node_ids, countdown=5 if c == 0 else 0)
+                args.frames, args.port, calibrated_node_ids, countdown=5 if count == 0 else 0)
             print('\a\a\a', end='', flush=True)  # 3 beeps = done, stop moving
-            for nid in calibrated_node_ids:
-                for key in sorted(k for k in cap if k[1] == nid):
-                    fr = resample_uniform(cap.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
-                    if len(fr) < DEFAULT_WINDOW_FRAMES:  # a link shorter than this emits no window
+            for node_id in calibrated_node_ids:
+                for key in sorted(link_key for link_key in capture if link_key[1] == node_id):
+                    frames = resample_uniform(capture.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
+                    if len(frames) < DEFAULT_WINDOW_FRAMES:  # a link shorter than this emits no window
                         continue
-                    span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
+                    span = (frames[0].timestamp, frames[-1].timestamp + 1.0)
                     tag = key[0].replace(":", "")  # tx mac short, ':'-free for a path segment
-                    rec = f"{args.root}/count_sess_{i}/c{c}/node{nid}/link_{tag}"
-                    ds = f"{args.root}/count_ds_{i}/c{c}/node{nid}/link_{tag}"
-                    save_recording(fr, rec)
-                    lab = ScriptedLabeler([(span[0], span[1], True)],
-                                          label_fn=lambda raw, t, _c=c, _n=label: (_c, _n))
-                    collect_source(RecordingSource(rec), f"{args.cal}/node{nid}", ds, [span],
-                                   stage="presence", session_id=f"sess{i}", subject_id=SUBJECT,
-                                   labeler=lab)
-                    dataset_dirs[nid].append(ds)
+                    recording_dir = f"{args.root}/count_sess_{i}/c{count}/node{node_id}/link_{tag}"
+                    dataset_dir = f"{args.root}/count_ds_{i}/c{count}/node{node_id}/link_{tag}"
+                    save_recording(frames, recording_dir)
+                    labeler = ScriptedLabeler(
+                        [(span[0], span[1], True)],
+                        label_function=lambda raw, timestamp_s, class_id=count, class_name=label: (
+                            class_id, class_name))
+                    collect_source(RecordingSource(recording_dir), f"{args.cal}/node{node_id}", dataset_dir,
+                                   [span], stage="presence", session_id=f"sess{i}", subject_id=SUBJECT,
+                                   labeler=labeler)
+                    dataset_dirs[node_id].append(dataset_dir)
 
     print("\ntraining per-node count models...")
     trained = []
-    for nid in calibrated_node_ids:
-        if not dataset_dirs[nid]:
-            print(f"   [SKIP] node {nid}: no usable segments.")
+    for node_id in calibrated_node_ids:
+        if not dataset_dirs[node_id]:
+            print(f"   [SKIP] node {node_id}: no usable segments.")
             continue
-        _, m = train_presence(dataset_dirs[nid], out_dir=f"{args.model}/node{nid}")
-        logo = m.get("logo", {}).get("session")
-        line = (f"   [OK]   node {nid}: samples={m['n_samples']} class_counts={m['class_counts']} "
-                f"train_acc={m['train_accuracy']:.3f}")
+        _, metrics = train_presence(dataset_dirs[node_id], out_dir=f"{args.model}/node{node_id}")
+        logo = metrics.get("logo", {}).get("session")
+        line = (f"   [OK]   node {node_id}: samples={metrics['n_samples']} "
+                f"class_counts={metrics['class_counts']} train_acc={metrics['train_accuracy']:.3f}")
         if logo:
             line += f"  LOGO={logo['accuracy']:.3f} (majority {logo['majority_accuracy']:.3f})"
         print(line)
         if logo and "confusion" in logo:
-            cm = np.asarray(logo["confusion"])
-            row_sums = cm.sum(axis=1)
-            class_names = [count_name(c, args.max_count) for c in counts]
-            per = {class_names[i]: f"{cm[i,i]/row_sums[i]:.0%}" if row_sums[i] > 0 else "n/a"
-                   for i in range(min(len(class_names), cm.shape[0]))}
-            print(f"          per-class: {per}")
-        trained.append(nid)
+            confusion = np.asarray(logo["confusion"])
+            row_sums = confusion.sum(axis=1)
+            class_names = [count_name(count, args.max_count) for count in counts]
+            per_class_recall = {class_names[i]: (f"{confusion[i,i]/row_sums[i]:.0%}"
+                                                 if row_sums[i] > 0 else "n/a")
+                                for i in range(min(len(class_names), confusion.shape[0]))}
+            print(f"          per-class: {per_class_recall}")
+        trained.append(node_id)
 
     if not trained:
         print("\n[ERROR] no node trained — check the boards or run mesh_verify.py.", file=sys.stderr)

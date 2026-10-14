@@ -19,7 +19,6 @@ _DEFAULT_MAX_DATAGRAM_BYTES = 1450  # Keep datagram under Ethernet MTU.
 
 
 def mac_to_bytes(mac: str) -> bytes:
-    """Convert MAC string to 6 bytes."""
     octets = mac.split(":")
     if len(octets) != 6:
         raise ValueError(f"MAC must be 6 octets, got {mac!r}")
@@ -70,7 +69,7 @@ class BatchPublisher:
         self._pending_datagram_bytes = _BIN_HDR.size
 
     def add(self, csi_bytes: bytes, timestamp_us: int) -> None:
-        """Queue record. Flush if MTU exceeded."""
+        """Sends the pending datagram first when this record would push it past max_datagram_bytes."""
         if len(csi_bytes) % 2 != 0:
             raise ValueError(f"CSI byte length must be even (2*S), got {len(csi_bytes)}")
         record = _REC_HDR.pack(self._access_point_mac, timestamp_us & 0xFFFFFFFF, len(csi_bytes)) + csi_bytes
@@ -80,7 +79,6 @@ class BatchPublisher:
         self._pending_datagram_bytes += len(record)
 
     def flush(self) -> None:
-        """Send queued records as datagram."""
         if not self._records:
             return
         ntp_ms = int(time.time() * 1000)

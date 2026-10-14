@@ -54,7 +54,7 @@ extern "C" void app_main(void) {
     for (;;) {
         int sendResult = sendto(floodSocket, payload, sizeof(payload), 0, (struct sockaddr *)&destinationAddress, sizeof(destinationAddress));
         if (sendResult < 0) errorCount++; else sentCount++;
-        if ((sentCount + errorCount) % FLOOD_HZ == 0) {  // ~once/sec print stats.
+        if ((sentCount + errorCount) % FLOOD_HZ == 0) {
             uint8_t primaryChannel = 0; wifi_second_chan_t secondaryChannel;
             esp_wifi_get_channel(&primaryChannel, &secondaryChannel);
             ESP_LOGI(sTag, "ch=%u sent=%lu errs=%lu", primaryChannel, (unsigned long)sentCount, (unsigned long)errorCount);

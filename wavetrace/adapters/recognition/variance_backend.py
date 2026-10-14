@@ -11,9 +11,6 @@ from wavetrace.domain.recognition import VARIANCE_FEATURE
 
 
 class VarianceBackend:
-    """A learned threshold `_threshold`, scale `_scale` and direction `_positive_below` over one
-    feature column. `predict_proba`'s logistic sign follows the learned direction."""
-
     feature_mode = "ic27"
 
     def __init__(self, config, **backend_options):
@@ -65,9 +62,12 @@ class VarianceBackend:
         )
         chosen_index = best_low_index if self._positive_below else best_high_index
         self._threshold = float((sorted_feature[chosen_index] + sorted_feature[chosen_index + 1]) / 2.0)
-        mad = float(np.median(np.abs(feature_values - np.median(feature_values))))
+        median_absolute_deviation = float(
+            np.median(np.abs(feature_values - np.median(feature_values)))
+        )
         # robust σ for the logistic
-        self._scale = 1.4826 * mad if mad > 0 else (float(feature_values.std()) or 1.0)
+        self._scale = (1.4826 * median_absolute_deviation if median_absolute_deviation > 0
+                       else (float(feature_values.std()) or 1.0))
         self._classes = classes
 
     def predict_proba(self, X) -> np.ndarray:

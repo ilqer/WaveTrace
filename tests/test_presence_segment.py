@@ -15,51 +15,53 @@ def _energy(frame):
     return np.abs(np.asarray(frame.grid)).mean(axis=0).astype(np.float32)
 
 
-def _quiet_active_quiet(n=80, seed=5):
+def _quiet_active_quiet(frames_per_stretch=80, seed=5):
     common = dict(num_antennas=1, num_subcarriers=32, sample_rate_hz=100.0, cfo_hz=0.0,
                   noise_std=0.001, seed=seed)
     still = dict(perturbation_hz=0.0, perturbation_depth=0.0, amplitude_hz=0.0, amplitude_depth=0.0)
-    q1, _ = generate_stream(**common, num_frames=n, **still)
-    ac, _ = generate_stream(**common, num_frames=n, perturbation_hz=0.0, perturbation_depth=0.0,
-                           amplitude_hz=2.0, amplitude_depth=0.8)  # fluctuating -> high temporal CV
-    q2, _ = generate_stream(**common, num_frames=n, **still)
-    return q1 + ac + q2, n  # active region = [n, 2n)
+    first_quiet, _ = generate_stream(**common, num_frames=frames_per_stretch, **still)
+    active, _ = generate_stream(**common, num_frames=frames_per_stretch, perturbation_hz=0.0,
+                                perturbation_depth=0.0, amplitude_hz=2.0,
+                                amplitude_depth=0.8)  # fluctuating -> high temporal CV
+    second_quiet, _ = generate_stream(**common, num_frames=frames_per_stretch, **still)
+    # active region = [frames_per_stretch, 2 * frames_per_stretch)
+    return first_quiet + active + second_quiet, frames_per_stretch
 
 
 def test_presence_segmenter_flags_active_region():
-    frames, n = _quiet_active_quiet()
-    seg = PresenceSegmenter(window=20, enter_cv=0.05, exit_cv=0.02)
-    states = np.array([seg.push(_energy(f)) for f in frames])
-    assert states[n + 40]          # deep inside the active region -> active
+    frames, frames_per_stretch = _quiet_active_quiet()
+    segmenter = PresenceSegmenter(window=20, enter_cv=0.05, exit_cv=0.02)
+    states = np.array([segmenter.push(_energy(frame)) for frame in frames])
+    assert states[frames_per_stretch + 40]          # deep inside the active region -> active
     assert not states[40]          # deep inside the first quiet region -> inactive
-    assert not states[2 * n + 40]  # deep inside the last quiet region -> inactive
+    assert not states[2 * frames_per_stretch + 40]  # deep inside the last quiet region -> inactive
 
 
 def test_presence_segmenter_reports_segment_bounds():
-    frames, n = _quiet_active_quiet()
-    seg = PresenceSegmenter(window=20, enter_cv=0.05, exit_cv=0.02)
+    frames, frames_per_stretch = _quiet_active_quiet()
+    segmenter = PresenceSegmenter(window=20, enter_cv=0.05, exit_cv=0.02)
     start = end = None
-    for i, f in enumerate(frames):
-        seg.push(_energy(f))
-        if seg.segment_closed:
-            start, end = seg.last_segment_start, seg.last_segment_end
+    for i, frame in enumerate(frames):
+        segmenter.push(_energy(frame))
+        if segmenter.segment_closed:
+            start, end = segmenter.last_segment_start, segmenter.last_segment_end
     assert start is not None and end is not None
     # Window lags true bounds by < window length. Bounds must bracket the active region.
-    assert n <= start <= n + 20
-    assert 2 * n <= end <= 2 * n + 20
+    assert frames_per_stretch <= start <= frames_per_stretch + 20
+    assert 2 * frames_per_stretch <= end <= 2 * frames_per_stretch + 20
     assert end > start
 
 
 def test_presence_segmenter_hysteresis_no_chatter():
     # Hysteresis: prevents re-triggering on ripples after an active burst.
-    frames, n = _quiet_active_quiet()
-    seg = PresenceSegmenter(window=20, enter_cv=0.05, exit_cv=0.02)
+    frames, frames_per_stretch = _quiet_active_quiet()
+    segmenter = PresenceSegmenter(window=20, enter_cv=0.05, exit_cv=0.02)
     transitions = 0
-    prev = False
-    for f in frames:
-        cur = seg.push(_energy(f))
-        transitions += int(cur != prev)
-        prev = cur
+    was_active = False
+    for frame in frames:
+        is_active = segmenter.push(_energy(frame))
+        transitions += int(is_active != was_active)
+        was_active = is_active
     assert transitions == 2  # exactly one rise + one fall for a single active burst
 
 

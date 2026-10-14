@@ -120,7 +120,6 @@ export function useWaveTrace() {
 
   const connect = useCallback(() => {
     const wsUrl = `ws://${window.location.host}`;
-    // Bump generation to ignore stale onclose handlers.
     const gen = ++generation.current;
     const isStale = () => generation.current !== gen;
 
@@ -234,7 +233,6 @@ export function useWaveTrace() {
     openTrainingWs();
   }, [addLog]);
 
-  // Sync connectRef for reconnect closures.
   useEffect(() => { connectRef.current = connect; }, [connect]);
 
   useEffect(() => {
@@ -244,7 +242,6 @@ export function useWaveTrace() {
       .catch(e => console.error(e));
     connect();
 
-    // Bump generation to invalidate pending handlers before closing.
     return () => {
       ++generation.current;
       if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }

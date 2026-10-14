@@ -18,9 +18,9 @@ def test_every_registered_backend_satisfies_the_protocol():
         )
     protocol_members = RecognitionBackend.__protocol_attrs__
     for name in registered_backend_names():
-        backend_cls = get_backend_class(name)
+        backend_class = get_backend_class(name)
         for member in protocol_members:
-            assert hasattr(backend_cls, member), (
-                f"backend {name!r} ({backend_cls.__name__}) is missing "
+            assert hasattr(backend_class, member), (
+                f"backend {name!r} ({backend_class.__name__}) is missing "
                 f"RecognitionBackend member {member!r}"
             )

@@ -40,7 +40,7 @@ class Localization:
     angle_spectrum: np.ndarray   # (G,) AoA pseudo-spectrum, normalized to [0, 1]
     ranges_m: np.ndarray         # (R,) range grid (empty if range disabled)
     range_profile: np.ndarray    # (R,) delay-domain power, normalized to [0, 1] (empty if disabled)
-    heatmap: np.ndarray          # (R, G) separable range×angle map = outer(range_profile, spectrum)
+    heatmap: np.ndarray          # (R, G) when `aggregate` runs joint MUSIC; (1, G) azimuth spectrum otherwise
     peak_angle_deg: float        # azimuth of the dominant arrival
     peak_range_m: float          # range of the dominant delay bin (nan if range disabled)
     x_m: float                   # lateral position = peak_range·sin(peak_angle) (1·sin if no range)
@@ -87,9 +87,9 @@ class Localizer:
         self._num_ranges = int(num_ranges)
         self.angles_deg = np.linspace(-90.0, 90.0, int(num_angles))
         # steering matrix a[m, g] = exp(j·2π·spacing·m·sinθ_g) — precomputed once (A × G).
-        m = np.arange(self.A)[:, None]
+        antenna_indices = np.arange(self.A)[:, None]
         sin_theta = np.sin(np.deg2rad(self.angles_deg))[None, :]
-        self._steering_matrix = np.exp(1j * 2.0 * np.pi * spacing * m * sin_theta)  # (A, G) complex128
+        self._steering_matrix = np.exp(1j * 2.0 * np.pi * spacing * antenna_indices * sin_theta)
 
     def angle_spectrum(self, grid) -> np.ndarray:
         """(A, S) complex CSI -> (G,) AoA pseudo-spectrum normalized to [0, 1]. Subcarriers are the
@@ -277,26 +277,25 @@ class Tracker:
         self._last_timestamp_s = None
 
     def update(self, localization: Localization) -> TrackState:
-        """One predict+update step from a `Localization` measurement. Returns the filtered TrackState."""
         measured_angle_deg = float(localization.peak_angle_deg)
         measured_range_m = float(localization.peak_range_m)
         has_range = self._is_range_enabled and not np.isnan(measured_range_m)
         confidence = float(localization.confidence)
         timestamp_s = float(localization.timestamp)
 
-        if self._x is None:  # no motion history yet
+        if self._x is None:
             self._x = np.array([measured_angle_deg, (measured_range_m if has_range else 0.0), 0.0, 0.0])
             self._P = np.diag([self._angle_variance, self._range_variance, 1e3, 1e3])
             self._last_timestamp_s = timestamp_s
             return self._emit(timestamp_s, confidence, measured=True, has_range=has_range)
 
-        dt = max(timestamp_s - self._last_timestamp_s, 1e-3)
+        time_step_s = max(timestamp_s - self._last_timestamp_s, 1e-3)
         self._last_timestamp_s = timestamp_s
-        # predict: x = F·x, P = F·P·F^T + Q, F = [[I, dt·I], [0, I]] (constant velocity; Q = the
+        # predict: x = F·x, P = F·P·F^T + Q, F = [[I, Δt·I], [0, I]] (constant velocity; Q = the
         # max-acceleration motion bound)
-        F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], float)
+        F = np.array([[1, 0, time_step_s, 0], [0, 1, 0, time_step_s], [0, 0, 1, 0], [0, 0, 0, 1]], float)
         self._x = F @ self._x
-        self._P = F @ self._P @ F.T + self._process_noise(dt)
+        self._P = F @ self._P @ F.T + self._process_noise(time_step_s)
 
         # update: z = H·x + noise, R = σ² / confidence (angle, + range when available), so higher
         # confidence -> smaller R -> higher Kalman gain
@@ -321,20 +320,24 @@ class Tracker:
         return self._emit(timestamp_s, confidence, measured=measured, has_range=has_range)
 
     def run(self, localizations) -> list[TrackState]:
-        """Filter a whole stream of measurements into a smoothed track. O(F)."""
         return [self.update(localization) for localization in localizations]
 
-    def _process_noise(self, dt):
+    def _process_noise(self, time_step_s):
         """Discrete white-noise-acceleration Q per coordinate (couples position & its velocity)."""
-        # Q = q·[[dt⁴/4, dt³/2], [dt³/2, dt²]] per (position, velocity) pair, q = acceleration variance
-        d4, d3, d2 = dt ** 4 / 4.0, dt ** 3 / 2.0, dt ** 2
+        # Q = q·[[Δt⁴/4, Δt³/2], [Δt³/2, Δt²]] per (position, velocity) pair; q = acceleration variance
+        position_noise_scale, cross_noise_scale, velocity_noise_scale = (
+            time_step_s ** 4 / 4.0, time_step_s ** 3 / 2.0, time_step_s ** 2)
         Q = np.zeros((4, 4))
         Q[0, 0], Q[0, 2], Q[2, 0], Q[2, 2] = (
-            self._angle_process_variance * d4, self._angle_process_variance * d3,
-            self._angle_process_variance * d3, self._angle_process_variance * d2)
+            self._angle_process_variance * position_noise_scale,
+            self._angle_process_variance * cross_noise_scale,
+            self._angle_process_variance * cross_noise_scale,
+            self._angle_process_variance * velocity_noise_scale)
         Q[1, 1], Q[1, 3], Q[3, 1], Q[3, 3] = (
-            self._range_process_variance * d4, self._range_process_variance * d3,
-            self._range_process_variance * d3, self._range_process_variance * d2)
+            self._range_process_variance * position_noise_scale,
+            self._range_process_variance * cross_noise_scale,
+            self._range_process_variance * cross_noise_scale,
+            self._range_process_variance * velocity_noise_scale)
         return Q
 
     def _emit(self, timestamp_s, confidence, *, measured, has_range):

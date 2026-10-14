@@ -3,7 +3,7 @@
 Automated test suite. All tests run on synthetic or recorded data — no hardware required.
 
 ```bash
-pytest tests/ -q    # run everything; expect 369 tests, all passing
+pytest tests/ -q    # run everything; expect 378 tests, all passing
 ```
 
 ## What is tested
@@ -27,11 +27,16 @@ pytest tests/ -q    # run everything; expect 369 tests, all passing
 | `test_serving.py` | Per-link serving math: calibration width and the single last-window prediction |
 | `test_ground_truth.py`, `test_segmentation_labeler.py`, `test_vision_labeler.py` | Camera labeler and dataset builder |
 | `test_webcam.py` | Webcam frame recording and offline label streaming with a stub detector |
+| `test_heatmap_training.py` | Heatmap trainer pairs each mask with its own window |
 | `test_presence_segment.py` | Motion-segment gate used inside the voter |
 | `test_localize.py`, `test_frontend_extensions.py` | Localization scaffold and frontend extensions |
 | `test_regression.py` | End-to-end regression: full pipeline on a synthetic recording |
 | `test_pi_publisher.py` | Round-trips the Pi wire format through `wavetrace/adapters/source/wire_format.py` |
 | `test_guard.py` | `AlertGuard` fire / clear / cooldown, `DriftMonitor` advisory, guard-event JSONL bytes |
 | `golden/test_golden_pipeline.py` | Characterization tests pinning calibrate → collect → train → infer on committed fixture recordings (`golden/fixtures/`, `golden/expected/`) |
-| `unit/` | Unit tests for backend registry, contracts, YOLO labeler options, occupancy, pipeline-contract persistence, serving artifact contract, source options, web server options |
+| `unit/` | Unit tests for backend registry, contracts, node-health gain drift against calibration, YOLO labeler options, occupancy, pipeline-contract persistence, serving artifact contract, source options, web server options |
 | `conftest.py` | Shared fixtures (synthetic CSI, synthetic recordings) |
+
+Plain helpers shared across test files live in `fixtures/synthetic_csi.py`: raw wire-format frames
+(`encode_frame`, `generate_raw_frames`) and the quiet empty-room baseline several calibrating tests share
+(`generate_quiet_baseline`, `calibrate_quiet_baseline`).

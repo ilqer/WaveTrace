@@ -18,20 +18,20 @@ from wavetrace import FeatureExtractor, InterCarrierExtractor, SpectrogramBuilde
 
 
 def iter_windows(frames, subcarriers, gain_lock, *, window=128, hop=32, intercarrier=False,
-                 image_subcarriers=None, frame_average=1, image_baseline=None, ic_baseline=None):
+                 image_subcarriers=None, frame_average=1, image_baseline=None, intercarrier_baseline=None):
     """Yield (t, features, image, ic) per emitted window over `frames`.
 
     subcarriers: NBVI subcarrier indices (K, the feature series).
     gain_lock: a locked GainLock, or None to leave amplitudes alone.
     intercarrier: emit the 27-feature inter-carrier block from raw magnitudes; ic=None when False.
-    ic_baseline: (S,) quiet-room |H| per subcarrier, subtracted from each raw magnitude before the
+    intercarrier_baseline: (S,) quiet-room |H| per subcarrier, subtracted from each raw magnitude before the
       inter-carrier block, so σ²[p] measures the variance of the perturbation rather than of the
       whole channel with the static room still in it. Must match what training used.
     image_subcarriers: subcarrier indices for the image rows; None reuses `subcarriers`.
     frame_average: M >= 1 non-overlapping decimating mean. Each group of M frames collapses into one
       virtual frame, an incomplete tail group is dropped, and the effective rate is fs/M.
     image_baseline: (S,) baseline in the image path's amplitude basis, subtracted per virtual frame
-      after averaging. Image path only; build it with Calibration.build_image_baseline().
+      after averaging. Image path only; build it with build_image_baseline().
 
     Yields: t (window-END timestamp), features (9·K,), image (K_img, window), ic (27,) or None.
     """
@@ -61,19 +61,20 @@ def iter_windows(frames, subcarriers, gain_lock, *, window=128, hop=32, intercar
     image_row_buffer = (np.empty(num_image_subcarriers, dtype=np.float32)
                         if image_baseline_rows is not None else None)
     # not sliced to subcarrier_indices: the inter-carrier block consumes the whole frame
-    ic_baseline_values = (np.ascontiguousarray(ic_baseline, dtype=np.float32)
-                          if ic_baseline is not None else None)
+    intercarrier_baseline_values = (np.ascontiguousarray(intercarrier_baseline, dtype=np.float32)
+                                    if intercarrier_baseline is not None else None)
 
     if frame_average == 1:
         for frame in frames:
             if intercarrier_extractor is not None:
                 raw_magnitudes = np.abs(np.asarray(frame.grid)).mean(axis=0).astype(np.float32)
-                if ic_baseline_values is not None:
-                    if raw_magnitudes.shape != ic_baseline_values.shape:
-                        raise ValueError(f"ic_baseline width {ic_baseline_values.shape} != frame width "
-                                         f"{raw_magnitudes.shape}; calibration and capture must share width")
+                if intercarrier_baseline_values is not None:
+                    if raw_magnitudes.shape != intercarrier_baseline_values.shape:
+                        raise ValueError(
+                            f"ic_baseline width {intercarrier_baseline_values.shape} != frame width "
+                            f"{raw_magnitudes.shape}; calibration and capture must share width")
                     # null the static room before σ²[p]
-                    raw_magnitudes = raw_magnitudes - ic_baseline_values
+                    raw_magnitudes = raw_magnitudes - intercarrier_baseline_values
                 intercarrier_emitted = intercarrier_extractor.push(raw_magnitudes)
             if gain_lock is not None:
                 gain_lock.apply(frame)
@@ -133,12 +134,14 @@ def iter_windows(frames, subcarriers, gain_lock, *, window=128, hop=32, intercar
                 else:
                     image_emitted = spectrogram.push(image_values)
                 if intercarrier_extractor is not None:
-                    if ic_baseline_values is not None and raw_accumulator.shape != ic_baseline_values.shape:
-                        raise ValueError(f"ic_baseline width {ic_baseline_values.shape} != frame width "
-                                         f"{raw_accumulator.shape}; calibration and capture must share width")
+                    if (intercarrier_baseline_values is not None
+                            and raw_accumulator.shape != intercarrier_baseline_values.shape):
+                        raise ValueError(
+                            f"ic_baseline width {intercarrier_baseline_values.shape} != frame width "
+                            f"{raw_accumulator.shape}; calibration and capture must share width")
                     intercarrier_emitted = intercarrier_extractor.push(
-                        raw_accumulator - ic_baseline_values
-                        if ic_baseline_values is not None else raw_accumulator
+                        raw_accumulator - intercarrier_baseline_values
+                        if intercarrier_baseline_values is not None else raw_accumulator
                     )
                 else:
                     intercarrier_emitted = feature_emitted

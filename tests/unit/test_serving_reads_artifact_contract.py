@@ -1,7 +1,5 @@
-"""Serving (`run_live_mesh.py`, `run_weapon.py`, `run_count.py`, `web/streamer.py`) resamples each
-link at `m["session"].head.contract.target_sample_rate_hz`, built via `open_session` (infer.py).
-Nothing in the codebase overrides `target_sample_rate_hz`, so every existing artifact's contract
-carries `DEFAULT_TARGET_SAMPLE_RATE_HZ`."""
+"""Serving resamples each link at `session.head.contract.target_sample_rate_hz`. Nothing overrides it,
+so every existing artifact's contract carries `DEFAULT_TARGET_SAMPLE_RATE_HZ`."""
 
 import numpy as np
 

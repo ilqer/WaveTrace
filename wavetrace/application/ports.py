@@ -1,9 +1,3 @@
-"""Application ports: the Protocols concrete adapters implement.
-
-`Labeler` (`wavetrace/groundtruth/camera_labeler.py`) and `Publisher` (`wavetrace/output/publisher.py`)
-remain ABCs in their own modules, not Protocols here.
-"""
-
 from abc import abstractmethod
 from typing import Protocol
 
@@ -11,23 +5,16 @@ import numpy as np
 
 
 class CsiSource(Protocol):
-    """A stream of CsiFrames feeding the front-end. Implementations: `SyntheticSource`,
-    `RecordingSource`, `UdpSource`, `SerialReader`, `NexmonSource` (`wavetrace/adapters/source/`)."""
-
     @abstractmethod
     def frames(self):
         """Yield CsiFrame objects in capture order."""
 
 
 class RecognitionBackend(Protocol):
-    """One trainable classifier behind a backend-agnostic head (`PresenceHead` / `WeaponHead`).
-    Implementations: `mlp`, `svm`, `variance`, `cnn` (`wavetrace.adapters.recognition`).
-
-    `feature_mode` is the input shape this backend expects by default — `'ic27'` (inter-carrier
-    block), `'fusion'` (inter-carrier block + amplitude features), or `'cnn'` (CSI image) — used as
-    the serving fallback for a head saved before it recorded its own `feature_mode` explicitly.
-    `save`/`load` round-trip only this backend's own state; the head owns `config`, `contract` and
-    `schema_version` in the outer joblib blob."""
+    """`feature_mode` is the default input shape: 'ic27' (inter-carrier block), 'fusion' (inter-carrier
+    block + amplitude features) or 'cnn' (CSI image); serving falls back to it for a head saved before
+    it recorded its own. `save`/`load` round-trip only the backend's own state; the head owns `config`,
+    `contract` and `schema_version` in the outer joblib blob."""
 
     feature_mode: str
 

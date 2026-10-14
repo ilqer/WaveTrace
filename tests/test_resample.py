@@ -7,47 +7,48 @@ from wavetrace import CsiFrame
 from wavetrace.domain.dsp.resample import resample_uniform
 
 
-def _frame(t, vals):
-    """One CsiFrame (1, S) at time t with complex subcarrier values `vals`."""
-    fr = CsiFrame(1, len(vals))
-    fr.grid[0, :] = np.asarray(vals, dtype=np.complex64)
-    fr.timestamp = float(t)
-    fr.node_id = 7
-    return fr
+def _frame(timestamp_s, values):
+    """One CsiFrame (1, S) at the given time with complex subcarrier `values`."""
+    frame = CsiFrame(1, len(values))
+    frame.grid[0, :] = np.asarray(values, dtype=np.complex64)
+    frame.timestamp = float(timestamp_s)
+    frame.node_id = 7
+    return frame
 
 
-def _jittery_stream(fs_true=120.0, dur=1.0, seed=0):
+def _jittery_stream(true_sample_rate_hz=120.0, duration_s=1.0, seed=0):
     """Frames at jittery intervals carrying a known per-subcarrier complex sinusoid."""
     rng = np.random.default_rng(seed)
-    n = int(fs_true * dur)
+    frame_count = int(true_sample_rate_hz * duration_s)
     # non-uniform timestamps: base grid + jitter, kept monotonic
-    t = np.cumsum(rng.uniform(0.3, 1.7, size=n)) / fs_true
-    freqs = np.array([3.0, 7.0])  # Hz, one per subcarrier
-    frames = [_frame(ti, np.exp(2j * np.pi * freqs * ti)) for ti in t]
-    return frames, freqs
+    timestamps_s = np.cumsum(rng.uniform(0.3, 1.7, size=frame_count)) / true_sample_rate_hz
+    frequencies_hz = np.array([3.0, 7.0])  # one per subcarrier
+    frames = [_frame(timestamp_s, np.exp(2j * np.pi * frequencies_hz * timestamp_s))
+              for timestamp_s in timestamps_s]
+    return frames, frequencies_hz
 
 
 def test_uniform_grid_spacing_and_span():
     frames, _ = _jittery_stream()
-    fs = 100.0
-    out = resample_uniform(frames, fs)
-    ts = np.array([f.timestamp for f in out])
-    dt = np.diff(ts)
-    assert np.allclose(dt, 1.0 / fs, rtol=1e-6)
-    assert ts[0] == pytest.approx(frames[0].timestamp)
-    assert ts[-1] <= frames[-1].timestamp + 1e-9
-    assert all(f.node_id == 7 for f in out)
+    sample_rate_hz = 100.0
+    out = resample_uniform(frames, sample_rate_hz)
+    timestamps_s = np.array([frame.timestamp for frame in out])
+    intervals_s = np.diff(timestamps_s)
+    assert np.allclose(intervals_s, 1.0 / sample_rate_hz, rtol=1e-6)
+    assert timestamps_s[0] == pytest.approx(frames[0].timestamp)
+    assert timestamps_s[-1] <= frames[-1].timestamp + 1e-9
+    assert all(frame.node_id == 7 for frame in out)
 
 
 def test_values_track_the_signal():
-    frames, freqs = _jittery_stream(fs_true=400.0)        # dense input -> small interp error
-    fs = 100.0
-    out = resample_uniform(frames, fs)
-    err = 0.0
-    for fr in out:
-        truth = np.exp(2j * np.pi * freqs * fr.timestamp)
-        err = max(err, float(np.max(np.abs(fr.grid[0, :] - truth))))
-    assert err < 0.05                                     # linear interp of a dense sinusoid is tight
+    frames, frequencies_hz = _jittery_stream(true_sample_rate_hz=400.0)  # dense input -> small interp error
+    sample_rate_hz = 100.0
+    out = resample_uniform(frames, sample_rate_hz)
+    max_error = 0.0
+    for frame in out:
+        truth = np.exp(2j * np.pi * frequencies_hz * frame.timestamp)
+        max_error = max(max_error, float(np.max(np.abs(frame.grid[0, :] - truth))))
+    assert max_error < 0.05                               # linear interp of a dense sinusoid is tight
 
 
 def test_edge_cases():

@@ -1,5 +1,3 @@
-"""Is a person in the room? One verdict per window of CSI features."""
-
 from dataclasses import asdict
 from pathlib import Path
 
@@ -53,8 +51,8 @@ class PresenceHead:
 
     def predict(self, X) -> np.ndarray:
         """(n, d) -> (n,) class ids. O(1) per row."""
-        proba = self.predict_proba(X)
-        return self.classes_[np.argmax(proba, axis=1)]
+        probabilities = self.predict_proba(X)
+        return self.classes_[np.argmax(probabilities, axis=1)]
 
     def predict_proba(self, X) -> np.ndarray:
         """(n, d) -> (n, C) class probabilities, columns ordered by classes_. O(1) per row."""
@@ -62,7 +60,7 @@ class PresenceHead:
         return self._backend.predict_proba(X)
 
     def save(self, path) -> Path:
-        """Persist (joblib) — config stored as a plain dict so loads survive dataclass evolution."""
+        """Config is stored as a plain dict so loads survive dataclass evolution."""
         self._require_fitted()
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

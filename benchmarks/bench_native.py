@@ -4,9 +4,10 @@
 
     python benchmarks/bench_native.py --compare benchmarks/baseline.json
 
-The budget is 5%, measured on the median, which shrugs off the scheduler-jitter outlier a mean
-would absorb. Input is deterministic, nothing is timed that does I/O, and each function gets a
-warmup pass so first-call cache and allocator effects stay out of the numbers.
+The budget is 5%, measured on the minimum: scheduler noise, GC and throttling only slow a batch
+down, so the minimum is the most noise-robust estimate. Input is deterministic, nothing is timed
+that does I/O, and each function gets a warmup pass so first-call cache and allocator effects stay
+out of the numbers.
 """
 
 import argparse
@@ -41,60 +42,57 @@ WARMUP_BATCHES = 5
 REGRESSION_BUDGET = 0.05
 
 
-def _time_calls(fn, batch_size=BATCH_SIZE, num_batches=NUM_BATCHES, warmup=WARMUP_BATCHES):
-    """Median wall-clock seconds per call, timed in batches rather than one perf_counter() pair per
-    call. At these functions' sub-microsecond scale, per-call perf_counter() overhead and Python
-    dispatch jitter would otherwise dominate the signal — timing `batch_size` calls together and
-    dividing amortizes both, which is what keeps the 5% budget meaningful instead of noise.
-    O(num_batches * batch_size)."""
-    for _ in range(warmup):
+def _time_calls(benchmark_call, batch_size=BATCH_SIZE, num_batches=NUM_BATCHES,
+                warmup_batches=WARMUP_BATCHES):
+    """Seconds per call for each batch. Timing `batch_size` calls together amortizes perf_counter()
+    overhead and dispatch jitter, which dominate at sub-microsecond scale. O(num_batches * batch_size)."""
+    for _ in range(warmup_batches):
         for _ in range(batch_size):
-            fn()
+            benchmark_call()
     samples = np.empty(num_batches, dtype=np.float64)
     for i in range(num_batches):
-        t0 = time.perf_counter()
+        start_time_s = time.perf_counter()
         for _ in range(batch_size):
-            fn()
-        samples[i] = (time.perf_counter() - t0) / batch_size
+            benchmark_call()
+        samples[i] = (time.perf_counter() - start_time_s) / batch_size
     return samples
 
 
 def _summarize(name: str, samples) -> dict:
-    s = np.sort(np.asarray(samples))
+    sorted_samples = np.sort(np.asarray(samples))
     return {
         "name": name,
-        "batches": int(s.size),
+        "batches": int(sorted_samples.size),
         "calls_per_batch": BATCH_SIZE,
-        # min, not mean/median, is the comparison metric (see _compare): OS scheduling noise, GC,
-        # and thermal throttling can only ever slow a batch down, never speed it up below the true
-        # per-call cost — so the minimum across batches is the most regression-noise-robust estimate
-        # of that floor. mean/median/p95 are kept for human-readable context only.
-        "min_us": float(s.min() * 1e6),
-        "mean_us": float(s.mean() * 1e6),
-        "median_us": float(np.median(s) * 1e6),
-        "p95_us": float(np.percentile(s, 95) * 1e6),
+        # min is the comparison metric: scheduler noise, GC and throttling only slow a batch down,
+        # so the minimum is the most noise-robust estimate of the true per-call cost
+        "min_us": float(sorted_samples.min() * 1e6),
+        "mean_us": float(sorted_samples.mean() * 1e6),
+        "median_us": float(np.median(sorted_samples) * 1e6),
+        "p95_us": float(np.percentile(sorted_samples, 95) * 1e6),
     }
 
 
 def run_benchmarks() -> list[dict]:
-    """Build fixed synthetic input once, then time each hot binding call. O(iters) per entry."""
     rng = np.random.default_rng(SEED)
-    a, s = NUM_ANTENNAS, NUM_SUBCARRIERS
+    antenna_count, subcarrier_count = NUM_ANTENNAS, NUM_SUBCARRIERS
 
-    grid = (rng.uniform(0.5, 1.5, (a, s)) * np.exp(1j * rng.uniform(-np.pi, np.pi, (a, s)))).astype(
+    grid = (rng.uniform(0.5, 1.5, (antenna_count, subcarrier_count))
+            * np.exp(1j * rng.uniform(-np.pi, np.pi, (antenna_count, subcarrier_count)))).astype(
         np.complex64
     )
-    frame = CsiFrame(a, s)
+    frame = CsiFrame(antenna_count, subcarrier_count)
     frame.grid[:, :] = grid
     scratch_frame = CsiFrame(1, 1)  # reshaped in-place by conjugate_multiply/combined_channel_difference
 
-    amplitudes = rng.uniform(0.5, 1.5, s).astype(np.float32)
+    amplitudes = rng.uniform(0.5, 1.5, subcarrier_count).astype(np.float32)
     hampel_window = rng.uniform(0.5, 1.5, 7).astype(np.float32)
-    fft_input = (rng.normal(size=s) + 1j * rng.normal(size=s)).astype(np.complex64)
+    fft_input = (rng.normal(size=subcarrier_count)
+                 + 1j * rng.normal(size=subcarrier_count)).astype(np.complex64)
     feature_window = rng.normal(size=WINDOW_FRAMES).astype(np.float32)
-    ic_magnitudes = rng.uniform(0.5, 1.5, s).astype(np.float32)
-    ic_phase = rng.uniform(-np.pi, np.pi, s).astype(np.float32)
-    preprocessor = Preprocessor(a, s)
+    ic_magnitudes = rng.uniform(0.5, 1.5, subcarrier_count).astype(np.float32)
+    ic_phase = rng.uniform(-np.pi, np.pi, subcarrier_count).astype(np.float32)
+    preprocessor = Preprocessor(antenna_count, subcarrier_count)
 
     benchmarks = [
         ("conjugate_multiply", lambda: conjugate_multiply(frame, scratch_frame)),
@@ -108,37 +106,37 @@ def run_benchmarks() -> list[dict]:
         ("inter_carrier_stats", lambda: inter_carrier_stats(ic_magnitudes)),
         ("inter_carrier_phase_stats", lambda: inter_carrier_phase_stats(ic_phase)),
     ]
-    return [_summarize(name, _time_calls(fn)) for name, fn in benchmarks]
+    return [_summarize(name, _time_calls(benchmark_call)) for name, benchmark_call in benchmarks]
 
 
 def _compare(current: list[dict], baseline_path: Path) -> bool:
-    """Print a per-function regression report on min_us (see _summarize for why min, not
-    mean/median). Returns True if every function is within the 5% budget."""
-    baseline = {b["name"]: b for b in json.loads(baseline_path.read_text())["benchmarks"]}
-    ok = True
+    """Print a per-function regression report on min_us; True if every function is within budget."""
+    baseline = {saved_entry["name"]: saved_entry
+                for saved_entry in json.loads(baseline_path.read_text())["benchmarks"]}
+    is_within_budget = True
     print(f"{'function':<32}{'baseline (us)':>16}{'current (us)':>16}{'delta':>10}")
     for entry in current:
         name = entry["name"]
         if name not in baseline:
             print(f"{name:<32}  (no baseline entry — skipped)")
             continue
-        base_us = baseline[name]["min_us"]
-        cur_us = entry["min_us"]
-        delta = (cur_us - base_us) / base_us if base_us > 0 else 0.0
+        baseline_us = baseline[name]["min_us"]
+        current_us = entry["min_us"]
+        delta = (current_us - baseline_us) / baseline_us if baseline_us > 0 else 0.0
         flag = "" if delta <= REGRESSION_BUDGET else "  REGRESSION"
-        ok = ok and delta <= REGRESSION_BUDGET
-        print(f"{name:<32}{base_us:>16.3f}{cur_us:>16.3f}{delta:>+9.1%}{flag}")
-    return ok
+        is_within_budget = is_within_budget and delta <= REGRESSION_BUDGET
+        print(f"{name:<32}{baseline_us:>16.3f}{current_us:>16.3f}{delta:>+9.1%}{flag}")
+    return is_within_budget
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", default="benchmarks/baseline.json",
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", default="benchmarks/baseline.json",
                      help="where to write the benchmark results (default: benchmarks/baseline.json)")
-    ap.add_argument("--compare", default=None,
+    parser.add_argument("--compare", default=None,
                      help="diff against this committed baseline instead of writing a new one; "
-                          "exits 1 if any function's median regresses beyond the 5%% budget")
-    args = ap.parse_args()
+                          "exits 1 if any function's minimum regresses beyond the 5%% budget")
+    args = parser.parse_args()
 
     results = run_benchmarks()
 

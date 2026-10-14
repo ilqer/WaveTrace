@@ -28,164 +28,173 @@ from wavetrace.adapters.recognition.heads import build_weapon_head
 from wavetrace.recognition import parse_link_tag
 from wavetrace.recognition.train import _logo_metrics, train_weapon
 
-WINDOW, HOP, FS = 128, 32, 100.0
+WINDOW, HOP = 128, 32
 
 
-def _cfg(backend, k, **kw):
-    return ModelConfig(stage="weapon", k=k, backend=backend, window=WINDOW, hop=HOP, **kw)
+def _weapon_config(backend, subcarrier_count, **options):
+    return ModelConfig(stage="weapon", k=subcarrier_count, backend=backend, window=WINDOW, hop=HOP, **options)
 
 
-def _session_logo(X, y, sess, subj, make_head):
+def _session_logo(X, y, session_ids, subject_ids, make_head):
     """Run _logo_metrics and return only the session fold (the valid one) or None."""
-    m = _logo_metrics(np.asarray(X), np.asarray(y), np.asarray(sess), np.asarray(subj), make_head)
-    return m.get("session")
+    metrics = _logo_metrics(np.asarray(X), np.asarray(y), np.asarray(session_ids), np.asarray(subject_ids),
+                            make_head)
+    return metrics.get("session")
 
 
-def _fmt(tag, n, s):
-    if s is None:
-        return f"   {tag:<26} n={n:<4} (LOGO needs >=2 sessions)"
-    return (f"   {tag:<26} n={n:<4} LOGO={s['accuracy']:.3f}  maj={s['majority_accuracy']:.3f}  "
-            f"TPR={s.get('tpr', 0):.3f}  FP={s.get('fp_rate', 0):.3f}  "
-            f"{'BEATS' if s['accuracy'] > s['majority_accuracy'] + 1e-9 else 'below'} majority")
+def _format_logo_row(tag, sample_count, fold):
+    if fold is None:
+        return f"   {tag:<26} n={sample_count:<4} (LOGO needs >=2 sessions)"
+    return (f"   {tag:<26} n={sample_count:<4} LOGO={fold['accuracy']:.3f}  "
+            f"maj={fold['majority_accuracy']:.3f}  "
+            f"TPR={fold.get('tpr', 0):.3f}  FP={fold.get('fp_rate', 0):.3f}  "
+            f"{'BEATS' if fold['accuracy'] > fold['majority_accuracy'] + 1e-9 else 'below'} majority")
 
 
 def discover(root):
-    """{node -> {tag -> [ds dirs]}} for the latest ilker4node_metal pool, plus the 12-link order."""
+    """{node -> {tag -> [dataset dirs]}} for the latest ilker4node_metal pool, plus the 12-link order."""
     nodes = {}
-    for nd in sorted(glob.glob(f"{root}/weapon_ds/node*")):
-        nid = int(os.path.basename(nd)[4:])
-        bytag = collections.defaultdict(list)
-        for d in sorted(glob.glob(f"{nd}/*")):
-            t = parse_link_tag(d)
-            if t:
-                bytag[t].append(d)
-        if bytag:
-            nodes[nid] = dict(bytag)
-    links = sorted((nid, t) for nid in nodes for t in nodes[nid])
+    for node_dir in sorted(glob.glob(f"{root}/weapon_ds/node*")):
+        node_id = int(os.path.basename(node_dir)[4:])
+        dirs_by_tag = collections.defaultdict(list)
+        for dataset_dir in sorted(glob.glob(f"{node_dir}/*")):
+            tag = parse_link_tag(dataset_dir)
+            if tag:
+                dirs_by_tag[tag].append(dataset_dir)
+        if dirs_by_tag:
+            nodes[node_id] = dict(dirs_by_tag)
+    links = sorted((node_id, tag) for node_id in nodes for tag in nodes[node_id])
     return nodes, links
 
 
-# ---- A. per-node pooled -------------------------------------------------------------------------
-def exp_per_node(nodes, root):
+def exp_per_node(nodes):
     print("\n=== A. PER-NODE pooled heads (session-LOGO) ===")
     deploy = {}
-    for nid in sorted(nodes):
-        dirs = [d for t in nodes[nid] for d in nodes[nid][t]]
-        dss = [load_dataset(d) for d in dirs]
-        X_ic = np.concatenate([d.X_intercarrier for d in dss]).astype(np.float32)
-        X_im = np.concatenate([d.X_image for d in dss]).astype(np.float32)
-        y = np.concatenate([d.y for d in dss])
-        sess = np.concatenate([d.session_ids for d in dss])
-        subj = np.concatenate([d.subject_ids for d in dss])
-        k = int(dss[0].meta["K"])
-        print(f" node{nid}:")
-        for name, backend, X in (("ic27/variance", "variance", X_ic),
-                                 ("ic27/mlp", "mlp", X_ic),
-                                 ("ic27/svm", "svm", X_ic),
-                                 ("cnn/image", "cnn", X_im)):
-            s = _session_logo(X, y, sess, subj, lambda b=backend, kk=k: build_weapon_head(_cfg(b, kk)))
-            print(_fmt(name, len(y), s))
-        deploy[nid] = dirs  # feeds the canonical ic27 retrain
+    for node_id in sorted(nodes):
+        dataset_dirs = [dataset_dir for tag in nodes[node_id] for dataset_dir in nodes[node_id][tag]]
+        datasets = [load_dataset(dataset_dir) for dataset_dir in dataset_dirs]
+        X_intercarrier = np.concatenate([dataset.X_intercarrier for dataset in datasets]).astype(np.float32)
+        X_image = np.concatenate([dataset.X_image for dataset in datasets]).astype(np.float32)
+        y = np.concatenate([dataset.y for dataset in datasets])
+        session_ids = np.concatenate([dataset.session_ids for dataset in datasets])
+        subject_ids = np.concatenate([dataset.subject_ids for dataset in datasets])
+        subcarrier_count = int(datasets[0].meta["K"])
+        print(f" node{node_id}:")
+        for name, backend, X in (("ic27/variance", "variance", X_intercarrier),
+                                 ("ic27/mlp", "mlp", X_intercarrier),
+                                 ("ic27/svm", "svm", X_intercarrier),
+                                 ("cnn/image", "cnn", X_image)):
+            fold = _session_logo(X, y, session_ids, subject_ids,
+                                 lambda head_backend=backend, head_k=subcarrier_count:
+                                 build_weapon_head(_weapon_config(head_backend, head_k)))
+            print(_format_logo_row(name, len(y), fold))
+        deploy[node_id] = dataset_dirs  # feeds the canonical ic27 retrain
     return deploy
 
 
-# ---- B. per-link --------------------------------------------------------------------------------
 def exp_per_link(nodes):
     print("\n=== B. PER-LINK heads — each tx->rx direction (session-LOGO) ===")
     rows = []
-    for nid in sorted(nodes):
-        for tag in sorted(nodes[nid]):
-            dss = [load_dataset(d) for d in nodes[nid][tag]]
-            X_ic = np.concatenate([d.X_intercarrier for d in dss]).astype(np.float32)
-            y = np.concatenate([d.y for d in dss])
-            sess = np.concatenate([d.session_ids for d in dss])
-            subj = np.concatenate([d.subject_ids for d in dss])
-            k = int(dss[0].meta["K"])
-            sv = _session_logo(X_ic, y, sess, subj, lambda kk=k: build_weapon_head(_cfg("variance", kk)))
-            sm = _session_logo(X_ic, y, sess, subj, lambda kk=k: build_weapon_head(_cfg("mlp", kk)))
-            print(_fmt(f"node{nid} link{tag} var", len(y), sv))
-            print(_fmt(f"node{nid} link{tag} mlp", len(y), sm))
-            if sv:
-                rows.append((nid, tag, sv["accuracy"], sv["majority_accuracy"]))
-    beats = [r for r in rows if r[2] > r[3] + 1e-9]
+    for node_id in sorted(nodes):
+        for tag in sorted(nodes[node_id]):
+            datasets = [load_dataset(dataset_dir) for dataset_dir in nodes[node_id][tag]]
+            X_intercarrier = np.concatenate(
+                [dataset.X_intercarrier for dataset in datasets]).astype(np.float32)
+            y = np.concatenate([dataset.y for dataset in datasets])
+            session_ids = np.concatenate([dataset.session_ids for dataset in datasets])
+            subject_ids = np.concatenate([dataset.subject_ids for dataset in datasets])
+            subcarrier_count = int(datasets[0].meta["K"])
+            variance_fold = _session_logo(X_intercarrier, y, session_ids, subject_ids,
+                                          lambda head_k=subcarrier_count:
+                                          build_weapon_head(_weapon_config("variance", head_k)))
+            mlp_fold = _session_logo(X_intercarrier, y, session_ids, subject_ids,
+                                     lambda head_k=subcarrier_count:
+                                     build_weapon_head(_weapon_config("mlp", head_k)))
+            print(_format_logo_row(f"node{node_id} link{tag} var", len(y), variance_fold))
+            print(_format_logo_row(f"node{node_id} link{tag} mlp", len(y), mlp_fold))
+            if variance_fold:
+                rows.append((node_id, tag, variance_fold["accuracy"], variance_fold["majority_accuracy"]))
+    beats = [row for row in rows if row[2] > row[3] + 1e-9]
     print(f"\n   per-link (variance) links beating majority: {len(beats)}/{len(rows)}")
-    for nid, tag, a, mj in sorted(beats, key=lambda r: -r[2]):
-        print(f"      node{nid} link{tag}: {a:.3f} (maj {mj:.3f})")
+    for node_id, tag, accuracy, majority_accuracy in sorted(beats, key=lambda row: -row[2]):
+        print(f"      node{node_id} link{tag}: {accuracy:.3f} (maj {majority_accuracy:.3f})")
 
 
-# ---- C. combined 12-link multi-channel CNN ------------------------------------------------------
 def build_aligned(nodes, links, field):
     """(n,12,*) X, y, session — each sample's 12 link-channels are aligned at the same window.
     `field` = "X_image" -> (n,12,K,window) for the combined CNN ; "X_intercarrier" -> (n,12,27) for
     the weighted fusion. Index-wise stack per (session,condition) trimmed to the min window count
     (static-subject, shared 100 Hz grid -> window k of every link is the same instant; any slip is
     immaterial for a stationary signal)."""
-    chan = {lk: i for i, lk in enumerate(links)}          # (node,tag) -> channel index
-    sessions = sorted({os.path.basename(d).split("_metal_")[1].split("_")[0]
-                       for nid in nodes for t in nodes[nid] for d in nodes[nid][t]})
-    X_blocks, ys, ss = [], [], []
-    for s in sessions:
-        for cond, lab in (("clear", 0), ("weapon", 1)):
-            blocks = {}                                    # channel -> field array (m,*)
-            for (nid, tag), ci in chan.items():
-                hit = [d for d in nodes[nid][tag]
-                       if f"_metal_{s}_{cond}_link{tag}" in os.path.basename(d)]
-                if hit:
-                    blocks[ci] = getattr(load_dataset(hit[0]), field).astype(np.float32)
-            if len(blocks) != len(links):                  # skip unless all channels present
-                print(f"   [skip] {s}/{cond}: only {len(blocks)}/{len(links)} links")
+    channel_of_link = {link: i for i, link in enumerate(links)}
+    sessions = sorted({os.path.basename(dataset_dir).split("_metal_")[1].split("_")[0]
+                       for node_id in nodes for link_tag in nodes[node_id]
+                       for dataset_dir in nodes[node_id][link_tag]})
+    X_blocks, label_blocks, session_blocks = [], [], []
+    for session in sessions:
+        for condition, label in (("clear", 0), ("weapon", 1)):
+            blocks = {}                                    # channel -> field array (window_count,*)
+            for (node_id, tag), channel in channel_of_link.items():
+                matches = [dataset_dir for dataset_dir in nodes[node_id][tag]
+                           if f"_metal_{session}_{condition}_link{tag}" in os.path.basename(dataset_dir)]
+                if matches:
+                    blocks[channel] = getattr(load_dataset(matches[0]), field).astype(np.float32)
+            if len(blocks) != len(links):
+                print(f"   [skip] {session}/{condition}: only {len(blocks)}/{len(links)} links")
                 continue
-            m = min(b.shape[0] for b in blocks.values())
-            stack = np.stack([blocks[ci][:m] for ci in range(len(links))], axis=1)  # (m,12,*)
+            window_count = min(block.shape[0] for block in blocks.values())
+            stack = np.stack([blocks[channel][:window_count] for channel in range(len(links))],
+                             axis=1)  # (window_count,12,*)
             X_blocks.append(stack)
-            ys.append(np.full(m, lab, dtype=np.int64))
-            ss.append(np.array([s] * m))
+            label_blocks.append(np.full(window_count, label, dtype=np.int64))
+            session_blocks.append(np.array([session] * window_count))
     X = np.concatenate(X_blocks).astype(np.float32)
-    return X, np.concatenate(ys), np.concatenate(ss)
+    return X, np.concatenate(label_blocks), np.concatenate(session_blocks)
 
 
-def exp_combined(nodes, links, root, save_to):
+def exp_combined(nodes, links, save_to):
     print("\n=== C. COMBINED 12-link multi-channel CNN (session-LOGO) ===")
-    X, y, sess = build_aligned(nodes, links, "X_image")
-    subj = np.array(["ilker4node"] * len(y))
-    k = X.shape[2]
-    print(f"   tensor X={X.shape} (n, channels=12, K={k}, window={X.shape[3]})  "
-          f"class_counts={dict(zip(*[a.tolist() for a in np.unique(y, return_counts=True)]))}")
-    s = _session_logo(X, y, sess, subj, lambda: build_weapon_head(_cfg("cnn", k)))
-    print(_fmt("12-link CNN", len(y), s))
-    # save a full-data fit for the record
-    head = build_weapon_head(_cfg("cnn", k)); head.feature_mode = "cnn"; head.fit(X, y)
+    X, y, session_ids = build_aligned(nodes, links, "X_image")
+    subject_ids = np.array(["ilker4node"] * len(y))
+    subcarrier_count = X.shape[2]
+    print(f"   tensor X={X.shape} (n, channels=12, K={subcarrier_count}, window={X.shape[3]})  "
+          f"class_counts={dict(zip(*[array.tolist() for array in np.unique(y, return_counts=True)]))}")
+    fold = _session_logo(X, y, session_ids, subject_ids,
+                         lambda: build_weapon_head(_weapon_config("cnn", subcarrier_count)))
+    print(_format_logo_row("12-link CNN", len(y), fold))
+    head = build_weapon_head(_weapon_config("cnn", subcarrier_count))
+    head.feature_mode = "cnn"
+    head.fit(X, y)
     head.save(os.path.join(save_to, "model.joblib"))
     print(f"   saved combined CNN -> {save_to}/model.joblib")
-    return s
+    return fold
 
 
-# ---- D. weighted fusion: every link votes, weighted by reliability -> one 0..1 score -------------
-def _reliability(X, y, sess):
+def _reliability(X, y, session_ids):
     """LinkVoter weight = max(session-LOGO acc - 0.5, 0)*2 (same formula run_weapon uses). A link that
     can't beat chance on the TRAINING sessions gets ~0 vote; computed only on train folds (no leak)."""
-    s = _session_logo(X, y, sess, np.array(["_"] * len(y)),
-                      lambda: build_weapon_head(_cfg("variance", 12)))
-    return max((s["accuracy"] if s else 0.5) - 0.5, 0.0) * 2.0
+    fold = _session_logo(X, y, session_ids, np.array(["_"] * len(y)),
+                         lambda: build_weapon_head(_weapon_config("variance", 12)))
+    return max((fold["accuracy"] if fold else 0.5) - 0.5, 0.0) * 2.0
 
 
-def _fused_metrics(tru, fus):
-    pred = (fus >= 0.5).astype(int)
-    acc = float((pred == tru).mean()); maj = float(max(tru.mean(), 1 - tru.mean()))
-    tpr = float(pred[tru == 1].mean()) if (tru == 1).any() else 0.0
-    fp = float(pred[tru == 0].mean()) if (tru == 0).any() else 0.0
-    return acc, maj, tpr, fp
+def _fused_metrics(true_labels, fused_scores):
+    predictions = (fused_scores >= 0.5).astype(int)
+    accuracy = float((predictions == true_labels).mean())
+    majority_accuracy = float(max(true_labels.mean(), 1 - true_labels.mean()))
+    tpr = float(predictions[true_labels == 1].mean()) if (true_labels == 1).any() else 0.0
+    false_positive_rate = float(predictions[true_labels == 0].mean()) if (true_labels == 0).any() else 0.0
+    return accuracy, majority_accuracy, tpr, false_positive_rate
 
 
 def _best_threshold(scores, y):
-    """Threshold (>=) maximizing accuracy on the GIVEN scores. Leak-free ONLY when fed TRAIN data —
-    the legit version of Gemini's idea (its code searched the TEST scores, which leaks)."""
-    best_t, best_a = 0.5, -1.0
-    for t in np.unique(scores):
-        a = float(((scores >= t).astype(int) == y).mean())
-        if a > best_a:
-            best_a, best_t = a, float(t)
-    return best_t
+    """Threshold (>=) maximizing accuracy on the GIVEN scores. Leak-free ONLY when fed TRAIN data."""
+    best_threshold, best_accuracy = 0.5, -1.0
+    for threshold in np.unique(scores):
+        accuracy = float(((scores >= threshold).astype(int) == y).mean())
+        if accuracy > best_accuracy:
+            best_accuracy, best_threshold = accuracy, float(threshold)
+    return best_threshold
 
 
 def exp_weighted_fusion(nodes, links):
@@ -195,60 +204,67 @@ def exp_weighted_fusion(nodes, links):
     reliability on the TRAIN sessions only; the fused score is judged on the held-out session. This is
     exactly what run_weapon serves (LinkVoter keyed per link)."""
     print("\n=== D. FLAT PER-LINK FUSION — 12 independent link voters -> one 0..1 score (session-LOGO) ===")
-    X_intercarrier, y, sess = build_aligned(nodes, links, "X_intercarrier")  # (n,12,27)
-    names = [f"n{nid}/{tag}" for nid, tag in links]              # link id = (tx_tag -> rx_node)
-    folds = sorted(set(sess.tolist()))
-    L = len(links)
-    tru = []; fus = []
-    wsum = np.zeros(L)
-    aucs = []; acc05 = []; acctr = []; thrs = []          # Gemini-hypothesis test (leak-free)
-    last = None
-    for st in folds:
-        tr, te = sess != st, sess == st
-        W = np.zeros(L)                                  # per-LINK weights (independent)
-        P_train = np.zeros((int(tr.sum()), L))               # per-LINK train probs (for the train threshold)
-        P_test = np.zeros((int(te.sum()), L))               # per-LINK test probs
-        for i in range(L):
-            head = build_weapon_head(_cfg("variance", 12)).fit(X_intercarrier[tr, i, :], y[tr])
-            W[i] = _reliability(X_intercarrier[tr, i, :], y[tr], sess[tr])
-            P_train[:, i] = head.predict_proba(X_intercarrier[tr, i, :])[:, 1]
-            P_test[:, i] = head.predict_proba(X_intercarrier[te, i, :])[:, 1]
-        wsum += W
-        ws = W.sum() if W.sum() > 0 else 1.0             # all-junk fold -> plain mean fallback
-        ftr = P_train @ W / ws if W.sum() > 0 else P_train.mean(axis=1)
-        fte = P_test @ W / ws if W.sum() > 0 else P_test.mean(axis=1)
-        thr = _best_threshold(ftr, y[tr])                # threshold from TRAIN only (no leak)
-        thrs.append(thr)
-        acc05.append(float(((fte >= 0.5).astype(int) == y[te]).mean()))
-        acctr.append(float(((fte >= thr).astype(int) == y[te]).mean()))
-        if np.unique(y[te]).size == 2:
-            aucs.append(float(roc_auc_score(y[te], fte)))  # threshold-free: is there ANY ranking signal?
-        tru.append(y[te]); fus.append(fte)
-        last = (st, P_test, W, fte, y[te])
+    X_intercarrier, y, session_ids = build_aligned(nodes, links, "X_intercarrier")  # (n,12,27)
+    names = [f"n{node_id}/{tag}" for node_id, tag in links]              # link id = (tx_tag -> rx_node)
+    folds = sorted(set(session_ids.tolist()))
+    link_count = len(links)
+    true_labels = []; fused_scores = []
+    weight_sums = np.zeros(link_count)
+    auc_per_fold = []; accuracy_at_half = []; accuracy_at_train_threshold = []; thresholds = []
+    last_fold = None
+    for held_out_session in folds:
+        is_train, is_test = session_ids != held_out_session, session_ids == held_out_session
+        weights = np.zeros(link_count)
+        train_probas = np.zeros((int(is_train.sum()), link_count))
+        test_probas = np.zeros((int(is_test.sum()), link_count))
+        for i in range(link_count):
+            head = build_weapon_head(_weapon_config("variance", 12)).fit(X_intercarrier[is_train, i, :],
+                                                                          y[is_train])
+            weights[i] = _reliability(X_intercarrier[is_train, i, :], y[is_train], session_ids[is_train])
+            train_probas[:, i] = head.predict_proba(X_intercarrier[is_train, i, :])[:, 1]
+            test_probas[:, i] = head.predict_proba(X_intercarrier[is_test, i, :])[:, 1]
+        weight_sums += weights
+        # all-junk fold -> plain mean fallback
+        weight_total = weights.sum() if weights.sum() > 0 else 1.0
+        fused_train = (train_probas @ weights / weight_total if weights.sum() > 0
+                       else train_probas.mean(axis=1))
+        fused_test = test_probas @ weights / weight_total if weights.sum() > 0 else test_probas.mean(axis=1)
+        threshold = _best_threshold(fused_train, y[is_train])  # from TRAIN only (no leak)
+        thresholds.append(threshold)
+        accuracy_at_half.append(float(((fused_test >= 0.5).astype(int) == y[is_test]).mean()))
+        accuracy_at_train_threshold.append(
+            float(((fused_test >= threshold).astype(int) == y[is_test]).mean()))
+        if np.unique(y[is_test]).size == 2:
+            # threshold-free: is there ANY ranking signal?
+            auc_per_fold.append(float(roc_auc_score(y[is_test], fused_test)))
+        true_labels.append(y[is_test]); fused_scores.append(fused_test)
+        last_fold = (held_out_session, test_probas, weights, fused_test, y[is_test])
 
-    tru = np.concatenate(tru); fus = np.concatenate(fus)
-    mean_link_weights = wsum / len(folds)
+    true_labels = np.concatenate(true_labels); fused_scores = np.concatenate(fused_scores)
+    mean_link_weights = weight_sums / len(folds)
 
     print("   per-LINK vote WEIGHT (avg over folds, reliability = max(LOGO-0.5,0)*2; links independent):")
     for i in np.argsort(-mean_link_weights):
         print(f"      {names[i]:<10} w={mean_link_weights[i]:.3f}  "
               f"{'#' * int(round(mean_link_weights[i] * 40))}")
 
-    a, m, t, fp = _fused_metrics(tru, fus)
+    accuracy, majority_accuracy, tpr, false_positive_rate = _fused_metrics(true_labels, fused_scores)
     print("\n   FUSED SYSTEM score (0..1) -> threshold 0.5  (link->link-weight->result):")
-    print(f"      clear={fus[tru == 0].mean():.3f} weapon={fus[tru == 1].mean():.3f}"
-          f" (sep {fus[tru == 1].mean() - fus[tru == 0].mean():+.3f})  "
-          f"LOGO={a:.3f} maj={m:.3f} TPR={t:.3f} FP={fp:.3f}  {'BEATS' if a > m + 1e-9 else 'below'} majority")
+    print(f"      clear={fused_scores[true_labels == 0].mean():.3f} "
+          f"weapon={fused_scores[true_labels == 1].mean():.3f}"
+          f" (sep {fused_scores[true_labels == 1].mean() - fused_scores[true_labels == 0].mean():+.3f})  "
+          f"LOGO={accuracy:.3f} maj={majority_accuracy:.3f} TPR={tpr:.3f} FP={false_positive_rate:.3f}  "
+          f"{'BEATS' if accuracy > majority_accuracy + 1e-9 else 'below'} majority")
 
-    # ---- Gemini hypothesis: "hidden signal squashed by a misplaced 0.5 threshold"? Settle it honestly.
-    auc = float(np.mean(aucs)) if aucs else float("nan")
+    auc = float(np.mean(auc_per_fold)) if auc_per_fold else float("nan")
     print("\n   GEMINI TEST — is signal hidden behind a bad threshold, or just absent?")
     print(f"      ROC-AUC (threshold-FREE, mean/fold) = {auc:.3f}   (0.50 = no ranking signal at all)")
-    print(f"      acc @ fixed 0.5         = {np.mean(acc05):.3f}")
-    print(f"      acc @ TRAIN-picked thr  = {np.mean(acctr):.3f}   (per-fold thr {[round(x, 2) for x in thrs]})")
+    print(f"      acc @ fixed 0.5         = {np.mean(accuracy_at_half):.3f}")
+    print(f"      acc @ TRAIN-picked thr  = {np.mean(accuracy_at_train_threshold):.3f}   "
+          f"(per-fold thr {[round(value, 2) for value in thresholds]})")
     if auc <= 0.55:
         verdict = "NO ranking signal (AUC≈0.5) — data ceiling, not a threshold problem"
-    elif np.mean(acctr) > np.mean(acc05) + 0.02:
+    elif np.mean(accuracy_at_train_threshold) > np.mean(accuracy_at_half) + 0.02:
         verdict = f"threshold WAS misplaced — AUC {auc:.2f}>0.5 and a TRAIN-derived threshold recovers it"
     else:
         verdict = (f"weak ranking signal (AUC {auc:.2f}) EXISTS but NO fixed threshold (0.5 or "
@@ -257,89 +273,99 @@ def exp_weighted_fusion(nodes, links):
                    "normalization/calibration or more data. (Gemini's mechanism right, fix wrong.)")
     print(f"      -> {verdict}")
 
-    # ---- see all: per-sample breakdown for a few held-out windows (last fold) ----
-    st, P, W, f_link, yte = last
-    ws = W.sum() if W.sum() > 0 else 1.0
-    cols = np.argsort(-W)[:6]
-    print(f"\n   SEE-ALL (LINK path) — held-out session {st}, top-{len(cols)} voters (cell = p*weight):")
-    hdr = "      " + "true  fused | " + " ".join(f"{names[i]:>10}" for i in cols)
-    print(hdr); print("      " + "-" * (len(hdr) - 6))
-    for r in list(np.where(yte == 1)[0][:4]) + list(np.where(yte == 0)[0][:4]):
-        cells = " ".join(f"{P[r, i]:.2f}*{W[i]:.2f}" for i in cols)
-        print(f"      {'WPN' if yte[r] == 1 else 'clr':>4}  {f_link[r]:.3f} | {cells}")
-    print(f"      (fused = Σ p·w / Σw, Σw={ws:.2f}; a voter with w≈0 contributes nothing)")
-    return a
+    held_out_session, held_out_probas, weights, held_out_fused, held_out_y = last_fold
+    weight_total = weights.sum() if weights.sum() > 0 else 1.0
+    top_links = np.argsort(-weights)[:6]
+    print(f"\n   SEE-ALL (LINK path) — held-out session {held_out_session}, "
+          f"top-{len(top_links)} voters (cell = p*weight):")
+    header = "      " + "true  fused | " + " ".join(f"{names[i]:>10}" for i in top_links)
+    print(header); print("      " + "-" * (len(header) - 6))
+    for row in list(np.where(held_out_y == 1)[0][:4]) + list(np.where(held_out_y == 0)[0][:4]):
+        cells = " ".join(f"{held_out_probas[row, i]:.2f}*{weights[i]:.2f}" for i in top_links)
+        print(f"      {'WPN' if held_out_y[row] == 1 else 'clr':>4}  {held_out_fused[row]:.3f} | {cells}")
+    print(f"      (fused = Σ p·w / Σw, Σw={weight_total:.2f}; a voter with w≈0 contributes nothing)")
+    return accuracy
 
 
-# ---- E. drift-fix ablation: do the literature-backed preprocessing fixes help threshold transfer? ---
-def _mad_clip(X_intercarrier, sess, k=3.0):
-    """Hampel-style robust clip per (link,feature) WITHIN each session: clamp to median ± k·1.4826·MAD.
-    Label-free (uses only the feature distribution → leak-safe on the test session). Kills CSI spikes
-    that inflate the variance feature and worsen cross-session drift (Non-Obtrusive/espectre)."""
-    out = X_intercarrier.copy()
-    for s in set(sess.tolist()):
-        m = sess == s
-        sub = out[m]                                   # (ns, L, 27)
-        med = np.median(sub, axis=0, keepdims=True)
-        mad = np.median(np.abs(sub - med), axis=0, keepdims=True) * 1.4826 + 1e-9
-        out[m] = np.clip(sub, med - k * mad, med + k * mad)
-    return out
+def _mad_clip(X_intercarrier, session_ids, clip_multiple=3.0):
+    """Hampel-style robust clip per (link,feature) WITHIN each session: clamp to median ± k·1.4826·MAD
+    with k = clip_multiple. Label-free (uses only the feature distribution → leak-safe on the test
+    session). Kills CSI spikes that inflate the variance feature and worsen cross-session drift
+    (Non-Obtrusive/espectre)."""
+    clipped = X_intercarrier.copy()
+    for session in set(session_ids.tolist()):
+        is_session = session_ids == session
+        session_rows = clipped[is_session]                                  # (ns, L, 27)
+        median = np.median(session_rows, axis=0, keepdims=True)
+        mad = np.median(np.abs(session_rows - median), axis=0, keepdims=True) * 1.4826 + 1e-9
+        clipped[is_session] = np.clip(session_rows, median - clip_multiple * mad,
+                                      median + clip_multiple * mad)
+    return clipped
 
 
-def _zscore_sess(X_intercarrier, sess):
+def _zscore_per_session(X_intercarrier, session_ids):
     """Per-session z-norm per (link,feature): subtract the session mean, divide by session std. Label-
     FREE — the test session is normalized by its OWN unlabeled stats (transductive, no label leak). This
     removes the absolute σ² baseline drift that breaks a fixed threshold across sessions (the diagnosed
     failure; cross-domain survey: subtract running baseline)."""
-    out = X_intercarrier.copy()
-    for s in set(sess.tolist()):
-        m = sess == s
-        sub = out[m]
-        out[m] = (sub - sub.mean(axis=0, keepdims=True)) / (sub.std(axis=0, keepdims=True) + 1e-9)
-    return out
+    normalized = X_intercarrier.copy()
+    for session in set(session_ids.tolist()):
+        is_session = session_ids == session
+        session_rows = normalized[is_session]
+        normalized[is_session] = ((session_rows - session_rows.mean(axis=0, keepdims=True))
+                                  / (session_rows.std(axis=0, keepdims=True) + 1e-9))
+    return normalized
 
 
-def _fusion_eval(X_intercarrier, y, sess, links, *, augment=0, seed=0):
+def _evaluate_fusion(X_intercarrier, y, session_ids, links, *, augment=0, seed=0):
     """Flat per-link fusion under session-LOGO; returns pooled AUC + acc@0.5 + acc@train-threshold + sep.
     Heads fit on (optionally) augmented TRAIN; weights come from the ORIGINAL train (no aug leak); the
     augmented copies are train-only (never test). augment = #jittered copies appended (factor augment+1;
     jitter + magnitude warp, sensors-25-03955)."""
     rng = np.random.default_rng(seed)
-    folds = sorted(set(sess.tolist())); L = len(links)
-    tru = []; fus = []; aucs = []; acc05 = []; acctr = []
-    for st in folds:
-        tr, te = sess != st, sess == st
-        X_train_raw, ytr0, str0 = X_intercarrier[tr], y[tr], sess[tr]
-        X_test, yte = X_intercarrier[te], y[te]
+    folds = sorted(set(session_ids.tolist())); link_count = len(links)
+    true_labels = []; fused_scores = []; auc_per_fold = []; accuracy_at_half = []
+    accuracy_at_train_threshold = []
+    for held_out_session in folds:
+        is_train, is_test = session_ids != held_out_session, session_ids == held_out_session
+        X_train_raw, y_train_raw, session_ids_train = (X_intercarrier[is_train], y[is_train],
+                                                       session_ids[is_train])
+        X_test, y_test = X_intercarrier[is_test], y[is_test]
         if augment > 0:
-            sd = np.std(X_train_raw, axis=0, keepdims=True) + 1e-6
-            blocks = [X_train_raw]; ys = [ytr0]
+            feature_standard_deviation = np.std(X_train_raw, axis=0, keepdims=True) + 1e-6
+            blocks = [X_train_raw]; label_blocks = [y_train_raw]
             for _ in range(augment):
-                jit = X_train_raw + rng.normal(0, 0.05, X_train_raw.shape) * sd        # jitter ~5% robust std
-                jit = jit * (1 + rng.normal(0, 0.03, (X_train_raw.shape[0], 1, 1)))  # magnitude warp
-                blocks.append(jit); ys.append(ytr0)
-            X_train = np.concatenate(blocks); ytr = np.concatenate(ys)
+                # jitter ~5% robust std
+                jittered = X_train_raw + rng.normal(0, 0.05, X_train_raw.shape) * feature_standard_deviation
+                # magnitude warp
+                jittered = jittered * (1 + rng.normal(0, 0.03, (X_train_raw.shape[0], 1, 1)))
+                blocks.append(jittered); label_blocks.append(y_train_raw)
+            X_train = np.concatenate(blocks); y_train = np.concatenate(label_blocks)
         else:
-            X_train, ytr = X_train_raw, ytr0
-        W = np.zeros(L); P_train = np.zeros((len(ytr), L)); P_test = np.zeros((int(te.sum()), L))
-        for i in range(L):
-            head = build_weapon_head(_cfg("variance", 12)).fit(X_train[:, i, :], ytr)
-            W[i] = _reliability(X_train_raw[:, i, :], ytr0, str0)   # reliability on ORIGINAL train (no aug leak)
-            P_train[:, i] = head.predict_proba(X_train[:, i, :])[:, 1]
-            P_test[:, i] = head.predict_proba(X_test[:, i, :])[:, 1]
-        ws = W.sum() if W.sum() > 0 else 1.0
-        ftr = P_train @ W / ws if W.sum() > 0 else P_train.mean(axis=1)
-        fte = P_test @ W / ws if W.sum() > 0 else P_test.mean(axis=1)
-        thr = _best_threshold(ftr, ytr)
-        acc05.append(float(((fte >= 0.5).astype(int) == yte).mean()))
-        acctr.append(float(((fte >= thr).astype(int) == yte).mean()))
-        if np.unique(yte).size == 2:
-            aucs.append(float(roc_auc_score(yte, fte)))
-        tru.append(yte); fus.append(fte)
-    tru = np.concatenate(tru); fus = np.concatenate(fus)
-    return dict(auc=float(np.mean(aucs)) if aucs else float("nan"),
-                acc05=float(np.mean(acc05)), acctr=float(np.mean(acctr)),
-                sep=float(fus[tru == 1].mean() - fus[tru == 0].mean()))
+            X_train, y_train = X_train_raw, y_train_raw
+        weights = np.zeros(link_count)
+        train_probas = np.zeros((len(y_train), link_count))
+        test_probas = np.zeros((int(is_test.sum()), link_count))
+        for i in range(link_count):
+            head = build_weapon_head(_weapon_config("variance", 12)).fit(X_train[:, i, :], y_train)
+            # reliability on ORIGINAL train (no aug leak)
+            weights[i] = _reliability(X_train_raw[:, i, :], y_train_raw, session_ids_train)
+            train_probas[:, i] = head.predict_proba(X_train[:, i, :])[:, 1]
+            test_probas[:, i] = head.predict_proba(X_test[:, i, :])[:, 1]
+        weight_total = weights.sum() if weights.sum() > 0 else 1.0
+        fused_train = (train_probas @ weights / weight_total if weights.sum() > 0
+                       else train_probas.mean(axis=1))
+        fused_test = test_probas @ weights / weight_total if weights.sum() > 0 else test_probas.mean(axis=1)
+        threshold = _best_threshold(fused_train, y_train)
+        accuracy_at_half.append(float(((fused_test >= 0.5).astype(int) == y_test).mean()))
+        accuracy_at_train_threshold.append(float(((fused_test >= threshold).astype(int) == y_test).mean()))
+        if np.unique(y_test).size == 2:
+            auc_per_fold.append(float(roc_auc_score(y_test, fused_test)))
+        true_labels.append(y_test); fused_scores.append(fused_test)
+    true_labels = np.concatenate(true_labels); fused_scores = np.concatenate(fused_scores)
+    return dict(auc=float(np.mean(auc_per_fold)) if auc_per_fold else float("nan"),
+                acc05=float(np.mean(accuracy_at_half)), acctr=float(np.mean(accuracy_at_train_threshold)),
+                sep=float(fused_scores[true_labels == 1].mean() - fused_scores[true_labels == 0].mean()))
 
 
 def exp_drift_ablation(nodes, links):
@@ -347,50 +373,52 @@ def exp_drift_ablation(nodes, links):
     augmentation) against the drift problem, leak-free, on the flat per-link fusion. AUC = ranking
     signal; acc@trThr rising toward/above acc@0.5 with the gap closed = a threshold finally TRANSFERS."""
     print("\n=== E. DRIFT-FIX ABLATION — do denoise / per-session norm / augment help? (session-LOGO) ===")
-    X_intercarrier_raw, y, sess = build_aligned(nodes, links, "X_intercarrier")
-    den = _mad_clip(X_intercarrier_raw, sess)
+    X_intercarrier_raw, y, session_ids = build_aligned(nodes, links, "X_intercarrier")
+    denoised = _mad_clip(X_intercarrier_raw, session_ids)
     configs = [
         ("baseline (current)", X_intercarrier_raw, 0),
-        ("+Hampel/MAD denoise", den, 0),
-        ("+denoise +per-session z-norm", _zscore_sess(den, sess), 0),
-        ("+denoise +z-norm +augment x5", _zscore_sess(den, sess), 4),
+        ("+Hampel/MAD denoise", denoised, 0),
+        ("+denoise +per-session z-norm", _zscore_per_session(denoised, session_ids), 0),
+        ("+denoise +z-norm +augment x5", _zscore_per_session(denoised, session_ids), 4),
     ]
     print(f"   {'config':<32}  AUC    acc@0.5  acc@trThr   sep")
     print("   " + "-" * 64)
-    for name, X_intercarrier, aug in configs:
-        r = _fusion_eval(X_intercarrier, y, sess, links, augment=aug)
-        print(f"   {name:<32} {r['auc']:.3f}   {r['acc05']:.3f}    {r['acctr']:.3f}    {r['sep']:+.3f}")
+    for name, X_intercarrier, augment_copies in configs:
+        scores = _evaluate_fusion(X_intercarrier, y, session_ids, links, augment=augment_copies)
+        print(f"   {name:<32} {scores['auc']:.3f}   {scores['acc05']:.3f}    {scores['acctr']:.3f}    "
+              f"{scores['sep']:+.3f}")
     print("   (AUC↑ = more ranking signal; acc@trThr↑ with small gap to acc@0.5 = threshold TRANSFERS)")
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Weapon model bake-off (per-node / per-link / combined CNN).")
-    ap.add_argument("--root", default="data/2g4_ht40/ui")
-    ap.add_argument("--skip-cnn", action="store_true", help="Skip exp_combined CNN (slow on CPU)")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(
+        description="Weapon model bake-off (per-node / per-link / combined CNN).")
+    parser.add_argument("--root", default="data/2g4_ht40/ui")
+    parser.add_argument("--skip-cnn", action="store_true", help="Skip exp_combined CNN (slow on CPU)")
+    args = parser.parse_args()
 
     nodes, links = discover(args.root)
     if not nodes:
         print(f"[ERROR] no weapon datasets under {args.root}/weapon_ds/node*"); return
-    print(f"Pool: nodes {sorted(nodes)}; {len(links)} links {['n%d/%s' % (n, t) for n, t in links]}")
+    print(f"Pool: nodes {sorted(nodes)}; {len(links)} links "
+          f"{['n%d/%s' % (link_node, tag) for link_node, tag in links]}")
 
-    deploy = exp_per_node(nodes, args.root)
+    deploy = exp_per_node(nodes)
     exp_per_link(nodes)
     if not args.skip_cnn:
-        exp_combined(nodes, links, args.root, os.path.join(args.root, "model_weapon_combined"))
+        exp_combined(nodes, links, os.path.join(args.root, "model_weapon_combined"))
     else:
         print("\n=== C. COMBINED CNN — skipped (--skip-cnn) ===")
     exp_weighted_fusion(nodes, links)
     exp_drift_ablation(nodes, links)
 
-    # canonical deployable: retrain the per-node ic27/variance heads run_weapon serves
     print("\n=== Retraining canonical per-node ic27 heads -> model_weapon/node* (deployable) ===")
-    for nid in sorted(deploy):
-        _, m = train_weapon(deploy[nid], out_dir=f"{args.root}/model_weapon/node{nid}",
-                            feature_mode="ic27")
-        lg = (m.get("logo") or {}).get("session", {})
-        print(f"   node{nid}: LOGO={lg.get('accuracy', float('nan')):.3f} "
-              f"(maj {lg.get('majority_accuracy', float('nan')):.3f})")
+    for node_id in sorted(deploy):
+        _, metrics = train_weapon(deploy[node_id], out_dir=f"{args.root}/model_weapon/node{node_id}",
+                                  feature_mode="ic27")
+        session_logo = (metrics.get("logo") or {}).get("session", {})
+        print(f"   node{node_id}: LOGO={session_logo.get('accuracy', float('nan')):.3f} "
+              f"(maj {session_logo.get('majority_accuracy', float('nan')):.3f})")
 
 
 if __name__ == "__main__":

@@ -42,18 +42,18 @@ def test_csiframe_invalid_index_raises_frameerror():
 
 
 def test_recognition_result_fields():
-    r = RecognitionResult()
-    assert r.class_id == -1
-    assert r.confidence == 0.0
-    assert r.bbox is None
-    assert r.keypoints == []
-    r.class_id = 2
-    r.confidence = 0.91
-    r.bbox = (0.1, 0.2, 0.3, 0.4)
-    r.keypoints = [1.0, 2.0, 0.9]
-    assert r.class_id == 2
-    assert list(r.bbox) == pytest.approx([0.1, 0.2, 0.3, 0.4])  # float32 round-trip
-    assert r.keypoints == pytest.approx([1.0, 2.0, 0.9])
+    result = RecognitionResult()
+    assert result.class_id == -1
+    assert result.confidence == 0.0
+    assert result.bbox is None
+    assert result.keypoints == []
+    result.class_id = 2
+    result.confidence = 0.91
+    result.bbox = (0.1, 0.2, 0.3, 0.4)
+    result.keypoints = [1.0, 2.0, 0.9]
+    assert result.class_id == 2
+    assert list(result.bbox) == pytest.approx([0.1, 0.2, 0.3, 0.4])  # float32 round-trip
+    assert result.keypoints == pytest.approx([1.0, 2.0, 0.9])
 
 
 def test_label_fields():
@@ -69,30 +69,34 @@ def test_label_fields():
     assert list(label.bbox) == pytest.approx([0.0, 0.0, 1.0, 1.0])
 
 
-def _recover_perturbation_hz(frames, sample_rate_hz, low_subcarrier, high_subcarrier, band_low_hz, band_high_hz):
+def _recover_perturbation_hz(frames, sample_rate_hz, low_subcarrier, high_subcarrier,
+                             band_low_hz, band_high_hz):
     """Reference recovery of motion frequency via cross-subcarrier differential phase -> Hann -> FFT.
     CFO cancels in conjugate product."""
-    s = np.array([f.grid[0, high_subcarrier] * np.conj(f.grid[0, low_subcarrier]) for f in frames])
-    sig = np.unwrap(np.angle(s))  # undo the 2pi jumps from the static phase offset
-    sig = sig - sig.mean()
-    n = len(sig)
-    x = sig * np.hanning(n)
-    # Zero-pad well beyond N to resolve band finely.
-    nfft = 1 << (max(8 * n, 64) - 1).bit_length()
-    spec = np.fft.rfft(x, nfft)
-    power = spec.real**2 + spec.imag**2
-    freqs = np.fft.rfftfreq(nfft, d=1.0 / sample_rate_hz)
-    band = (freqs >= band_low_hz) & (freqs <= band_high_hz)
-    return freqs[band][np.argmax(power[band])]
+    cross_subcarrier_product = np.array(
+        [frame.grid[0, high_subcarrier] * np.conj(frame.grid[0, low_subcarrier]) for frame in frames])
+    # undo the 2pi jumps from the static phase offset
+    differential_phase = np.unwrap(np.angle(cross_subcarrier_product))
+    differential_phase = differential_phase - differential_phase.mean()
+    sample_count = len(differential_phase)
+    windowed_phase = differential_phase * np.hanning(sample_count)
+    # Zero-pad well beyond the signal length to resolve the band finely.
+    fft_length = 1 << (max(8 * sample_count, 64) - 1).bit_length()
+    spectrum = np.fft.rfft(windowed_phase, fft_length)
+    power = spectrum.real**2 + spectrum.imag**2
+    frequencies_hz = np.fft.rfftfreq(fft_length, d=1.0 / sample_rate_hz)
+    band = (frequencies_hz >= band_low_hz) & (frequencies_hz <= band_high_hz)
+    return frequencies_hz[band][np.argmax(power[band])]
 
 
 def test_perturbation_recovered_by_reference_fft():
-    fs = 100.0
+    sample_rate_hz = 100.0
     true_frequency_hz = 0.3  # injected motion frequency (e.g. 18 cycles/min)
-    frames, gt = generate_stream(
-        num_antennas=2, num_subcarriers=64, sample_rate_hz=fs, num_frames=512,
+    frames, ground_truth = generate_stream(
+        num_antennas=2, num_subcarriers=64, sample_rate_hz=sample_rate_hz, num_frames=512,
         perturbation_hz=true_frequency_hz, perturbation_depth=0.5, cfo_hz=4.0, noise_std=0.01, seed=7,
     )
-    recovered = _recover_perturbation_hz(frames, fs, low_subcarrier=0, high_subcarrier=63, band_low_hz=0.1, band_high_hz=2.0)
+    recovered_frequency_hz = _recover_perturbation_hz(
+        frames, sample_rate_hz, low_subcarrier=0, high_subcarrier=63, band_low_hz=0.1, band_high_hz=2.0)
     # CFO and noise must not shift the recovered frequency.
-    assert recovered == pytest.approx(gt["perturbation_hz"], abs=0.05)
+    assert recovered_frequency_hz == pytest.approx(ground_truth["perturbation_hz"], abs=0.05)

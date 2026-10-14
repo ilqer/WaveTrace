@@ -1,8 +1,7 @@
 """The command-line entry point: argparse modes wired to the `wavetrace.application` use-cases.
 
-Six modes: capture / calibrate / collect-data / train / localize / run. `run` is the real-time
-path (front-end -> head -> publish) and reuses `Frontend.iter_windows`, so the features it serves
-are the features the model trained on. Every other mode is offline.
+`run` is the real-time path (front-end -> head -> publish) and reuses `frontend.iter_windows`, so the
+features it serves are the features the model trained on. Every other mode is offline.
 """
 
 import argparse
@@ -137,7 +136,7 @@ def main(argv=None) -> int:
         track = args.track or str(Path(args.out) / "track.jsonl")
         Path(args.out).mkdir(parents=True, exist_ok=True)
         with JsonlPublisher(track, mode="localize") as publisher:
-            path, agg = localize_source(
+            path, room_map = localize_source(
                 build_csi_source(args), args.out, num_antennas=args.antennas,
                 antenna_spacing_wavelengths=args.spacing,
                 method=args.method, num_sources=args.num_sources, num_angles=args.num_angles,
@@ -145,9 +144,10 @@ def main(argv=None) -> int:
                 num_ranges=args.num_ranges, range_enabled=not args.no_range,
                 filter_track=not args.no_filter, publisher=publisher,
             )
-        rng = "n/a" if np.isnan(agg.peak_range_m) else f"{agg.peak_range_m:.2f} m"
-        print(f"localization -> {path} (track {track}) | peak az={agg.peak_angle_deg:.1f} deg "
-              f"range={rng} x={agg.x_m:.2f} y={agg.y_m:.2f} conf={agg.confidence:.2f}",
+        range_text = "n/a" if np.isnan(room_map.peak_range_m) else f"{room_map.peak_range_m:.2f} m"
+        print(f"localization -> {path} (track {track}) | peak az={room_map.peak_angle_deg:.1f} deg "
+              f"range={range_text} x={room_map.x_m:.2f} y={room_map.y_m:.2f} "
+              f"conf={room_map.confidence:.2f}",
               file=sys.stderr)
     elif args.mode == "run":
         publisher = JsonlPublisher(args.out, mode=args.head_mode)

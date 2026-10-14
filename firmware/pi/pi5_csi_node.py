@@ -20,8 +20,7 @@ LOW_RATE_HOLD = 5    # Consecutive low-rate seconds for sustained warning.
 
 
 def _is_ntp_synced() -> bool | None:
-    """Check if Pi clock is NTP-disciplined. Crucial for cross-node fusion sync.
-    None when timedatectl is missing, fails or times out."""
+    """None when timedatectl is missing, fails or times out."""
     try:
         timedatectl_result = subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
                                             capture_output=True, text=True, timeout=3)

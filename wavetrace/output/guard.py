@@ -1,49 +1,34 @@
-"""Two guards on the serving path: alert debounce, and a drift advisory.
-
-AlertGuard turns N consecutive positives into an alert and M consecutive negatives into a clear,
-with a cooldown in between. DriftMonitor compares a slow EMA of the raw per-subcarrier |H| against
-the quiet-room baseline and advises a recalibration. O(1) per window and O(S) per frame.
-"""
-
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
 
+# Event field names are JSONL/WebSocket wire keys (via to_dict); t is in seconds.
 @dataclass(frozen=True, slots=True)
 class WeaponAlertEvent:
-    """AlertGuard's inactive -> active transition: positives_to_alert consecutive positives, past cooldown."""
-
     event: str = field(default="weapon_alert", init=False)
     t: float
 
     def to_dict(self) -> dict:
-        """The wire dict a JSONL/WebSocket consumer already expects."""
         return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)
 class AlertClearedEvent:
-    """AlertGuard's active -> inactive transition: negatives_to_clear consecutive negatives."""
-
     event: str = field(default="clear", init=False)
     t: float
 
     def to_dict(self) -> dict:
-        """The wire dict a JSONL/WebSocket consumer already expects."""
         return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)
 class RecalibrationAdvisoryEvent:
-    """DriftMonitor's advisory that the EMA baseline has drifted past drift_threshold."""
-
     event: str = field(default="recalibrate_advisory", init=False)
     t: float
     drift: float
 
     def to_dict(self) -> dict:
-        """The wire dict a JSONL/WebSocket consumer already expects."""
         return asdict(self)
 
 
@@ -51,7 +36,7 @@ GuardEvent = WeaponAlertEvent | AlertClearedEvent | RecalibrationAdvisoryEvent
 
 
 class AlertGuard:
-    """N-on/M-off debounce + cooldown over per-window verdicts -> alert/clear events. O(1)/window.
+    """N-on/M-off debounce with cooldown. O(1)/window.
 
     State machine:
       inactive: consecutive_positives increments on the positive class, resets on any other; at
@@ -74,7 +59,6 @@ class AlertGuard:
         self._last_alert_timestamp_s = -1e18
 
     def update(self, timestamp_s: float, class_id: int) -> GuardEvent | None:
-        """Process one window verdict; return a guard event or None."""
         if not self._is_active:
             if class_id == self._positive_class:
                 self._consecutive_positives += 1
@@ -100,8 +84,8 @@ class AlertGuard:
 
 
 class DriftMonitor:
-    """Slow EMA of raw per-subcarrier |H| vs the calibration baseline -> recalibrate advisory.
-    O(S)/frame, no per-frame allocation. EMA initialized from first frame; advisory after min_frames."""
+    """Advises recalibration when a slow EMA of raw per-subcarrier |H| drifts from the baseline.
+    O(S)/frame, no per-frame allocation. EMA seeded from the first frame; no advisory before min_frames."""
 
     def __init__(self, baseline_magnitudes, *, alpha: float = 1e-4, drift_threshold: float = 0.5,
                  min_frames: int = 2000, cooldown_s: float = 600.0):
@@ -115,7 +99,6 @@ class DriftMonitor:
         self._last_advisory_timestamp_s = -1e18
 
     def update(self, timestamp_s: float, raw_magnitudes: np.ndarray) -> RecalibrationAdvisoryEvent | None:
-        """Push one frame's raw per-subcarrier magnitudes; return an advisory event or None."""
         magnitudes = np.asarray(raw_magnitudes, dtype=np.float32)
         if self._ema_magnitudes is None:
             self._ema_magnitudes = magnitudes.copy()

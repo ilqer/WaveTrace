@@ -1,5 +1,3 @@
-"""Is the person carrying metal? One verdict per window of inter-carrier features."""
-
 from dataclasses import asdict
 from pathlib import Path
 
@@ -68,8 +66,8 @@ class WeaponHead:
         return self
 
     def predict(self, X) -> np.ndarray:
-        proba = self.predict_proba(X)
-        return self.classes_[np.argmax(proba, axis=1)]
+        probabilities = self.predict_proba(X)
+        return self.classes_[np.argmax(probabilities, axis=1)]
 
     def predict_proba(self, X) -> np.ndarray:
         self._require_fitted()

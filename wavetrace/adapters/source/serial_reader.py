@@ -11,8 +11,6 @@ from wavetrace.application.ports import CsiSource
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SerialSourceOptions(SourceOptions):
-    """Settings for `SerialReader` (esp-csi over USB serial)."""
-
     device: str                       # e.g. "/dev/tty.usbserial-…"
     baud: int = 921600
     node_id: int = 1
@@ -29,30 +27,28 @@ class SerialSourceOptions(SourceOptions):
 
 
 class SerialReader(CsiSource):
-    """esp-csi CSI over USB serial — one ESP32 = one node = one antenna. A thin pyserial shell over
-    `parse_csi_line`; the no-RF-cost bring-up path for 1–2 nodes before the UDP mesh exists.
+    """One ESP32 = one node = one antenna.
 
     Frame timestamp = PC wall-clock at read, NOT the ESP's `local_timestamp` counter: independent ESP
     clocks have no common origin, so the PC arrival time is the consistent basis for aligning against
     camera labels and other nodes (sub-ms serial latency ≪ the front-end window). `tx_mac` filters to
-    the dedicated TX (drops beacons / foreign traffic). `pip install pyserial`; the import + port open
-    are deferred to frames() so importing this module never requires pyserial."""
+    the dedicated TX (drops beacons / foreign traffic). The pyserial import and port open are deferred
+    to frames() so importing this module never requires pyserial."""
 
     def __init__(self, options: SerialSourceOptions):
         self._port = options.device
         self._baud = options.baud
-        self._node = options.node_id
+        self._node_id = options.node_id
         self._tx_mac = options.tx_mac
         self._timeout_seconds = options.timeout_seconds
         self._max_frames = options.max_frames
 
     def frames(self):
-        """Open the serial port and yield (1, S) CsiFrames tagged with node_id; stop on read timeout
-        (no data within timeout_seconds) or max_frames. Malformed/filtered lines are skipped silently.
+        """Stops on read timeout or max_frames. Malformed/filtered lines are skipped silently.
 
         Subcarrier-count guard (same as parse_batch): even from the dedicated TX, an RX occasionally
-        receives off-format frames (legacy/HT20/HT40 differ in S). The first yielded frame sets S_ref
-        and any line with a different S is dropped, so the stream is a fixed (1, S) shape downstream."""
+        receives off-format frames (legacy/HT20/HT40 differ in S). The first yielded frame sets the
+        expected S and any line with a different S is dropped, so downstream shape stays (1, S)."""
         try:
             import serial  # pyserial
         except ImportError as error:
@@ -64,7 +60,7 @@ class SerialReader(CsiSource):
             while self._max_frames is None or count < self._max_frames:
                 raw_line = serial_port.readline()
                 if not raw_line:
-                    return  # timeout with no data -> stream ended
+                    return
                 result = parse_csi_line(raw_line.decode("utf-8", errors="replace"), tx_mac=self._tx_mac)
                 if result is None:
                     continue
@@ -77,7 +73,7 @@ class SerialReader(CsiSource):
                 frame = CsiFrame(1, expected_num_subcarriers)
                 frame.grid[0, :] = csi
                 frame.timestamp = time.time()
-                frame.node_id = self._node
+                frame.node_id = self._node_id
                 yield frame
                 count += 1
         finally:

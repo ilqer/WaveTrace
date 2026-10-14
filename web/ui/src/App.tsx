@@ -176,7 +176,6 @@ function App() {
       </header>
 
       <main className="max-w-[1600px] mx-auto">
-        {/* Devices and Diagnostics tabs own the full canvas width */}
         {activeTab === 'devices' || activeTab === 'diagnostics' ? (
           <div className="grid grid-cols-12 gap-6">
             <div className="col-span-12">

@@ -98,14 +98,14 @@ def test_preprocessor_output_geometry():
 def _reference_chain(frames, alpha):
     """Numpy reference for A=1 cross-subcarrier chain (Hampel disabled).
     conj-mult -> temporal unwrap -> EMA-detrend normalize."""
-    H = np.stack([f.grid[0] for f in frames])
+    H = np.stack([frame.grid[0] for frame in frames])
     D = H[:, 1:] * np.conj(H[:, :-1])
-    u = np.unwrap(np.angle(D), axis=0)
-    ema = np.empty_like(u)
-    ema[0] = u[0]
-    for t in range(1, len(u)):
-        ema[t] = alpha * u[t] + (1 - alpha) * ema[t - 1]
-    return (u - ema).astype(np.float32)
+    unwrapped = np.unwrap(np.angle(D), axis=0)
+    trend = np.empty_like(unwrapped)
+    trend[0] = unwrapped[0]
+    for i in range(1, len(unwrapped)):
+        trend[i] = alpha * unwrapped[i] + (1 - alpha) * trend[i - 1]
+    return (unwrapped - trend).astype(np.float32)
 
 
 def test_preprocessor_chain_matches_numpy_reference():
@@ -113,18 +113,18 @@ def test_preprocessor_chain_matches_numpy_reference():
     rng = np.random.default_rng(5)
     T, S = 200, 6
     psi = rng.uniform(-np.pi, np.pi, S)
-    t = np.arange(T)
+    frame_indices = np.arange(T)
     frames = []
-    for ti in t:
+    for frame_index in frame_indices:
         # phase per subcarrier drifts enough to wrap across frames
-        phase = psi + 0.15 * ti * np.linspace(0.5, 1.5, S)
+        phase = psi + 0.15 * frame_index * np.linspace(0.5, 1.5, S)
         frame = CsiFrame(1, S)
         frame.grid[:, :] = np.exp(1j * phase).astype(np.complex64)[None, :]
         frames.append(frame)
 
     alpha = 0.1
-    pre = Preprocessor(1, S, hampel_k=1e9, normalize_alpha=alpha)
-    got = np.stack([pre.process(f).copy()[0] for f in frames])
+    preprocessor = Preprocessor(1, S, hampel_k=1e9, normalize_alpha=alpha)
+    got = np.stack([preprocessor.process(input_frame).copy()[0] for input_frame in frames])
     ref = _reference_chain(frames, alpha)
     assert np.allclose(got, ref, atol=1e-3)
 
@@ -132,43 +132,43 @@ def test_preprocessor_chain_matches_numpy_reference():
 def test_preprocessor_rejects_magnitude_spike():
     # Hampel(magnitude) must hold phase steady during a magnitude spike.
     rng = np.random.default_rng(7)
-    A, S, T, f = 2, 4, 30, 15
-    h0 = np.exp(1j * rng.uniform(-np.pi, np.pi, (A, S))).astype(np.complex64)
+    A, S, T, spike_index = 2, 4, 30, 15
+    base_grid = np.exp(1j * rng.uniform(-np.pi, np.pi, (A, S))).astype(np.complex64)
     frames = []
-    for ti in range(T):
-        g = (h0 * rng.uniform(0.9, 1.1)).astype(np.complex64)  # Jitter amplitude, keep phase
-        if ti == f:
-            g[1, 0] = 50.0 * np.exp(1j * (np.angle(h0[1, 0]) + 2.0))  # |.|=50 spike + 2 rad twist
+    for frame_index in range(T):
+        grid = (base_grid * rng.uniform(0.9, 1.1)).astype(np.complex64)  # Jitter amplitude, keep phase
+        if frame_index == spike_index:
+            grid[1, 0] = 50.0 * np.exp(1j * (np.angle(base_grid[1, 0]) + 2.0))  # |.|=50 spike + 2 rad twist
         frame = CsiFrame(A, S)
-        frame.grid[:, :] = g
+        frame.grid[:, :] = grid
         frames.append(frame)
 
     reject = Preprocessor(A, S, hampel_window=7, hampel_k=5.0, normalize_alpha=0.1)
-    rejecting_output = np.stack([reject.process(fr).copy() for fr in frames])
+    rejecting_output = np.stack([reject.process(input_frame).copy() for input_frame in frames])
 
     control = Preprocessor(A, S, hampel_window=7, hampel_k=1e9, normalize_alpha=0.1)  # no rejection
-    control_output = np.stack([control.process(fr).copy() for fr in frames])
+    control_output = np.stack([control.process(input_frame).copy() for input_frame in frames])
 
-    cell = rejecting_output[f, 0, 0]          # affected cell (antenna1 vs antenna0, subcarrier0)
+    cell = rejecting_output[spike_index, 0, 0]          # affected cell (antenna1 vs antenna0, subcarrier0)
     assert abs(cell) < 0.05                                  # spike held -> output stays ~0
-    assert abs(control_output[f, 0, 0]) > 10 * abs(cell) + 0.1  # without rejection it glitches
+    assert abs(control_output[spike_index, 0, 0]) > 10 * abs(cell) + 0.1  # without rejection it glitches
 
 
 def test_preprocessor_recovers_motion_frequency():
-    fs, true_frequency_hz = 100.0, 0.3
-    frames, gt = generate_stream(
-        num_antennas=1, num_subcarriers=64, sample_rate_hz=fs, num_frames=1024,
+    sample_rate_hz, true_frequency_hz = 100.0, 0.3
+    frames, ground_truth = generate_stream(
+        num_antennas=1, num_subcarriers=64, sample_rate_hz=sample_rate_hz, num_frames=1024,
         perturbation_hz=true_frequency_hz, perturbation_depth=1.0, cfo_hz=4.0, noise_std=0.002, seed=9,
     )
-    pre = Preprocessor(1, 64, normalize_alpha=0.01)  # gentle high-pass so 0.3 Hz passes
-    out = np.stack([pre.process(f).copy()[0] for f in frames])
+    preprocessor = Preprocessor(1, 64, normalize_alpha=0.01)  # gentle high-pass so 0.3 Hz passes
+    out = np.stack([preprocessor.process(frame).copy()[0] for frame in frames])
 
     # Average power spectrum across cells to lift SNR. Band-argmax to find true_frequency_hz.
-    n = out.shape[0]
-    x = (out - out.mean(0)) * np.hanning(n)[:, None]
-    nfft = 1 << (max(4 * n, 64) - 1).bit_length()
-    power = (np.abs(np.fft.rfft(x, nfft, axis=0)) ** 2).mean(1)
-    freqs = np.fft.rfftfreq(nfft, d=1.0 / fs)
-    band = (freqs >= 0.1) & (freqs <= 2.0)
-    recovered = freqs[band][np.argmax(power[band])]
-    assert recovered == pytest.approx(gt["perturbation_hz"], abs=0.05)
+    frame_count = out.shape[0]
+    x = (out - out.mean(0)) * np.hanning(frame_count)[:, None]
+    fft_size = 1 << (max(4 * frame_count, 64) - 1).bit_length()
+    power = (np.abs(np.fft.rfft(x, fft_size, axis=0)) ** 2).mean(1)
+    frequencies_hz = np.fft.rfftfreq(fft_size, d=1.0 / sample_rate_hz)
+    band = (frequencies_hz >= 0.1) & (frequencies_hz <= 2.0)
+    recovered = frequencies_hz[band][np.argmax(power[band])]
+    assert recovered == pytest.approx(ground_truth["perturbation_hz"], abs=0.05)

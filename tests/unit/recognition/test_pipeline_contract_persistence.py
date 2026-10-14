@@ -20,20 +20,20 @@ from wavetrace.adapters.recognition.heads import (
 from wavetrace.recognition import train_presence, train_weapon
 
 
-def _presence_blobs(n=120, k=2, seed=0):
-    """Two trivially separable feature clusters (per-class mean shift) — mirrors TestRecognition._blobs."""
+def _presence_blobs(sample_count=120, k=2, seed=0):
+    """Two trivially separable feature clusters (per-class mean shift)."""
     rng = np.random.default_rng(seed)
-    X = rng.normal(0, 1, (n, 9 * k)).astype(np.float32)
-    y = (np.arange(n) % 2).astype(np.int64)
+    X = rng.normal(0, 1, (sample_count, 9 * k)).astype(np.float32)
+    y = (np.arange(sample_count) % 2).astype(np.int64)
     X[y == 1] += 3.0
     return X, y
 
 
-def _weapon_variance_blobs(n=120, seed=0):
+def _weapon_variance_blobs(sample_count=120, seed=0):
     """27-wide inter-carrier blocks with the VARIANCE_FEATURE column (index 9) separable by class."""
     rng = np.random.default_rng(seed)
-    X = rng.normal(0, 1, (n, 27)).astype(np.float32)
-    y = (np.arange(n) % 2).astype(np.int64)
+    X = rng.normal(0, 1, (sample_count, 27)).astype(np.float32)
+    y = (np.arange(sample_count) % 2).astype(np.int64)
     X[y == 1, 9] -= 3.0  # metal lowers variance -> weapon class sits below the no-weapon class
     return X, y
 
@@ -41,36 +41,39 @@ def _weapon_variance_blobs(n=120, seed=0):
 def _labels(names, y):
     labels = []
     for i, (name, class_id) in enumerate(zip(names, y)):
-        lab = Label()
-        lab.class_id = int(class_id)
-        lab.name = name
-        lab.timestamp = float(i)
-        labels.append(lab)
+        label = Label()
+        label.class_id = int(class_id)
+        label.name = name
+        label.timestamp = float(i)
+        labels.append(label)
     return labels
 
 
-def _presence_dataset(num_subcarriers, k=2, n=120, seed=0):
+def _presence_dataset(num_subcarriers, k=2, sample_count=120, seed=0):
     """A saveable presence Dataset whose meta['num_subcarriers'] differs from k, so a test can
     tell "real capture width" apart from "NBVI-selected count"."""
-    X, y = _presence_blobs(n=n, k=k, seed=seed)
-    names = ["present" if c else "absent" for c in y]
+    X, y = _presence_blobs(sample_count=sample_count, k=k, seed=seed)
+    names = ["present" if class_id else "absent" for class_id in y]
     meta = {"K": k, "window": 64, "hop": 16, "num_subcarriers": num_subcarriers}
     return Dataset(
-        X_features=X, X_image=np.zeros((n, 1, 1), np.float32), y=y,
-        t=np.arange(n, dtype=np.float64), labels=_labels(names, y), meta=meta,
-        session_ids=np.full(n, "s0", dtype=object), subject_ids=np.full(n, "u0", dtype=object),
+        X_features=X, X_image=np.zeros((sample_count, 1, 1), np.float32), y=y,
+        t=np.arange(sample_count, dtype=np.float64), labels=_labels(names, y), meta=meta,
+        session_ids=np.full(sample_count, "s0", dtype=object),
+        subject_ids=np.full(sample_count, "u0", dtype=object),
     )
 
 
-def _weapon_dataset(num_subcarriers, k=12, n=120, seed=0):
+def _weapon_dataset(num_subcarriers, k=12, sample_count=120, seed=0):
     """A saveable weapon Dataset (ic27 feature mode) with meta['num_subcarriers'] != k."""
-    X, y = _weapon_variance_blobs(n=n, seed=seed)
-    names = ["weapon" if c else "no_weapon" for c in y]
+    X, y = _weapon_variance_blobs(sample_count=sample_count, seed=seed)
+    names = ["weapon" if class_id else "no_weapon" for class_id in y]
     meta = {"K": k, "window": 64, "hop": 8, "num_subcarriers": num_subcarriers}
     return Dataset(
-        X_features=np.zeros((n, 9 * k), np.float32), X_image=np.zeros((n, 1, 1), np.float32), y=y,
-        t=np.arange(n, dtype=np.float64), labels=_labels(names, y), meta=meta,
-        session_ids=np.full(n, "s0", dtype=object), subject_ids=np.full(n, "u0", dtype=object),
+        X_features=np.zeros((sample_count, 9 * k), np.float32),
+        X_image=np.zeros((sample_count, 1, 1), np.float32), y=y,
+        t=np.arange(sample_count, dtype=np.float64), labels=_labels(names, y), meta=meta,
+        session_ids=np.full(sample_count, "s0", dtype=object),
+        subject_ids=np.full(sample_count, "u0", dtype=object),
         X_intercarrier=X,
     )
 
@@ -103,11 +106,11 @@ def test_presence_head_load_falls_back_when_contract_absent(tmp_path):
     X, y = _presence_blobs(k=2)
     head = build_presence_head(config).fit(X, y)
     path = head.save(tmp_path / "model.joblib")
-    _strip_contract_keys(path)  # simulate a pre-PipelineContract artifact on disk in data/
+    _strip_contract_keys(path)
 
     loaded = load_presence_head(path)
     assert loaded.contract == derive_pipeline_contract(loaded.config)
-    assert np.array_equal(loaded.predict(X), head.predict(X))  # backward-compatible: still predicts
+    assert np.array_equal(loaded.predict(X), head.predict(X))
 
 
 def test_weapon_head_save_writes_contract_and_schema_version(tmp_path):
@@ -129,17 +132,16 @@ def test_weapon_head_load_falls_back_when_contract_absent(tmp_path):
     X, y = _weapon_variance_blobs()
     head = build_weapon_head(config).fit(X, y)
     path = head.save(tmp_path / "weapon.joblib")
-    _strip_contract_keys(path)  # simulate a pre-PipelineContract artifact on disk in data/
+    _strip_contract_keys(path)
 
     loaded = load_weapon_head(path)
     assert loaded.contract == derive_pipeline_contract(loaded.config)
-    assert np.array_equal(loaded.predict(X), head.predict(X))  # backward-compatible: still predicts
+    assert np.array_equal(loaded.predict(X), head.predict(X))
 
 
 def test_presence_head_resave_preserves_a_stored_contract_that_diverged_from_derivation(tmp_path):
-    """Load an artifact whose stored contract differs from derive_pipeline_contract(config) (as
-    train.py's capture-width override produces), re-save it, and confirm the divergent value
-    survives."""
+    """The stored contract differs from derive_pipeline_contract(config), as train.py's
+    capture-width override produces."""
     config = ModelConfig(stage="presence", k=2)
     X, y = _presence_blobs(k=2)
     head = build_presence_head(config).fit(X, y)
@@ -167,8 +169,8 @@ def test_weapon_head_resave_preserves_a_stored_contract_that_diverged_from_deriv
 
 
 def test_train_presence_stamps_dataset_capture_width_not_k(tmp_path):
-    ds = _presence_dataset(num_subcarriers=32, k=2)
-    out = save_dataset(ds, tmp_path / "ds")
+    dataset = _presence_dataset(num_subcarriers=32, k=2)
+    out = save_dataset(dataset, tmp_path / "ds")
     head, _ = train_presence([out], tmp_path / "models")
 
     assert head.config.k == 2
@@ -181,9 +183,9 @@ def test_train_presence_leaves_capture_width_none_when_dataset_predates_it(tmp_p
     """A dataset with no meta['num_subcarriers'] must report subcarrier_width=None, never silently
     substitute k (the NBVI-selected count) -- the two are different quantities and a reader must be
     able to tell "unknown" apart from either one."""
-    ds = _presence_dataset(num_subcarriers=32, k=2)
-    del ds.meta["num_subcarriers"]  # simulate a dataset built before this field existed
-    out = save_dataset(ds, tmp_path / "ds")
+    dataset = _presence_dataset(num_subcarriers=32, k=2)
+    del dataset.meta["num_subcarriers"]  # simulate a dataset built before this field existed
+    out = save_dataset(dataset, tmp_path / "ds")
     head, _ = train_presence([out], tmp_path / "models")
 
     assert head.contract.subcarrier_width is None
@@ -192,8 +194,8 @@ def test_train_presence_leaves_capture_width_none_when_dataset_predates_it(tmp_p
 
 
 def test_train_weapon_stamps_dataset_capture_width_not_k(tmp_path):
-    ds = _weapon_dataset(num_subcarriers=48, k=12)
-    out = save_dataset(ds, tmp_path / "ds")
+    dataset = _weapon_dataset(num_subcarriers=48, k=12)
+    out = save_dataset(dataset, tmp_path / "ds")
     head, _ = train_weapon([out], tmp_path / "models")
 
     assert head.config.k == 12

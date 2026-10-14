@@ -15,7 +15,6 @@ function isSuppressed(err: Error): boolean {
       e => EXPECTED_CODES.has((e as NodeJS.ErrnoException).code ?? '')
     );
   }
-  // Fallback: match by message substring
   return EXPECTED_CODES.has('ECONNREFUSED') && err.message.includes('ECONNREFUSED');
 }
 

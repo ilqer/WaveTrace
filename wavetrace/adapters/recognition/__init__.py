@@ -2,8 +2,6 @@
 
 Maps a `ModelConfig.backend` key to its `RecognitionBackend` implementation. `PresenceHead` and
 `WeaponHead` resolve a backend once — at construction or `load()` — through `get_backend_class`.
-
-Adding a backend means one new module plus one `_REGISTRY` line below.
 """
 
 from wavetrace.adapters.recognition._sklearn_pipeline import SklearnPipelineBackend
@@ -20,9 +18,7 @@ _REGISTRY: dict[str, type[RecognitionBackend]] = {
     "cnn": CnnBackend,
 }
 
-# The backend `train_weapon` picks by default for each feature_mode when the caller supplies no
-# explicit `ModelConfig` — a training-time convenience, not a per-backend property (several
-# backends can consume the same feature_mode; this just names the canonical one).
+# The backend `train_weapon` picks for each feature_mode when the caller supplies no `ModelConfig`.
 DEFAULT_BACKEND_BY_FEATURE_MODE: dict[str, str] = {
     "ic27": "variance",
     "fusion": "mlp",
@@ -31,11 +27,8 @@ DEFAULT_BACKEND_BY_FEATURE_MODE: dict[str, str] = {
 
 
 def get_backend_class(name: str) -> type[RecognitionBackend]:
-    """Look up the `RecognitionBackend` implementation registered for `name`.
-
-    This is where an unregistered backend is rejected: `ModelConfig.backend` itself accepts any
-    string, so head construction/`load()` calling this is the only place a bad name raises,
-    naming the registered backends in the message."""
+    """Raises ValueError naming the registered backends for an unknown `name`: `ModelConfig.backend`
+    accepts any string, so this is the only place a bad name is rejected."""
     try:
         return _REGISTRY[name]
     except KeyError:
@@ -45,18 +38,16 @@ def get_backend_class(name: str) -> type[RecognitionBackend]:
 
 
 def registered_backend_names() -> tuple[str, ...]:
-    """Every backend name currently registered, for enumerating the registry's contents."""
     return tuple(_REGISTRY)
 
 
 def is_sklearn_backend(name: str) -> bool:
-    """True when `name` is registered and its implementation is a `SklearnPipelineBackend`;
-    False otherwise, including for an unregistered name."""
+    """False for an unregistered `name`."""
     try:
-        backend_cls = get_backend_class(name)
+        backend_class = get_backend_class(name)
     except ValueError:
         return False
-    return issubclass(backend_cls, SklearnPipelineBackend)
+    return issubclass(backend_class, SklearnPipelineBackend)
 
 
 __all__ = [

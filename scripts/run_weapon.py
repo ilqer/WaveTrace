@@ -39,8 +39,7 @@ def main():
         return
     # ordering validated equal in load_weapon_links
     weapon_class_index = next(iter(entries.values()))["weapon_i"]
-    # read off a head's own contract rather than re-declared here; every head is trained at the same
-    # rate today, so any one of them stands in for the banner
+    # banner only: every head is trained at the same rate today (not enforced)
     sample_rate_hz = next(iter(entries.values()))["session"].head.contract.target_sample_rate_hz
 
     buffers = collections.defaultdict(collections.deque)  # keyed by (tx_short, rx_node)
@@ -50,11 +49,12 @@ def main():
     sock = bind_udp_socket(args.port, timeout_s=0.5)
     has_per_link_heads = any(tag is not None for tag, _ in entries)
     def _wlabel(key):
-        tag, nid = key
-        return f"{tag}->{nid}" if tag is not None else f"*->{nid}"
-    wsummary = "  ".join(f"{_wlabel(k)}:w={entries[k]['weight']:.2f}" for k in sorted(entries))
+        tag, node_id = key
+        return f"{tag}->{node_id}" if tag is not None else f"*->{node_id}"
+    weight_summary = "  ".join(f"{_wlabel(entry_key)}:w={entries[entry_key]['weight']:.2f}"
+                               for entry_key in sorted(entries))
     print(f"WEAPON detection on udp/{args.port} (fs={sample_rate_hz:g}Hz, "
-          f"{'per-link' if has_per_link_heads else 'per-node'} heads; vote weights {wsummary}). "
+          f"{'per-link' if has_per_link_heads else 'per-node'} heads; vote weights {weight_summary}). "
           "Ctrl+C to stop.\n")
 
     next_fuse_time_s = time.time() + CHUNK_S
@@ -64,8 +64,9 @@ def main():
             try:
                 payload, _ = sock.recvfrom(65535)
                 for key, frames in parse_batch_by_link(payload).items():
-                    m = find_weapon_entry(entries, *key)  # key=(tx_short, rx_node) -> per-link, then per-node
-                    if m is not None and frames[0].num_subcarriers >= m["min_width"]:
+                    entry = find_weapon_entry(entries,
+                                              *key)  # key=(tx_short, rx_node) -> per-link, then per-node
+                    if entry is not None and frames[0].num_subcarriers >= entry["min_width"]:
                         buffers[key].extend(frames)
                         last_seen_time_s[key] = now
                         link_ids.setdefault(key, len(link_ids))
@@ -76,32 +77,35 @@ def main():
                 continue
             next_fuse_time_s = now + CHUNK_S
 
-            for buf in buffers.values():
-                if buf:
-                    cutoff = buf[-1].timestamp - BUFFER_S
-                    while buf and buf[0].timestamp < cutoff:
-                        buf.popleft()
+            for link_frames in buffers.values():
+                if link_frames:
+                    cutoff = link_frames[-1].timestamp - BUFFER_S
+                    while link_frames and link_frames[0].timestamp < cutoff:
+                        link_frames.popleft()
 
             # LinkVoter multiplies static reliability by live margin; uniform when nothing is weighted
-            static_link_weights = {lid: find_weapon_entry(entries, *key)["weight"] for key, lid in link_ids.items()}
-            static = static_link_weights if any(w > 0 for w in static_link_weights.values()) else None
+            static_link_weights = {link_id: find_weapon_entry(entries, *key)["weight"]
+                                   for key, link_id in link_ids.items()}
+            static = (static_link_weights
+                      if any(weight > 0 for weight in static_link_weights.values()) else None)
             voter = LinkVoter(static)
             breakdown = []
             for key in sorted(buffers):
                 if now - last_seen_time_s.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
                     continue
-                m = find_weapon_entry(entries, *key)
+                entry = find_weapon_entry(entries, *key)
                 proba, *_ = dwell_proba(
-                    list(buffers[key]), m["session"].head.contract.target_sample_rate_hz, m
+                    list(buffers[key]), entry["session"].head.contract.target_sample_rate_hz, entry
                 )
                 if proba is None:
                     continue
-                wi = m["weapon_i"]
-                weapon_proba = float(proba[wi]) if wi >= 0 else 0.0
+                weapon_index = entry["weapon_i"]
+                weapon_proba = float(proba[weapon_index]) if weapon_index >= 0 else 0.0
                 quality = abs(weapon_proba - 0.5) * 2.0  # decision margin -> 0 (unsure) .. 1 (confident)
                 voter.add(link_ids[key], proba, quality=quality)
-                hz, miss = link_health(buffers[key])  # delivered rate and missing-frame fraction
-                tail = f"@{hz:.0f}Hz" + (f"!{miss:.0%}drop" if miss > 0.1 else "")
+                delivered_rate_hz, missing_fraction = link_health(buffers[key])
+                tail = (f"@{delivered_rate_hz:.0f}Hz"
+                        + (f"!{missing_fraction:.0%}drop" if missing_fraction > 0.1 else ""))
                 breakdown.append(f"{key[0]}->{key[1]}:{weapon_proba:.2f}{tail}")
 
             if not breakdown:

@@ -14,17 +14,14 @@ from wavetrace.application.ports import CsiSource
 
 
 class RecordingSource(CsiSource):
-    """Replay frames saved by `save_recording`. Reconstructs each CsiFrame on demand."""
-
     def __init__(self, recording_dir):
-        self._dir = Path(recording_dir)
+        self._recording_dir = Path(recording_dir)
 
     def frames(self):
-        return load_recording(self._dir)
+        return load_recording(self._recording_dir)
 
 
 def save_recording(frames, out_dir) -> Path:
-    """Serialize a CsiFrame list to out_dir (grid/t/node_id .npy + meta.json). O(F·A·S)."""
     frames = list(frames)
     if not frames:
         raise ValueError("save_recording: no frames")
@@ -44,7 +41,6 @@ def save_recording(frames, out_dir) -> Path:
 
 
 def load_recording(recording_dir):
-    """Yield reconstructed CsiFrames from a saved recording. O(F·A·S)."""
     recording_dir = Path(recording_dir)
     grid = np.load(recording_dir / "grid.npy")          # (F, A, S) complex64
     timestamps_s = np.load(recording_dir / "t.npy")

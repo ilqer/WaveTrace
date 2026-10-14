@@ -1,5 +1,3 @@
-"""Value objects shared across layers."""
-
 from typing import NamedTuple
 
 

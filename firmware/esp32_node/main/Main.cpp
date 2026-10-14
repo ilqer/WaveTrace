@@ -38,7 +38,7 @@
 // Keep datagram under 1500B to avoid multi-fragment IP drops.
 #define UDP_BATCH_BYTES 1400       // max CSI body per datagram before a forced flush
 #define UDP_SEND_RETRIES 3         // resend a batch this many times on transient ENOMEM before dropping
-#define UDP_ENOMEM_BACKOFF_MS 15   // brief global pause once retries are exhausted (was a 100 ms hole)
+#define UDP_ENOMEM_BACKOFF_MS 15   // brief global pause once retries are exhausted
 // HT40 = 384B, HT20 = 256B. sExpectedCsiLengthBytes pins runtime frame length.
 #if WT_BW_HT40
 #define CSI_MAX_BYTES   384
@@ -77,14 +77,14 @@ typedef struct __attribute__((packed)) {
 } CsiBatchHeader;        // 13 bytes
 static_assert(sizeof(CsiBatchHeader) == 13, "wire format changed");
 
-static QueueHandle_t sCsiFrameQueue;        // CsiRawFrame frames -> UdpBatchTask
-static QueueHandle_t sTurnQueue;            // "go" tokens -> MeshTask
+static QueueHandle_t sCsiFrameQueue;
+static QueueHandle_t sTurnQueue;
 static volatile uint32_t sCsiFrameCount = 0;
 static volatile uint32_t sCsiCallbackCount = 0;   // diag: every CSI callback, before the MAC filter
-static volatile uint32_t sTxSentCount = 0;   // diag: ESP-NOW frames successfully queued for TX
-static volatile uint32_t sLastAirTimeMs = 0;   // last time any mesh frame was heard
+static volatile uint32_t sTxSentCount = 0;   // esp_now_send returned ESP_OK (queued, not confirmed on air)
+static volatile uint32_t sLastAirTimeMs = 0;   // last time any mesh frame was heard (RX only)
 static volatile bool sbConnected = false;     // STA associated + has IP; gates mesh TX
-static struct in_addr sPcAddress = {0};        // discovered PC address
+static struct in_addr sPcAddress = {0};
 static volatile int sExpectedCsiLengthBytes = 0;         // first-seen CSI byte length; the stream pins to this
 
 static inline uint32_t CurrentTimeMs(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
@@ -122,10 +122,9 @@ static void DiscoveryTask(void *) {
 #define GAIN_BASELINE_PACKET_COUNT 300
 static volatile uint32_t sGainBaselineSampleCount = 0;
 static volatile int sGainLockState = 0;        // diag: 0=collecting baseline, 1=gain forced, 2=skipped
-static volatile uint8_t sLockedAgcValue = 0;       // diag: the locked AGC/FFT values
+static volatile uint8_t sLockedAgcValue = 0;
 static volatile int8_t sLockedFftValue = 0;
 
-// Maps MAC to node ID and liveness from ESP-NOW frames.
 static uint8_t sPeerMacAddresses[MAX_NODES][6];
 static uint8_t sPeerNodeIds[MAX_NODES];
 static volatile uint32_t sPeerLastSeenMs[MAX_NODES];
@@ -152,7 +151,7 @@ static int IndexForNodeId(int nodeId) {
     return -1;
 }
 
-// --- Dynamic ring helpers (self is always alive; peers expire after LIVE_TIMEOUT_MS) ---
+// Self is always alive; peers expire after LIVE_TIMEOUT_MS.
 static int CountAlivePeers(void) {
     uint32_t nowMs = CurrentTimeMs(); int aliveCount = 0;
     for (int i = 0; i < sPeerCount; i++)
@@ -177,7 +176,7 @@ static int NextLiveNodeIdAfter(int afterNodeId) {
         if (candidateNodeId > afterNodeId && candidateNodeId < nextGreaterNodeId) nextGreaterNodeId = candidateNodeId;
         if (candidateNodeId < lowestLiveNodeId) lowestLiveNodeId = candidateNodeId;
     }
-    if (NODE_ID > afterNodeId && NODE_ID < nextGreaterNodeId) nextGreaterNodeId = NODE_ID;  // self
+    if (NODE_ID > afterNodeId && NODE_ID < nextGreaterNodeId) nextGreaterNodeId = NODE_ID;
     return nextGreaterNodeId != 0x7fffffff ? nextGreaterNodeId : lowestLiveNodeId;
 }
 
@@ -193,9 +192,9 @@ static uint64_t WallClockMs(void) {
 // CsiReceiveCallback runs on Core 0 at ~300fps. No malloc/formatting allowed.
 static void CsiReceiveCallback(void *context, wifi_csi_info_t *info) {
     if (!info || !info->buf) return;
-    sCsiCallbackCount++;  // diag: count every CSI callback regardless of source
+    sCsiCallbackCount++;
     int transmitterNodeId = NodeIdForMacAddress(info->mac);
-    if (transmitterNodeId < 0) return;  // only emit CSI from known mesh nodes
+    if (transmitterNodeId < 0) return;
 #if WIFI_CSI_PHY_GAIN_ENABLE
     // Freeze AGC/FFT once a baseline is built. Room needs to stay still for the first few seconds.
     if (!sGainLockState) {
@@ -210,13 +209,13 @@ static void CsiReceiveCallback(void *context, wifi_csi_info_t *info) {
                 sLockedAgcValue = baselineAgc; sLockedFftValue = baselineFft;
                 // Skip lock if AGC < 30 (signal too strong, forcing causes WDT crash). Rely on host CV normalization.
                 if (baselineAgc < 30) {
-                    sGainLockState = 2;  // SKIP: too strong
+                    sGainLockState = 2;
                 } else {
                     esp_csi_gain_ctrl_set_rx_force_gain(baselineAgc, baselineFft);
-                    sGainLockState = 1;  // LOCK
+                    sGainLockState = 1;
                 }
             } else {
-                sGainBaselineSampleCount = 0;  // baseline not ready yet, recollect
+                sGainBaselineSampleCount = 0;
             }
         }
     }
@@ -252,7 +251,6 @@ static volatile uint8_t  sLastTokenTransmitterNodeId = 0;  // ...and from which 
 static volatile int  sHandoffTargetNodeId = -1;        // node we last handed the token to (adaptive-skip pending)
 static volatile bool sbHandoffHeard = false;  // did that node transmit in response to our handoff?
 
-// Update liveness, accept token on burst handoff.
 static void EspNowReceiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int packetLengthBytes) {
     if (packetLengthBytes < (int)sizeof(MeshPacket)) return;
     const MeshPacket *packet = (const MeshPacket *)data;
@@ -261,7 +259,7 @@ static void EspNowReceiveCallback(const esp_now_recv_info_t *info, const uint8_t
     LearnPeerMacAddress(info->src_addr, packet->tx_id);
     if (packet->tx_id == sHandoffTargetNodeId) sbHandoffHeard = true;  // it took its turn, so it's responsive
     int peerIndex = IndexForNodeId(packet->tx_id);
-    if (peerIndex >= 0) sPeerMissedTurnCount[peerIndex] = 0;                           // hearing it transmit clears its skip count
+    if (peerIndex >= 0) sPeerMissedTurnCount[peerIndex] = 0;
     // Token rides last TOKEN_REPEAT frames. Dedup within TOKEN_DEDUP_MS to prevent multi-bursts.
     if ((packet->flags & FLAG_LAST) && packet->next_id == NODE_ID) {
         uint32_t nowMs = CurrentTimeMs();
@@ -269,7 +267,7 @@ static void EspNowReceiveCallback(const esp_now_recv_info_t *info, const uint8_t
             sLastTokenTransmitterNodeId = packet->tx_id;
             sLastTokenAcceptedMs = nowMs;
             uint8_t tokenSignal = 1;
-            xQueueSend(sTurnQueue, &tokenSignal, 0);  // it's our turn next
+            xQueueSend(sTurnQueue, &tokenSignal, 0);
         }
     }
 }
@@ -312,7 +310,7 @@ static void MeshTask(void *) {
     for (;;) {
         uint8_t tokenSignal;
         if (xQueueReceive(sTurnQueue, &tokenSignal, pdMS_TO_TICKS(TURN_TIMEOUT_MS)) == pdTRUE) {
-            sbEverGotTurn = true;  // we're in the ring
+            sbEverGotTurn = true;
             if (sbConnected) SendTokenBurst();
         } else if (sbConnected) {
             uint32_t nowMs = CurrentTimeMs();
@@ -338,7 +336,6 @@ static void MeshTask(void *) {
     }
 }
 
-// Prepend header and ship datagram.
 static int SendCsiBatch(int socketFd, struct sockaddr_in *destinationAddress, uint8_t *datagramBuffer,
                           const uint8_t *csiRecordBytes, int bodyLengthBytes, int recordCount) {
     CsiBatchHeader header = {MESH_MAGIC, 2, (uint8_t)NODE_ID, WallClockMs(), (uint16_t)recordCount};
@@ -348,7 +345,7 @@ static int SendCsiBatch(int socketFd, struct sockaddr_in *destinationAddress, ui
     return sendto(socketFd, datagramBuffer, sizeof(header) + bodyLengthBytes, 0, (struct sockaddr *)destinationAddress, sizeof(*destinationAddress));
 }
 
-// Flush batch. Retry transient ENOMEM to prevent queue overflow.
+// Retries transient ENOMEM so the frame queue doesn't overflow.
 static bool FlushCsiBatch(int socketFd, struct sockaddr_in *destinationAddress, uint8_t *datagramBuffer,
                             const uint8_t *csiRecordBytes, int bodyLengthBytes, int recordCount) {
     for (int retryAttempt = 0; retryAttempt < UDP_SEND_RETRIES; retryAttempt++) {
@@ -359,7 +356,6 @@ static bool FlushCsiBatch(int socketFd, struct sockaddr_in *destinationAddress, 
     return false;
 }
 
-// Pack CSI into batch datagrams.
 static void UdpBatchTask(void *) {
     int socketFd = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in destinationAddress = {};
@@ -390,7 +386,7 @@ static void UdpBatchTask(void *) {
                     ESP_LOGW(sTag, "sendto ENOMEM after %d retries, backing off %d ms",
                              UDP_SEND_RETRIES, UDP_ENOMEM_BACKOFF_MS);
                 }
-                bodyLengthBytes = 0; recordCount = 0;   // batch left the air (or dropped after retries), so reset
+                bodyLengthBytes = 0; recordCount = 0;
             }
             if (recordSizeBytes <= UDP_BATCH_BYTES) {
                 uint8_t *writePointer = csiRecordBytes + bodyLengthBytes;
@@ -414,7 +410,6 @@ static void UdpBatchTask(void *) {
     }
 }
 
-// PC heartbeat via HEALTH_UDP_PORT.
 static void HealthTask(void *) {
     int socketFd = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in destinationAddress = {};
@@ -446,7 +441,6 @@ static void HealthTask(void *) {
     }
 }
 
-// Serial heartbeat for USB monitor.
 static void StatsTask(void *) {
     uint32_t lastCsiCount = 0, lastCsiRawCount = 0, lastTxSentCount = 0;
     for (;;) {
@@ -581,8 +575,6 @@ extern "C" void app_main(void) {
     broadcastPeer.ifidx = WIFI_IF_STA;
     broadcastPeer.encrypt = false;
     esp_now_add_peer(&broadcastPeer);
-
-    // Use HT rate for sensing frames to trigger CSI reliably.
 
     // Promiscuous mode allows tapping peer ESP-NOW bursts. Filter DATA frames to prevent RX buffer crashes.
     esp_wifi_set_promiscuous_rx_cb(PromiscuousReceiveCallback);

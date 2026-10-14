@@ -14,13 +14,13 @@ from wavetrace.adapters.source import build_csi_source, parse_time_spans
 from wavetrace.domain.contracts import (DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPLE_RATE_HZ,
                                         DEFAULT_WINDOW_FRAMES)
 
-_OCC_GRID = 16
-# labels change slowly next to the 1.28 s CSI window, so 5 fps is enough and costs
-# a third of the CPU that 15 fps does
-_CAMERA_FPS = 5.0
+_OCCUPANCY_GRID_SIZE = 16
+# labels change slowly next to the 1.28 s CSI window, so 5 Hz is enough and costs
+# a third of the CPU that 15 Hz does
+_CAMERA_FRAME_RATE_HZ = 5.0
 
 
-def _occupancy_from_variance(image: np.ndarray, grid_size: int = _OCC_GRID) -> np.ndarray:
+def _occupancy_from_variance(image: np.ndarray, grid_size: int = _OCCUPANCY_GRID_SIZE) -> np.ndarray:
     """Tiles the variance when K < grid_size², because zero-padding it would show as black bars."""
     variance = image.var(axis=1).astype(np.float32)  # (K,)
     cell_count = grid_size * grid_size
@@ -103,54 +103,58 @@ class WaveTraceRunner:
         asyncio.run_coroutine_threadsafe(
             self.inference_queue.put(json.dumps(payload)), self.loop)
 
-    def _build_source(self, req):
-        self.localizer = Localizer(req.antennas, range_enabled=True) if req.antennas >= 2 else None
+    def _build_source(self, request):
+        self.localizer = Localizer(request.antennas, range_enabled=True) if request.antennas >= 2 else None
 
-        if not req.synthetic:
-            port = getattr(req, "udp_port", 9876)
+        if not request.synthetic:
+            port = request.udp_port
             self.log(f"[HW] UDP listener on :{port} — nodes push CSI here (PC_IP set in firmware)")
-            self.log(f"[HW] Camera: {req.cam_url}")
+            self.log(f"[HW] Camera: {request.cam_url}")
             from wavetrace.adapters.source import UdpSource, UdpSourceOptions
             return UdpSource(UdpSourceOptions(port=port, timeout_seconds=60.0))
 
         self.log("[SIM] Synthetic source (no hardware connected).")
         args = ArgsMock(
-            synthetic=True, recording=None, antennas=req.antennas,
-            subcarriers=req.subcarriers, fs=req.fs, duration=req.duration,
-            presence=req.col_spans if req.action == "collect" else "0:5,10:15,20:25,30:35,40:45,50:55",
+            synthetic=True, recording=None, antennas=request.antennas,
+            subcarriers=request.subcarriers, fs=request.fs, duration=request.duration,
+            presence=(request.col_spans if request.action == "collect"
+                      else "0:5,10:15,20:25,30:35,40:45,50:55"),
             weapon="2:5,12:15,22:25,32:35,42:45,52:55", weapon_depth=0.5,
-            seed=getattr(req, 'seed', 0),
+            seed=request.seed,
         )
         return build_csi_source(args)
 
-    def run_inference_request(self, req):
-        source = self._build_source(req)
-        self.log(f"Loading Calibration: {req.calibration}")
-        self.log(f"Loading Model: {req.model}")
-        self.run_inference(source, req.calibration, req.model, req.mode,
-                             vote=req.vote, use_gain_lock=req.gainLock,
-                             frame_average=req.frame_average, use_baseline=req.use_baseline,
-                             port=getattr(req, "udp_port", 9876))
+    def run_inference_request(self, request):
+        source = self._build_source(request)
+        self.log(f"Loading Calibration: {request.calibration}")
+        self.log(f"Loading Model: {request.model}")
+        self.run_inference(source, request.calibration, request.model, request.mode,
+                             vote=request.vote, use_gain_lock=request.gainLock,
+                             frame_average=request.frame_average, use_baseline=request.use_baseline,
+                             port=request.udp_port)
 
-    def run_calibration_request(self, req):
+    def run_calibration_request(self, request):
         self.is_running = True
-        source = self._build_source(req)
+        source = self._build_source(request)
         if not self.is_running: return
-        self.log(f"Starting Calibration -> {req.cal_out}")
-        path, _ = calibrate_source(source, req.cal_out, baseline_packets=req.baseline_packets, use_gain_lock=req.gainLock)
+        self.log(f"Starting Calibration -> {request.cal_out}")
+        path, _ = calibrate_source(source, request.cal_out, baseline_packets=request.baseline_packets,
+                                   use_gain_lock=request.gainLock)
         self.log(f"Calibration complete: {path}")
         self._emit_inference({"event": "pipeline_done"})
         self.is_running = False
 
-    def run_collection_request(self, req):
+    def run_collection_request(self, request):
         self.is_running = True
-        source = self._build_source(req)
+        source = self._build_source(request)
         if not self.is_running: return
-        self.log(f"Collecting {req.col_stage} dataset (window={req.col_window}, hop={req.col_hop})")
-        spans = parse_time_spans(req.col_spans)
-        path, dataset = collect_source(source, req.calibration, "output/dataset_ui", spans,
-                                       stage=req.col_stage, window=req.col_window, hop=req.col_hop,
-                                       subtract_ic_baseline=getattr(req, "subtract_ic_baseline", False))
+        self.log(f"Collecting {request.col_stage} dataset "
+                 f"(window={request.col_window}, hop={request.col_hop})")
+        spans = parse_time_spans(request.col_spans)
+        path, dataset = collect_source(source, request.calibration, "output/dataset_ui", spans,
+                                       stage=request.col_stage, window=request.col_window,
+                                       hop=request.col_hop,
+                                       subtract_ic_baseline=request.subtract_ic_baseline)
         self.log(f"Dataset saved ({dataset.y.size} samples) -> {path}")
         self._emit_inference({"event": "pipeline_done"})
         self.is_running = False
@@ -159,11 +163,11 @@ class WaveTraceRunner:
         asyncio.run_coroutine_threadsafe(
             self.training_queue.put(json.dumps(payload)), self.loop)
 
-    def run_training_request(self, req):
+    def run_training_request(self, request):
         self.is_running = True
-        self.log(f"Training {req.col_stage}/{req.train_backend}...")
+        self.log(f"Training {request.col_stage}/{request.train_backend}...")
 
-        dataset_path = getattr(req, "train_data", "output/dataset_ui")
+        dataset_path = request.train_data
         import os, glob
         candidate_dirs = sorted(glob.glob(os.path.join(dataset_path, "*")))
         dataset_dirs = [path for path in candidate_dirs
@@ -183,8 +187,8 @@ class WaveTraceRunner:
             dataset = load_dataset(dataset_dirs[0])
             summary = dataset_report(dataset)
             self._emit_training({"type": "train_init", **summary})
-        except Exception as e:
-            self.log(f"Dataset meta load failed: {e}")
+        except Exception as error:
+            self.log(f"Dataset meta load failed: {error}")
 
         def report(epoch: int, metrics: dict) -> None:
             if not self.is_running:
@@ -199,12 +203,13 @@ class WaveTraceRunner:
             self.log(f"Epoch {epoch}: loss={metrics.get('loss', 0):.4f}")
 
         try:
-            if req.col_stage == "presence":
+            if request.col_stage == "presence":
                 from wavetrace.adapters.recognition import is_sklearn_backend
-                backend_is_sklearn = is_sklearn_backend(req.train_backend)
-                backend = req.train_backend if backend_is_sklearn else "mlp"
+                backend_is_sklearn = is_sklearn_backend(request.train_backend)
+                backend = request.train_backend if backend_is_sklearn else "mlp"
                 if not backend_is_sklearn:
-                    self.log(f"Presence only supports mlp/svm backends; ignoring '{req.train_backend}', using mlp.")
+                    self.log(f"Presence only supports mlp/svm backends; "
+                             f"ignoring '{request.train_backend}', using mlp.")
                 config = None
                 if dataset is not None:
                     from wavetrace.config import ModelConfig
@@ -213,12 +218,12 @@ class WaveTraceRunner:
                                          window=int(meta["window"]), hop=int(meta["hop"]),
                                          frame_average=int(meta.get("frame_average", 1)),
                                          subtract_baseline=bool(meta.get("subtract_baseline", False)))
-                _, metrics = train_presence(dataset_dirs, out_dir=req.train_out, config=config)
+                _, metrics = train_presence(dataset_dirs, out_dir=request.train_out, config=config)
                 self._emit_training({"type": "done", "metrics": metrics})
-            elif req.train_backend == "heatmap":
-                metrics = self._train_heatmap(dataset_path, req, report)
+            elif request.train_backend == "heatmap":
+                metrics = self._train_heatmap(dataset_path, request, report)
                 self._emit_training({"type": "done", "metrics": metrics})
-            elif getattr(req, "per_link", False):
+            elif request.per_link:
                 trained_link_count = 0
                 for node_dir in sorted(glob.glob(os.path.join(dataset_path, "node*"))):
                     node_id_digits = os.path.basename(node_dir)[4:]
@@ -235,7 +240,7 @@ class WaveTraceRunner:
                                 else [])
                         if not link_dataset_dirs:
                             continue
-                        link_model_dir = os.path.join(req.train_out, f"node{node_id_digits}",
+                        link_model_dir = os.path.join(request.train_out, f"node{node_id_digits}",
                                                       f"link{link_tag}")
                         try:
                             from wavetrace.groundtruth import load_dataset
@@ -255,40 +260,30 @@ class WaveTraceRunner:
                 from wavetrace.config import ModelConfig
                 from wavetrace.groundtruth import load_dataset
                 subcarrier_count = int(load_dataset(dataset_dirs[0]).meta["K"])
-                config = ModelConfig(stage="weapon", k=subcarrier_count, backend=req.train_backend)
+                config = ModelConfig(stage="weapon", k=subcarrier_count, backend=request.train_backend)
                 from wavetrace.adapters.recognition import get_backend_class
-                feature_mode = get_backend_class(req.train_backend).feature_mode
+                feature_mode = get_backend_class(request.train_backend).feature_mode
                 # only the cnn backend calls report; ic27 and variance ignore it
-                _, metrics = train_weapon(dataset_dirs, out_dir=req.train_out, config=config,
+                _, metrics = train_weapon(dataset_dirs, out_dir=request.train_out, config=config,
                                           feature_mode=feature_mode, report=report)
                 self._emit_training({"type": "done", "metrics": metrics})
-            self.log(f"Training complete -> {req.train_out}")
+            self.log(f"Training complete -> {request.train_out}")
         except KeyboardInterrupt:
             self.log("Training stopped by UI.")
-        except Exception as e:
-            self.log(f"ERROR Training failed: {type(e).__name__}: {e}")
+        except Exception as error:
+            self.log(f"ERROR Training failed: {type(error).__name__}: {error}")
             for line in traceback.format_exc().splitlines():
                 self.log(f"  {line}")
         finally:
             self.is_running = False
 
-    def _train_heatmap(self, dataset_path: str, req, report) -> dict:
+    def _train_heatmap(self, dataset_path: str, request, report) -> dict:
         from wavetrace.groundtruth import load_dataset
-        from wavetrace.recognition.heatmap import HeatmapHead
-        from wavetrace.config import ModelConfig
-        dataset = load_dataset(dataset_path)
-        masks = [getattr(label, "mask", None) for label in dataset.labels]
-        masks = [mask for mask in masks if mask is not None]
-        if not masks:
-            raise ValueError(
-                "dataset has no Label.mask — collect with SegmentationLabeler / YoloSegLabeler")
-        grid = int(getattr(dataset.labels[0], "mask_grid", None) or 16)
-        Y = np.asarray(masks, dtype=np.float32)
-        config = ModelConfig(stage="weapon", k=int(dataset.meta["K"]))
-        head = HeatmapHead(config, grid=grid).fit(dataset.X_image[:len(masks)], Y, report=report)
-        import os; os.makedirs(req.train_out, exist_ok=True)
-        head.save(os.path.join(req.train_out, "heatmap.joblib"))
-        return {"grid": grid, "n": int(Y.shape[0])}
+        from wavetrace.recognition.heatmap import train_heatmap
+        import os
+        head, masked_window_count = train_heatmap(load_dataset(dataset_path), report=report)
+        head.save(os.path.join(request.train_out, "heatmap.joblib"))
+        return {"grid": head.grid, "n": masked_window_count}
 
     def _emit_telemetry(self, payload: dict) -> None:
         if self.telemetry_queue is not None:
@@ -306,7 +301,6 @@ class WaveTraceRunner:
         
         is_mesh = os.path.isdir(model_path) and any(os.path.isdir(os.path.join(model_path, dir_name)) for dir_name in os.listdir(model_path) if dir_name.startswith("node"))
 
-        # count reuses the presence head
         head_mode = "presence" if mode == "count" else mode
 
         if is_mesh:
@@ -314,10 +308,10 @@ class WaveTraceRunner:
             import glob, json
             nodes = {}
             for node_model_dir in sorted(glob.glob(os.path.join(model_path, "node*"))):
-                base = os.path.basename(node_model_dir)
-                if not base[len("node"):].isdigit(): continue
-                node_id = int(base[len("node"):])
-                node_calibration_dir = os.path.join(calibration_dir, base)
+                node_dir_name = os.path.basename(node_model_dir)
+                if not node_dir_name[len("node"):].isdigit(): continue
+                node_id = int(node_dir_name[len("node"):])
+                node_calibration_dir = os.path.join(calibration_dir, node_dir_name)
                 node_model_path = os.path.join(node_model_dir, "model.joblib")
                 if not (os.path.isdir(node_calibration_dir) and os.path.exists(node_model_path)): continue
                 node_result, node_gain_lock = load_calibration(node_calibration_dir)
@@ -418,7 +412,10 @@ class WaveTraceRunner:
                 return find_weapon_entry(_weapon_entries, key.tx_mac_suffix, key.rx_node_id)
             return _nodes.get(key.rx_node_id)
 
-        health_meter = NodeHealthMeter()
+        # the single calibration has no node id of its own, so it covers every node the stream carries
+        health_meter = (NodeHealthMeter(calibration_by_node={node_id: entry["result"]
+                                                             for node_id, entry in nodes.items()})
+                        if is_mesh else NodeHealthMeter(default_calibration=result))
         alert_guard = AlertGuard()
         voter_trace: deque[float] = deque(maxlen=60)
         is_alert_active = False
@@ -513,9 +510,9 @@ class WaveTraceRunner:
                     except ValueError: continue
 
                     proba = np.asarray(blended, dtype=np.float64)
-                    i = int(np.argmax(proba))
-                    predicted_class = int(global_classes[i])
-                    confidence = float(proba[i])
+                    predicted_index = int(np.argmax(proba))
+                    predicted_class = int(global_classes[predicted_index])
+                    confidence = float(proba[predicted_index])
 
                     inference_payload = {"t": float(now), "class": predicted_class, "conf": confidence,
                                          "mode": mode}
@@ -537,7 +534,7 @@ class WaveTraceRunner:
                             "t": float(now), "image": display_image.tolist(),
                             "features": display_features.tolist(),
                             "ic": display_intercarrier_features.tolist(), "antennas": [power for _, power in node_power_items], "node_ids": [node_id for node_id, _ in node_power_items],
-                            "heatmap_grid": occupancy_grid.tolist(), "grid_size": _OCC_GRID,
+                            "heatmap_grid": occupancy_grid.tolist(), "grid_size": _OCCUPANCY_GRID_SIZE,
                         }
                         asyncio.run_coroutine_threadsafe(self.stream_queue.put(json.dumps(stream_payload)), self.loop)
 
@@ -548,7 +545,7 @@ class WaveTraceRunner:
                                 "nodes": health_meter.snapshot(),
                                 "sync": cluster_sync(health_meter),
                                 "heatmap": occupancy_grid.tolist(),
-                                "grid": _OCC_GRID,
+                                "grid": _OCCUPANCY_GRID_SIZE,
                                 "antenna_weights": antenna_weights,
                                 "alert_active": is_alert_active,
                                 "drift_ratio": drift_ratio,
@@ -566,7 +563,7 @@ class WaveTraceRunner:
                     window=config.window, hop=config.hop, intercarrier=True,
                     image_subcarriers=result.image_subcarriers,
                     frame_average=frame_average, image_baseline=image_baseline,
-                    ic_baseline=intercarrier_baseline
+                    intercarrier_baseline=intercarrier_baseline
                 ):
                     if not self.is_running: break
 
@@ -576,9 +573,9 @@ class WaveTraceRunner:
                     last_window_timestamp_s = window_timestamp_s
 
                     proba = session.predict_window_proba(pick(features, image, intercarrier_features))
-                    i = int(np.argmax(proba))
-                    predicted_class = int(global_classes[i])
-                    confidence = float(proba[i])
+                    predicted_index = int(np.argmax(proba))
+                    predicted_class = int(global_classes[predicted_index])
+                    confidence = float(proba[predicted_index])
                     inference_payload = {"t": float(window_timestamp_s), "class": predicted_class,
                                          "conf": confidence, "mode": mode}
 
@@ -608,7 +605,7 @@ class WaveTraceRunner:
                         "t": float(window_timestamp_s), "image": image.tolist(),
                         "features": features.tolist(),
                         "ic": intercarrier_features.tolist(), "antennas": [power for _, power in node_power_items], "node_ids": [int(node_id) for node_id, _ in node_power_items],
-                        "heatmap_grid": occupancy_grid.tolist(), "grid_size": _OCC_GRID,
+                        "heatmap_grid": occupancy_grid.tolist(), "grid_size": _OCCUPANCY_GRID_SIZE,
                     }
                     if spatial_payload: stream_payload["spatial"] = spatial_payload
 
@@ -621,7 +618,7 @@ class WaveTraceRunner:
                             "nodes": health_meter.snapshot(),
                             "sync": cluster_sync(health_meter),
                             "heatmap": occupancy_grid.tolist(),
-                            "grid": _OCC_GRID,
+                            "grid": _OCCUPANCY_GRID_SIZE,
                             "antenna_weights": antenna_weights,
                             "alert_active": is_alert_active,
                             "drift_ratio": drift_ratio,
@@ -630,22 +627,22 @@ class WaveTraceRunner:
                         })
 
             self.log("Stream ended.")
-        except Exception as e:
-            self.log(f"ERROR Runner: {type(e).__name__}: {e}")
+        except Exception as error:
+            self.log(f"ERROR Runner: {type(error).__name__}: {error}")
             for line in traceback.format_exc().splitlines():
                 self.log(f"  {line}")
         finally:
             self._emit_inference({"event": "pipeline_done"})
             self.is_running = False
 
-    def run_camera_collection_request(self, req):
+    def run_camera_collection_request(self, request):
         """The webcam labeler runs on a worker thread while this thread ingests mesh CSI."""
         self.is_running = True
         import os, glob, socket, threading, collections
 
         try:
             from wavetrace.groundtruth.camera_labeler import (YoloLabelerOptions, YoloSegLabeler,
-                                                              presence_label_fn, weapon_label_fn)
+                                                              presence_label_function, weapon_label_function)
             from wavetrace.groundtruth.webcam import (WebcamCapture, WebcamOptions, record_labels_online,
                                                        COCO_WEAPON_CLASSES)
             from wavetrace.groundtruth.dataset_builder import build_stacked_dataset, save_dataset
@@ -659,44 +656,44 @@ class WaveTraceRunner:
             self.is_running = False
             return
 
-        camera_index = int(getattr(req, "cam_index", 0))
-        duration = float(getattr(req, "duration", 30.0))
-        is_per_link = bool(getattr(req, "per_link", False))
-        root = getattr(req, "train_data", "data/2g4_ht40")
+        camera_index = request.cam_index
+        duration = request.duration
+        is_per_link = request.per_link
+        root = request.train_data
 
         calibrations = {}
-        for path in sorted(glob.glob(f"{req.calibration}/node*")):
-            base = os.path.basename(path)
-            if base[4:].isdigit():
-                calibrations[int(base[4:])] = load_calibration(path)
+        for path in sorted(glob.glob(f"{request.calibration}/node*")):
+            node_dir_name = os.path.basename(path)
+            if node_dir_name[4:].isdigit():
+                calibrations[int(node_dir_name[4:])] = load_calibration(path)
         if not calibrations:
             # older flat calibration dirs have no node*/ level; they count as node 0
-            flat_meta_path = os.path.join(req.calibration, "meta.json")
+            flat_meta_path = os.path.join(request.calibration, "meta.json")
             if os.path.exists(flat_meta_path):
-                calibrations[0] = load_calibration(req.calibration)
+                calibrations[0] = load_calibration(request.calibration)
         if not calibrations:
-            self.log(f"ERROR: no calibration found at '{req.calibration}' — run Calib first")
+            self.log(f"ERROR: no calibration found at '{request.calibration}' — run Calib first")
             self._emit_inference({"event": "pipeline_done"})
             self.is_running = False
             return
         calibrated_node_ids = sorted(calibrations)
         self.log(f"[CAM] Nodes: {calibrated_node_ids}. Loading YOLO-seg model...")
 
-        label_function = weapon_label_fn if req.col_stage == "weapon" else presence_label_fn
-        yolo_weights_path = getattr(req, "yolo_weights", None)
+        label_function = weapon_label_function if request.col_stage == "weapon" else presence_label_function
+        yolo_weights_path = request.yolo_weights
         try:
             labeler = YoloSegLabeler(
                 options=YoloLabelerOptions(weights_path=yolo_weights_path,
                                            weapon_classes=COCO_WEAPON_CLASSES),
-                conf=0.35, label_fn=label_function)
+                confidence_threshold=0.35, label_function=label_function)
         except Exception as yolo_error:
             self.log(f"ERROR: YOLO init failed: {yolo_error}")
             self._emit_inference({"event": "pipeline_done"})
             self.is_running = False
             return
 
-        self.log(f"[CAM] Capturing {duration:g}s  stage={req.col_stage}  cam={camera_index}  "
-                 f"port={req.udp_port}")
+        self.log(f"[CAM] Capturing {duration:g}s  stage={request.col_stage}  cam={camera_index}  "
+                 f"port={request.udp_port}")
 
         frames_by_node = collections.defaultdict(list)
         frames_by_link = collections.defaultdict(list)
@@ -713,7 +710,7 @@ class WaveTraceRunner:
                             self.log(f"[CAM] {labeled_counter['n']} frames labeled (class={label.class_id})")
                     camera_result["labels"] = record_labels_online(
                         webcam.read, labeler, duration,
-                        fps=_CAMERA_FPS, stop=camera_stop_event, on_label=_on_label,
+                        frame_rate_hz=_CAMERA_FRAME_RATE_HZ, stop=camera_stop_event, on_label=_on_label,
                     )
             except Exception as camera_error:
                 camera_result["error"] = str(camera_error)
@@ -721,7 +718,7 @@ class WaveTraceRunner:
         camera_thread = threading.Thread(target=_run_camera_labeler, daemon=True)
         camera_thread.start()
 
-        port = int(getattr(req, "udp_port", 9876))
+        port = request.udp_port
         try:
             udp_socket = bind_udp_socket(port, timeout_s=1.0)
             capture_end_time_s = time.monotonic() + duration
@@ -755,7 +752,7 @@ class WaveTraceRunner:
             return
 
         positive_count = sum(label.class_id == 1 for label in labels)
-        self.log(f"[CAM] {positive_count}/{len(labels)} frames positive ({req.col_stage})")
+        self.log(f"[CAM] {positive_count}/{len(labels)} frames positive ({request.col_stage})")
 
         session_id = "cam_s0"
         resampled_by_node = {}
@@ -772,19 +769,20 @@ class WaveTraceRunner:
                 self.log(f"[CAM] SKIP node {node_id}: only {len(frames)} frames")
                 continue
             recording_dir = f"{root}/cam_rec/{session_id}/node{node_id}"
-            dataset_dir = f"{root}/cam_ds/{req.col_stage}/node{node_id}/{session_id}"
+            dataset_dir = f"{root}/cam_ds/{request.col_stage}/node{node_id}/{session_id}"
             save_recording(frames, recording_dir)
-            collect_source(RecordingSource(recording_dir), f"{req.calibration}/node{node_id}",
-                            dataset_dir, [], stage=req.col_stage, labeler=labels,
+            collect_source(RecordingSource(recording_dir), f"{request.calibration}/node{node_id}",
+                            dataset_dir, [], stage=request.col_stage, labeler=labels,
                             session_id=session_id, subject_id="cam",
-                            subtract_ic_baseline=(req.col_stage == "weapon"))
+                            subtract_ic_baseline=(request.col_stage == "weapon"))
             built_node_ids.append(node_id)
             self.log(f"[CAM] node {node_id} -> {dataset_dir}")
 
-        merged = [frame for node_id in calibrated_node_ids for frame in resampled_by_node.get(node_id, [])]
-        if merged:
+        merged_frames = [frame for node_id in calibrated_node_ids
+                         for frame in resampled_by_node.get(node_id, [])]
+        if merged_frames:
             heatmap_dataset_dir = f"{root}/cam_ds/heatmap/{session_id}"
-            heatmap_dataset = build_stacked_dataset(merged, calibrations, labels,
+            heatmap_dataset = build_stacked_dataset(merged_frames, calibrations, labels,
                                                     window=DEFAULT_WINDOW_FRAMES, hop=DEFAULT_HOP_FRAMES,
                                                     session_id=session_id, subject_id="cam")
             save_dataset(heatmap_dataset, heatmap_dataset_dir)
@@ -793,7 +791,7 @@ class WaveTraceRunner:
             self.log(f"[CAM] heatmap stacked -> {heatmap_dataset_dir} "
                      f"({heatmap_dataset.X_image.shape[0]} windows, {mask_count} masks)")
 
-        if req.col_stage == "weapon" and is_per_link:
+        if request.col_stage == "weapon" and is_per_link:
             for (tx, rx), frames in frames_by_link.items():
                 if rx not in calibrated_node_ids:
                     continue
@@ -804,7 +802,7 @@ class WaveTraceRunner:
                 link_dataset_dir = f"{root}/cam_ds/weapon/node{rx}/link{tag}/{session_id}"
                 link_recording_dir = f"{root}/cam_rec/{session_id}/link{tag}_node{rx}"
                 save_recording(resampled_frames, link_recording_dir)
-                collect_source(RecordingSource(link_recording_dir), f"{req.calibration}/node{rx}",
+                collect_source(RecordingSource(link_recording_dir), f"{request.calibration}/node{rx}",
                                 link_dataset_dir, [], stage="weapon", labeler=labels,
                                 session_id=session_id, subject_id="cam",
                                 subtract_ic_baseline=True)

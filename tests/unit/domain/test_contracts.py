@@ -58,7 +58,7 @@ def test_rejects_non_positive_subcarrier_width():
 
 
 def test_accepts_none_subcarrier_width():
-    """None means "no capture width recorded" -- must stay valid, never coerced to a guess."""
+    """None means no capture width recorded; it must never be coerced to a guess."""
     contract = PipelineContract(**_valid_kwargs(subcarrier_width=None))
     assert contract.subcarrier_width is None
 
@@ -75,16 +75,14 @@ def test_to_dict_from_dict_round_trip():
 
 
 def test_to_dict_from_dict_round_trip_with_none_subcarrier_width():
-    """A contract with no recorded capture width must round-trip as None, not get coerced or
-    dropped -- this is the exact shape `PresenceHead`/`WeaponHead` persist to joblib."""
+    """The shape `PresenceHead`/`WeaponHead` persist to joblib: None must survive, not be dropped."""
     contract = PipelineContract(**_valid_kwargs(subcarrier_width=None))
     assert PipelineContract.from_dict(contract.to_dict()) == contract
     assert PipelineContract.from_dict(contract.to_dict()).subcarrier_width is None
 
 
 class _FakeModelConfig:
-    """Duck-typed stand-in for wavetrace.config.ModelConfig (only .window/.hop read;
-    derive_pipeline_contract does not read .k -- see PipelineContract.subcarrier_width)."""
+    """Duck-typed ModelConfig; derive_pipeline_contract reads only .window and .hop."""
 
     def __init__(self, window, hop, k):
         self.window = window

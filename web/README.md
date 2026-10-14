@@ -42,6 +42,8 @@ cd web/ui && npm install && npm run dev
 
 WebSocket channels: `/ws/inference`, `/ws/stream`, `/ws/logs`, `/ws/training`, `/ws/telemetry`, `/ws/device`.
 
+During inference `/ws/telemetry` sends one health entry per node. `gain_drift` is the node's live mean |H| over its calibrated quiet-room mean |H| (1.0 = gain unchanged) and `subcarriers` are its NBVI picks; a mesh run uses each `node{id}/` calibration, a single-calibration run applies that one calibration to every node.
+
 Warning: `/api/script/run` passes the script name and args to the shell via `device_hub.run_script`. Do not expose this server to untrusted users.
 
 ## Files

@@ -11,9 +11,7 @@ from wavetrace.application.ports import CsiSource
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NexmonSourceOptions(SourceOptions):
-    """Settings for `NexmonSource` (5 GHz nexmon CSI on a Raspberry Pi).
-
-    Exactly one capture mode must be selected: a `pcap_path` to replay, or `live=True` to spawn
+    """Exactly one capture mode must be selected: a `pcap_path` to replay, or `live=True` to spawn
     tcpdump on `iface`."""
 
     pcap_path: str | None = None
@@ -33,23 +31,20 @@ class NexmonSourceOptions(SourceOptions):
 
 
 class NexmonSource(CsiSource):
-    """5 GHz CSI from a Raspberry Pi running nexmon_csi (bcm43455c0; Pi 3B+/4B/5, fw 7_45_189).
-
-    Reads nexmon-encapsulated CSI from a pcap file (`pcap_path`, offline) or from a live tcpdump
-    on `iface`. `csiread.Nexmon` does the decoding, so only `_decode_file` changes if your csiread
-    version or chip differs.
+    """Decodes bcm43455c0 nexmon_csi (Pi 3B+/4B/5, fw 7_45_189). `csiread.Nexmon` does the decoding,
+    so only `_decode_file` changes for another csiread version or chip.
 
     node_id defaults to 100: ESP32 nodes are 1..6 and everything downstream reads node_id >= 100
     as the 5 GHz band."""
 
     def __init__(self, options: NexmonSourceOptions):
-        self._pcap = options.pcap_path
-        self._iface = options.iface
-        self._live = options.live
-        self._node = options.node_id
-        self._timeout = options.timeout_seconds
-        self._max = options.max_frames
-        self._bw = options.bandwidth_mhz
+        self._pcap_path = options.pcap_path
+        self._interface = options.iface
+        self._is_live = options.live
+        self._node_id = options.node_id
+        self._timeout_seconds = options.timeout_seconds
+        self._max_frames = options.max_frames
+        self._bandwidth_mhz = options.bandwidth_mhz
 
     def _csiread(self):
         try:
@@ -60,7 +55,7 @@ class NexmonSource(CsiSource):
 
     def _decode_file(self):
         csiread = self._csiread()
-        reader = csiread.Nexmon(self._pcap, chip="43455c0", bw=self._bw)
+        reader = csiread.Nexmon(self._pcap_path, chip="43455c0", bw=self._bandwidth_mhz)
         reader.read()
         csi = np.asarray(reader.csi)           # (F, S) complex
         raw_timestamps_s = getattr(reader, "sec", None)
@@ -70,27 +65,27 @@ class NexmonSource(CsiSource):
             frame = CsiFrame(1, csi.shape[1])
             frame.grid[0, :] = csi[i].astype(np.complex64)
             frame.timestamp = float(timestamps_s[i]) if i < timestamps_s.size else i / 100.0
-            frame.node_id = self._node
+            frame.node_id = self._node_id
             yield frame
 
     def _decode_live(self):
         import subprocess, tempfile, os, time as _time
         live_pcap_path = tempfile.NamedTemporaryFile(suffix=".pcap", delete=False).name
         tcpdump_process = subprocess.Popen(
-            ["tcpdump", "-i", self._iface, "-w", live_pcap_path, "dst port 5500"],
+            ["tcpdump", "-i", self._interface, "-w", live_pcap_path, "dst port 5500"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         count = 0
         try:
-            while self._max is None or count < self._max:
+            while self._max_frames is None or count < self._max_frames:
                 _time.sleep(0.3)
                 if os.path.getsize(live_pcap_path) < 64:
                     continue
-                self._pcap = live_pcap_path
+                self._pcap_path = live_pcap_path
                 for frame in self._decode_file():
                     yield frame
                     count += 1
-                    if self._max is not None and count >= self._max:
+                    if self._max_frames is not None and count >= self._max_frames:
                         return
                 open(live_pcap_path, "wb").close()    # truncate consumed chunk
         finally:
@@ -101,7 +96,7 @@ class NexmonSource(CsiSource):
                 pass
 
     def frames(self):
-        if self._live:
+        if self._is_live:
             yield from self._decode_live()
         else:
             yield from self._decode_file()

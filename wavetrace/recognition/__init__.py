@@ -1,6 +1,4 @@
-"""Training, evaluation and serving around the recognition heads.
-
-'presence' and 'weapon' are independent modes with no gate between them."""
+"""'presence' and 'weapon' are independent modes with no gate between them."""
 
 from wavetrace.domain.recognition import PresenceHead, WeaponHead
 from wavetrace.recognition.count import count_name

@@ -1,6 +1,6 @@
 # WaveTrace — Project Progress Report
 
-Last updated: 2026-09-28 | Tests passing: 369
+Last updated: 2026-09-28 | Tests passing: 371
 
 ---
 
@@ -298,7 +298,7 @@ The ESP32 AGC varies transmit power, which changes amplitudes in ways unrelated 
 
 **`domain/recognition/presence_head.py` — PresenceHead:**
 - Backend-agnostic: fit(), predict(), predict_proba(), save(), load()
-- Default backend: StandardScaler + MLPClassifier pipeline (scaler is inside the pipeline → applied automatically at inference)
+- Default backend: StandardScaler + MLPClassifier pipeline (scaler is inside the pipeline → applied automatically at inference); the MLP is the user-locked default (`ModelConfig.backend`)
 - SVM backend: CalibratedClassifierCV(SVC(), ensemble=False); ensemble=False fits one calibrator on the full training set; needed because sklearn 1.9 deprecated SVC(probability=True)
 
 **`evaluate.py` — Evaluation gate:**
@@ -1032,8 +1032,7 @@ Weapon datasets were collected in three physically distinct environments (differ
 - **Camera under FastAPI asyncio:** still requires manual `python3 -c "import cv2; cv2.VideoCapture(0)"` workaround; correct fix (ffmpeg subprocess) identified but not implemented
 - **col_spans still visible in Collect tab** when camera_collect=true; should be hidden
 - **ntp_server.py alignment:** must be running at the start of every session; whether it materially improves cross-node timestamp alignment in practice has not been measured
-- **Heatmap trainers pair masks with the wrong windows:** `web/streamer.py` and `scripts/collect_camera.py` `_train_heatmap` drop mask-less labels, then fit on `X_image[:len(masks)]`, so any mask-less window before the last masked one shifts every later mask onto the wrong CSI window. The two copies have also drifted apart (stage, mask test, raise vs skip). Fix is approved: one helper that selects rows by mask index.
-- **Found in the 2026-09 naming cleanup (unverified, not fixed):** `recognition/link.py` `LinkVoter.add` looks priors up by `int(node_id)`, so string-keyed priors silently fall back to weight 1.0; `diagnostics/telemetry.py` rank-AUC doesn't average tied ranks (many ic27 CV=0 ties); `calibration.py` writes NaN as a bare `NaN` token that strict `JSON.parse` rejects; `occupancy.py` metre conversion uses the cell index, not the cell centre (half-cell offset); `train.py` `train_weapon(config=…)` doesn't force `k` from the dataset's `K`; `evaluate.py` `tpr_gap` goes negative when the visible LOGO isn't binary; `output/guard.py` DriftMonitor claims no per-frame allocation but allocates temporaries.
+- **Found in the 2026-09 naming cleanup (unverified, not fixed):** `recognition/link.py` `LinkVoter.add` looks priors up by `int(node_id)`, so string-keyed priors silently fall back to weight 1.0; `calibration.py` writes NaN as a bare `NaN` token that strict `JSON.parse` rejects; `occupancy.py` metre conversion uses the cell index, not the cell centre (half-cell offset); `train.py` `train_weapon(config=…)` doesn't force `k` from the dataset's `K`; `evaluate.py` `tpr_gap` goes negative when the visible LOGO isn't binary; `output/guard.py` DriftMonitor claims no per-frame allocation but allocates temporaries.
 - **Duplicated layout knowledge:** `data/` paths `node<id>` / `link<tag>` are built and parsed by hand (`[4:]`, `[len("link"):]`) in `web/streamer.py`, `scripts/collect_camera.py`, `scripts/collect_weapon.py`, `experiments/weapon_experiments.py` and `recognition/weapon_serving.py`.
 
 ### 12.3 Designed Only (not tested)

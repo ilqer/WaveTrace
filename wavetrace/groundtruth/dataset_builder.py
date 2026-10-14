@@ -44,8 +44,7 @@ class Dataset:
 
 
 def _attach_labels(window_timestamps, label_source, tolerance):
-    """Attach aligned or callable labels to a list of window timestamps. Returns
-    (selected_indices, selected_labels, stats)."""
+    """Returns (selected_indices, selected_labels, stats)."""
     if callable(label_source):
         selected_labels = [label_source(window_timestamp) for window_timestamp in window_timestamps]
         selected_indices = list(range(len(window_timestamps)))
@@ -76,9 +75,7 @@ def build_dataset(
     subtract_baseline: bool = False,
     subtract_ic_baseline: bool = False,
 ) -> "Dataset":
-    """Build a labeled dataset from a CSI recording + a label source.
-
-    `label_source` is either a list[Label] - camera or replay, nearest-matched to each window with
+    """`label_source` is either a list[Label] - camera or replay, nearest-matched to each window with
     the sync error measured - or a callable t->Label on the same CSI clock, evaluated at every
     window timestamp and never dropped.
 
@@ -106,8 +103,8 @@ def build_dataset(
         image_baseline = build_image_baseline(calibration_result, locked=(gain_lock is not None))
     # IC background subtraction uses the RAW baseline (the IC path is always raw, gain_lock=None for
     # weapon), so no locked-basis rescale — just the quiet-room mean |H| per subcarrier.
-    ic_baseline = (np.asarray(calibration_result.baseline_mag, dtype=np.float32)
-                   if (subtract_ic_baseline and intercarrier) else None)
+    intercarrier_baseline = (np.asarray(calibration_result.baseline_mag, dtype=np.float32)
+                             if (subtract_ic_baseline and intercarrier) else None)
 
     # materialize once: iter_windows consumes the stream, and the fs estimate below re-indexes
     # frames[-1], which a bare generator would have exhausted by then.
@@ -123,7 +120,7 @@ def build_dataset(
                            if image_subcarrier_indices != list(calibration_result.subcarriers) else None),
         frame_average=frame_average,
         image_baseline=image_baseline,
-        ic_baseline=ic_baseline,
+        intercarrier_baseline=intercarrier_baseline,
     ):
         features_per_window.append(features.copy())
         images_per_window.append(image.copy())
@@ -154,7 +151,7 @@ def build_dataset(
         "num_subcarriers": int(frames[0].num_subcarriers),
         "subcarriers": [int(subcarrier_index) for subcarrier_index in calibration_result.subcarriers],
         "image_subcarriers": image_subcarrier_indices,
-        "subtract_ic_baseline": bool(ic_baseline is not None),
+        "subtract_ic_baseline": bool(intercarrier_baseline is not None),
         "window": window,
         "hop": hop,
         "tolerance": tolerance,
@@ -200,7 +197,7 @@ def build_stacked_dataset(
     frame_average: int = 1,
     subtract_baseline: bool = False,
 ) -> "Dataset":
-    """Build a labeled dataset from a multi-node CSI recording (nodes stacked as channels).
+    """Multi-node variant of build_dataset: nodes are stacked as channels.
 
     calibrations: dict[node_id -> (CalibrationResult, GainLock|None)].
     Frames from all nodes are demuxed by node_id and fed through iter_stacked_windows.
@@ -210,15 +207,15 @@ def build_stacked_dataset(
     per_node_frames = group_frames_by_node(frames)
 
     node_ids = sorted(calibrations.keys())
-    per_node_calib = {}
+    per_node_calibration = {}
     for node_id in node_ids:
         node_calibration, gain_lock = calibrations[node_id]
         node_image_subcarrier_indices = (getattr(node_calibration, "image_subcarriers", None)
                                          or list(node_calibration.subcarriers))
         node_image_baseline = (build_image_baseline(node_calibration, locked=(gain_lock is not None))
                                if subtract_baseline else None)
-        per_node_calib[node_id] = (list(node_calibration.subcarriers), node_image_subcarrier_indices,
-                                   gain_lock, node_image_baseline)
+        per_node_calibration[node_id] = (list(node_calibration.subcarriers), node_image_subcarrier_indices,
+                                         gain_lock, node_image_baseline)
 
     # all nodes share these widths; iter_stacked_windows has already checked that
     first_calibration = calibrations[node_ids[0]][0]
@@ -233,7 +230,7 @@ def build_stacked_dataset(
     intercarrier_features_per_window: list[np.ndarray] = []
     window_timestamps: list[float] = []
     for window_timestamp, features, image, intercarrier_features in iter_stacked_windows(
-        per_node_frames, per_node_calib, window=window, hop=hop, intercarrier=intercarrier,
+        per_node_frames, per_node_calibration, window=window, hop=hop, intercarrier=intercarrier,
         frame_average=frame_average, node_tolerance=node_tolerance,
     ):
         features_per_window.append(features.copy())
@@ -312,7 +309,7 @@ def save_dataset(dataset: "Dataset", out_dir) -> Path:
     np.save(dataset_dir / "images.npy", dataset.X_image)
     if dataset.X_intercarrier is not None:
         np.save(dataset_dir / "features_ic.npy", dataset.X_intercarrier)
-    with open(dataset_dir / "manifest.jsonl", "w") as f:
+    with open(dataset_dir / "manifest.jsonl", "w") as json_file:
         for i, label in enumerate(dataset.labels):
             record = {
                 "i": i,
@@ -327,28 +324,27 @@ def save_dataset(dataset: "Dataset", out_dir) -> Path:
                 "session_id": str(dataset.session_ids[i]) if dataset.session_ids.size else "",
                 "subject_id": str(dataset.subject_ids[i]) if dataset.subject_ids.size else "",
             }
-            f.write(json.dumps(record) + "\n")
-    with open(dataset_dir / "meta.json", "w") as f:
-        json.dump(dataset.meta, f, indent=2)
+            json_file.write(json.dumps(record) + "\n")
+    with open(dataset_dir / "meta.json", "w") as json_file:
+        json.dump(dataset.meta, json_file, indent=2)
     return dataset_dir
 
 
 def load_dataset(dataset_dir) -> "Dataset":
-    """Round-trip load of a saved dataset. O(n)."""
     dataset_dir = Path(dataset_dir)
     X_features = np.load(dataset_dir / "features.npy")
     X_image = np.load(dataset_dir / "images.npy")
     intercarrier_path = dataset_dir / "features_ic.npy"
     X_intercarrier = np.load(intercarrier_path) if intercarrier_path.exists() else None
-    with open(dataset_dir / "meta.json") as f:
-        meta = json.load(f)
+    with open(dataset_dir / "meta.json") as json_file:
+        meta = json.load(json_file)
     labels: list[Label] = []
     class_ids: list[int] = []
     timestamps: list[float] = []
     session_ids: list[str] = []
     subject_ids: list[str] = []
-    with open(dataset_dir / "manifest.jsonl") as f:
-        for line in f:
+    with open(dataset_dir / "manifest.jsonl") as json_file:
+        for line in json_file:
             record = json.loads(line)
             session_ids.append(record.get("session_id", ""))
             subject_ids.append(record.get("subject_id", ""))

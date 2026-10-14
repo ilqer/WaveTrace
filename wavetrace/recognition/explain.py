@@ -1,9 +1,4 @@
-"""What the model is paying attention to, for the dashboard.
-
-Two views of a CNN: a static per-channel weight, the L2 norm of the first Conv2d's filters, and a
-per-window importance from ablation - zero a channel and measure the confidence it costs. For
-MLP/SVM there is permutation importance instead. UI cadence only, never the hot path.
-"""
+"""UI cadence only, never the hot path."""
 
 import numpy as np
 
@@ -69,8 +64,8 @@ def feature_node_importance(
 
 
 def confusion(y_true, y_pred, num_classes=2) -> dict:
-    """Confusion matrix (rows=true, cols=pred) + TPR/FPR for the binary weapon gate. Labels outside
-    [0, num_classes) are silently dropped."""
+    """Rows = true, cols = pred; adds tpr/fp_rate when binary. Labels outside [0, num_classes) are
+    silently dropped."""
     y_true = np.asarray(y_true).astype(int)
     y_pred = np.asarray(y_pred).astype(int)
     matrix = np.zeros((num_classes, num_classes), dtype=int)

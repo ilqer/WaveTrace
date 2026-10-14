@@ -1,7 +1,3 @@
-"""A trained model's resample rate, window/hop framing, and subcarrier width, declared once and
-persisted with the model (`PresenceHead.save`/`WeaponHead.save`) so serving loads it instead of
-re-declaring the numbers."""
-
 from dataclasses import asdict, dataclass
 
 DEFAULT_TARGET_SAMPLE_RATE_HZ: float = 100.0
@@ -37,7 +33,6 @@ class PipelineContract:
             raise ValueError("subcarrier_width must be positive")
 
     def to_dict(self) -> dict:
-        """For joblib/json artifact storage."""
         return asdict(self)
 
     @classmethod

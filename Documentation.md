@@ -58,7 +58,7 @@ Pi 5 GHz nexmon       ─┘         │
 
 **Training flow:** Record sessions with `collect_*.py`, which saves raw CSI to disk and trains a model. The `run_*.py` scripts load that model and run inference on live UDP data.
 
-**Web dashboard:** An optional React UI (`web/ui/`) that shows live spectrograms, per-node health, and predictions over WebSockets. Useful for demos and debugging.
+**Web dashboard:** An optional React UI (`web/ui/`) that shows live spectrograms, per-node health, and predictions over WebSockets. Useful for demos and debugging. Per-node health includes gain drift against that node's calibration (live mean |H| / calibrated quiet-room mean |H|, flagged when it moves more than 20%).
 
 ---
 
@@ -113,7 +113,7 @@ Output goes to `output/calib/`:
 
 Presence and weapon each train a separate head. They don't share the same features.
 
-**Presence**: trains on `X_features`. Default backend is a calibrated SVM (`CalibratedClassifierCV(SVC())`). Also available: `mlp`, `variance`.
+**Presence**: trains on `X_features`. Default backend is an MLP (`StandardScaler` + `MLPClassifier`, `ModelConfig.backend = "mlp"`). Also available: `svm` (`CalibratedClassifierCV(SVC())`), `variance`.
 
 **Weapon**: 4 backends. All except `cnn` train on `X_intercarrier`:
 - `variance` — threshold on column 9 of the IC block (mean σ² of the σ² series). No model file, just a threshold.
@@ -238,7 +238,7 @@ web/
 ├── device_ctl.py     DeviceHub — serial monitor, firmware flash, Pi SSH, script runner
 └── ui/               React + Vite + TypeScript dashboard
 
-tests/                pytest suite (369 tests; all offline on synthetic data — no hardware needed)
+tests/                pytest suite (378 tests; all offline on synthetic data — no hardware needed)
 data/                 git-ignored; created by the collect scripts
 ```
 
@@ -526,7 +526,7 @@ Do not report accuracy from a random within-session split.
 - CLI: `wavetrace capture / calibrate / collect-data / train / localize / run`.
 - Web dashboard: spectrograms, node health, live predictions. (Train button returns placeholder metrics — real training runs from the terminal.)
 - Pi 5 GHz node: `firmware/pi/` is implemented and tested against `wavetrace/adapters/source/wire_format.py` via `test_pi_publisher.py`. Not yet validated on real Pi hardware.
-- All 369 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
+- All 371 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
 
 ### What to Verify on Real Hardware Before Trusting Results
 
@@ -626,7 +626,7 @@ source .venv/bin/activate
 pytest tests/ -q
 ```
 
-All tests run on synthetic data. No hardware needed. Expected: 369 passed. If a test fails after a code change, fix the test and the code in the same commit.
+All tests run on synthetic data. No hardware needed. Expected: 378 passed. If a test fails after a code change, fix the test and the code in the same commit.
 
 ### Rebuilding the C++ extension after a change in `native/`
 
@@ -698,7 +698,7 @@ If you add hardware with a different bandwidth (e.g. HT80 on the Pi), create a n
 | Data directory layout | [`data/README.md`](data/README.md) |
 | CLI flags (all subcommands) | [`wavetrace/cli.py`](wavetrace/cli.py) |
 | Development history and design decisions | `projectProgress.md` |
-| Next radio front end (UWB) — hardware research | [`docs/HARDWARE_SELECTION.md`](docs/HARDWARE_SELECTION.md) |
+| Next radio front end (UWB) — hardware research | `docs/HARDWARE_SELECTION.md` (local only: `docs/` is gitignored) |
 
 ---
 

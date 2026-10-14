@@ -17,7 +17,7 @@ from wavetrace import CsiFrame, GainLock, select_subcarriers_nbvi, valid_subcarr
 class CalibrationResult:
     reference_scale: float       # GainLock reference amplitude level (NaN if gain lock disabled)
     subcarriers: list[int]       # NBVI-selected, non-consecutive subcarrier indices
-    num_baseline: int            # baseline frames observed
+    num_baseline: int
     baseline_mag: np.ndarray     # mean |H| per subcarrier over the quiet baseline, shape (S,)
     baseline_diff: np.ndarray    # mean CFO-free differential channel H(k)·conj(H(k-1)), complex, (S-1,)
     # ALL noise-gate-passing subcarriers, ascending — the CNN image rows
@@ -49,8 +49,6 @@ def build_image_baseline(result: "CalibrationResult", *, locked: bool) -> np.nda
 
 
 class Calibration:
-    """Accumulate baseline frames, produce CalibrationResult."""
-
     def __init__(
         self,
         *,
@@ -69,7 +67,6 @@ class Calibration:
         self._differential_channels: list[np.ndarray] = []
 
     def observe(self, frame: CsiFrame) -> None:
-        """Add one quiet-baseline frame. O(n)."""
         if self._gain_lock is not None:
             self._gain_lock.observe(frame)
         csi = np.asarray(frame.grid)
@@ -78,7 +75,6 @@ class Calibration:
 
     @property
     def ready(self) -> bool:
-        """True when baseline_packets frames observed."""
         return len(self._amplitudes) >= self._baseline_packets
 
     @property
@@ -93,7 +89,8 @@ class Calibration:
         return self._gain_lock
 
     def finalize(self) -> CalibrationResult:
-        """Finalize calibration: lock gain, run NBVI. Returns CalibrationResult."""
+        """Also locks the GainLock exposed by `gain_lock` (when enabled). Raises ValueError with no
+        frames or fewer than `baseline_packets`."""
         if not self._amplitudes:
             raise ValueError("Calibration: no baseline frames observed")
         if not self.ready:
@@ -125,7 +122,6 @@ class Calibration:
 
 
 def save_calibration(result: CalibrationResult, out_dir) -> Path:
-    """Serialize a CalibrationResult to out_dir (meta.json + .npy), mirroring save_dataset. O(S)."""
     directory = Path(out_dir)
     directory.mkdir(parents=True, exist_ok=True)
     np.save(directory / "baseline_mag.npy", np.asarray(result.baseline_mag, dtype=np.float32))
@@ -143,7 +139,7 @@ def save_calibration(result: CalibrationResult, out_dir) -> Path:
 
 
 def load_calibration(calibration_dir) -> tuple[CalibrationResult, GainLock | None]:
-    """Round-trip saved calibration. Returns (result, gain_lock). O(S)."""
+    """gain_lock is None when the saved reference_scale is NaN (calibrated without a gain lock)."""
     directory = Path(calibration_dir)
     with open(directory / "meta.json") as meta_file:
         meta = json.load(meta_file)

@@ -1,10 +1,4 @@
-"""Pins OccupancyGrid/_GridKalman/HeatmapTrack behaviour and their options-object validation.
-
-None of the three is exported from wavetrace/recognition/__init__.py and nothing outside
-occupancy.py constructs them, so the module is otherwise dead code. These tests exist so that it can
-be wired into the heatmap serving path or deleted safely, without first having to characterize
-undocumented behaviour.
-"""
+"""Pins OccupancyGrid/_GridKalman/HeatmapTrack behaviour and their options-object validation."""
 
 import numpy as np
 import pytest
@@ -46,17 +40,17 @@ def test_occupancy_options_rejects_invalid_ranges():
 
 
 def test_grid_kalman_defaults_match_the_previous_constructor_literals():
-    kf = _GridKalman()
-    assert kf._qa == pytest.approx(2.0 ** 2)
-    assert kf._rs == pytest.approx(1.5 ** 2)
-    assert kf._gate == pytest.approx(9.0)
+    kalman = _GridKalman()
+    assert kalman._qa == pytest.approx(2.0 ** 2)
+    assert kalman._rs == pytest.approx(1.5 ** 2)
+    assert kalman._gate == pytest.approx(9.0)
 
 
 def test_grid_kalman_honors_custom_options():
-    kf = _GridKalman(KalmanOptions(acceleration_std=5.0, measurement_std=0.25, gate=50.0))
-    assert kf._qa == pytest.approx(5.0 ** 2)
-    assert kf._rs == pytest.approx(0.25 ** 2)
-    assert kf._gate == pytest.approx(50.0)
+    kalman = _GridKalman(KalmanOptions(acceleration_std=5.0, measurement_std=0.25, gate=50.0))
+    assert kalman._qa == pytest.approx(5.0 ** 2)
+    assert kalman._rs == pytest.approx(0.25 ** 2)
+    assert kalman._gate == pytest.approx(50.0)
 
 
 def test_grid_kalman_options_rejects_non_positive_fields():
@@ -69,12 +63,12 @@ def test_grid_kalman_options_rejects_non_positive_fields():
 
 
 def test_grid_kalman_first_update_passes_through_then_smooths():
-    kf = _GridKalman()
-    r0, c0, measured0 = kf.update(1.0, 2.0, timestamp_s=0.0)
-    assert (r0, c0, measured0) == (1.0, 2.0, True)  # first sample seeds state directly
-    r1, c1, measured1 = kf.update(1.0, 2.0, timestamp_s=1.0, confidence=1.0)
-    assert measured1 is True
-    assert r1 == pytest.approx(1.0, abs=0.5) and c1 == pytest.approx(2.0, abs=0.5)
+    kalman = _GridKalman()
+    row_0, column_0, is_measured_0 = kalman.update(1.0, 2.0, timestamp_s=0.0)
+    assert (row_0, column_0, is_measured_0) == (1.0, 2.0, True)  # first sample seeds state directly
+    row_1, column_1, is_measured_1 = kalman.update(1.0, 2.0, timestamp_s=1.0, confidence=1.0)
+    assert is_measured_1 is True
+    assert row_1 == pytest.approx(1.0, abs=0.5) and column_1 == pytest.approx(2.0, abs=0.5)
 
 
 def test_heatmap_track_defaults_and_update_shape():
@@ -102,8 +96,8 @@ def test_heatmap_track_reset_honors_its_own_kalman_options_not_defaults():
 
     track.reset()
 
-    assert track.occ.state.sum() == 0.0                    # occupancy grid cleared
-    assert track._kalman._x is None                        # kalman state cleared (fresh instance)
+    assert track.occ.state.sum() == 0.0
+    assert track._kalman._x is None
     # the custom tuning survives the reset -- reconstructed from the stored options, not defaults
     assert track._kalman._qa == pytest.approx(7.0 ** 2)
     assert track._kalman._rs == pytest.approx(0.5 ** 2)

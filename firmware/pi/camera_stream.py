@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Pi-side MJPEG camera uploader. Streams feed for ground-truth labeling.
+"""Pi-side MJPEG camera stream for ground-truth labeling (training only).
 Run on Pi: python3 camera_stream.py
 Read at: http://<pi-ip>:8090/stream.mjpg
-Training only. Needs picamera2: sudo apt install -y python3-picamera2
+Needs picamera2: sudo apt install -y python3-picamera2
 """
 import io
 import socketserver
@@ -49,7 +49,7 @@ class Handler(server.BaseHTTPRequestHandler):
                 self.wfile.write(frame)
                 self.wfile.write(b"\r\n")
         except (BrokenPipeError, ConnectionResetError):
-            pass  # client disconnected, normal
+            pass
 
 
 class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):

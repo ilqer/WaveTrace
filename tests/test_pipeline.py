@@ -10,7 +10,7 @@ import json
 import numpy as np
 import pytest
 
-from wavetrace.synthetic import generate_stream
+from fixtures.synthetic_csi import generate_quiet_baseline
 from wavetrace.synthetic import generate_paired_recording
 from wavetrace import CsiFrame, Label, RecognitionResult
 from wavetrace.calibration import Calibration, load_calibration, save_calibration
@@ -30,20 +30,20 @@ from wavetrace.recognition import (
     train_weapon,
 )
 
-NUM_ANT, NUM_SUB, FS = 2, 32, 100.0
+NUM_ANTENNAS, NUM_SUBCARRIERS, SAMPLE_RATE_HZ = 2, 32, 100.0
 
 
 def _baseline():
-    frames, _ = generate_stream(num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS,
-                               num_frames=60, perturbation_hz=0.0, perturbation_depth=0.0, cfo_hz=0.0,
-                               noise_std=0.005, seed=7)
-    return frames
+    return generate_quiet_baseline(
+        num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS, sample_rate_hz=SAMPLE_RATE_HZ,
+        num_frames=60, seed=7)
 
 
-def _weapon_recording(seed=200, duration=10.0):
+def _weapon_recording(seed=200, duration_s=10.0):
     frames, _, _ = generate_paired_recording(
-        num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS, duration_s=duration,
-        camera_fps=30.0, presence_spans=[(0.0, duration)], presence_turbulence_std=0.10,
+        num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS, sample_rate_hz=SAMPLE_RATE_HZ,
+        duration_s=duration_s, camera_frame_rate_hz=30.0, presence_spans=[(0.0, duration_s)],
+        presence_turbulence_std=0.10,
         weapon_spans=[(2.5, 7.5)], weapon_signature_depth=0.5, seed=seed)
     return frames
 
@@ -51,62 +51,69 @@ def _weapon_recording(seed=200, duration=10.0):
 def _presence_recording(seed=300, duration=10.0):
     # Turbulence only inside the presence span. Windows outside are 'absent'.
     frames, _, _ = generate_paired_recording(
-        num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS, duration_s=duration,
-        camera_fps=30.0, presence_spans=[(3.0, 7.0)], presence_turbulence_std=0.20,
+        num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS, sample_rate_hz=SAMPLE_RATE_HZ,
+        duration_s=duration, camera_frame_rate_hz=30.0, presence_spans=[(3.0, 7.0)],
+        presence_turbulence_std=0.20,
         amplitude_hz=2.0, amplitude_depth=0.45, seed=seed)
     return frames
 
 
 def test_recording_roundtrip(tmp_path):
-    frames = _weapon_recording(duration=2.0)
+    frames = _weapon_recording(duration_s=2.0)
     save_recording(frames, tmp_path / "rec")
-    rec = list(load_recording(tmp_path / "rec"))
-    assert len(rec) == len(frames)
-    assert all(np.allclose(np.asarray(a.grid), np.asarray(b.grid)) for a, b in zip(frames, rec))
-    assert all(a.timestamp == b.timestamp for a, b in zip(frames, rec))
+    loaded_frames = list(load_recording(tmp_path / "rec"))
+    assert len(loaded_frames) == len(frames)
+    assert all(np.allclose(np.asarray(original.grid), np.asarray(loaded.grid))
+               for original, loaded in zip(frames, loaded_frames))
+    assert all(original.timestamp == loaded.timestamp for original, loaded in zip(frames, loaded_frames))
     assert sum(1 for _ in RecordingSource(tmp_path / "rec").frames()) == len(frames)
 
 
 def test_calibration_roundtrip_rebuilds_lock(tmp_path):
-    cal = Calibration(baseline_packets=50)
-    for fr in _baseline():
-        cal.observe(fr)
-    res = cal.finalize()
-    save_calibration(res, tmp_path / "cal")
-    res2, gl2 = load_calibration(tmp_path / "cal")
-    assert res.subcarriers == res2.subcarriers
-    assert np.allclose(res.baseline_mag, res2.baseline_mag)
-    assert gl2 is not None and gl2.locked and gl2.reference_scale == res.reference_scale
+    calibration = Calibration(baseline_packets=50)
+    for frame in _baseline():
+        calibration.observe(frame)
+    calibration_result = calibration.finalize()
+    save_calibration(calibration_result, tmp_path / "cal")
+    reloaded_result, reloaded_gain_lock = load_calibration(tmp_path / "cal")
+    assert calibration_result.subcarriers == reloaded_result.subcarriers
+    assert np.allclose(calibration_result.baseline_mag, reloaded_result.baseline_mag)
+    assert reloaded_gain_lock is not None and reloaded_gain_lock.locked and (
+        reloaded_gain_lock.reference_scale == calibration_result.reference_scale)
     # Rebuilt gain lock applies identically to the original.
-    a = _weapon_recording(duration=0.2)[0]
-    b = CsiFrame(NUM_ANT, NUM_SUB); b.timestamp = a.timestamp; b.grid[:, :] = np.asarray(a.grid)
-    cal.gain_lock.apply(a); gl2.apply(b)
-    assert np.allclose(np.asarray(a.grid), np.asarray(b.grid))
+    original_frame = _weapon_recording(duration_s=0.2)[0]
+    copied_frame = CsiFrame(NUM_ANTENNAS, NUM_SUBCARRIERS)
+    copied_frame.timestamp = original_frame.timestamp
+    copied_frame.grid[:, :] = np.asarray(original_frame.grid)
+    calibration.gain_lock.apply(original_frame)
+    reloaded_gain_lock.apply(copied_frame)
+    assert np.allclose(np.asarray(original_frame.grid), np.asarray(copied_frame.grid))
 
 
 def test_calibration_disabled_lock_roundtrips_to_none(tmp_path):
-    cal = Calibration(baseline_packets=50, use_gain_lock=False)
-    for fr in _baseline():
-        cal.observe(fr)
-    save_calibration(cal.finalize(), tmp_path / "cal")
-    _, gl = load_calibration(tmp_path / "cal")
-    assert gl is None
+    calibration = Calibration(baseline_packets=50, use_gain_lock=False)
+    for frame in _baseline():
+        calibration.observe(frame)
+    save_calibration(calibration.finalize(), tmp_path / "cal")
+    _, gain_lock = load_calibration(tmp_path / "cal")
+    assert gain_lock is None
 
 
 def test_run_features_match_build_dataset(tmp_path):
     """iter_windows (serving) must yield the SAME features build_dataset (training) stores."""
-    frames = _weapon_recording(duration=4.0)
+    frames = _weapon_recording(duration_s=4.0)
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     result, gain_lock = load_calibration(tmp_path / "cal")
     # Training arrays: using raw mags, gain_lock=None.
-    ds = build_dataset(frames, result, None, ScriptedLabeler([(2.5, 7.5, True)]),
-                       window=32, hop=16, intercarrier=True)
-    feats, ics = [], []
-    for _, f, _img, ic in iter_windows(frames, result.subcarriers, None, window=32, hop=16,
-                                       intercarrier=True):
-        feats.append(f.copy()); ics.append(ic.copy())
-    assert np.allclose(np.stack(feats), ds.X_features)
-    assert np.allclose(np.stack(ics), ds.X_intercarrier)
+    dataset = build_dataset(frames, result, None, ScriptedLabeler([(2.5, 7.5, True)]),
+                            window=32, hop=16, intercarrier=True)
+    window_features, window_intercarrier_features = [], []
+    for _, features, _image, intercarrier_features in iter_windows(
+            frames, result.subcarriers, None, window=32, hop=16, intercarrier=True):
+        window_features.append(features.copy())
+        window_intercarrier_features.append(intercarrier_features.copy())
+    assert np.allclose(np.stack(window_features), dataset.X_features)
+    assert np.allclose(np.stack(window_intercarrier_features), dataset.X_intercarrier)
 
 
 class _FakeHead:
@@ -117,79 +124,85 @@ class _FakeHead:
 
 
 def test_serving_plan_table():
-    f = np.arange(3.0); i = np.zeros((2, 2)); ic = np.arange(5.0)
-    lock, inter, pick = plan_input("presence", _FakeHead("mlp"))
-    assert (lock, inter) == (True, False) and np.array_equal(pick(f, i, ic), f)
-    lock, inter, pick = plan_input("weapon", _FakeHead("variance", "ic27"))
-    assert (lock, inter) == (False, True) and np.array_equal(pick(f, i, ic), ic)
-    lock, inter, pick = plan_input("weapon", _FakeHead("mlp", "fusion"))
-    assert (lock, inter) == (True, True) and np.array_equal(pick(f, i, ic), np.hstack([ic, f]))
-    lock, inter, pick = plan_input("weapon", _FakeHead("cnn", "cnn"))
-    assert (lock, inter) == (False, False) and np.array_equal(pick(f, i, ic), i.reshape(-1))
+    features = np.arange(3.0)
+    image = np.zeros((2, 2))
+    intercarrier_features = np.arange(5.0)
+    should_apply_lock, needs_intercarrier, pick_row = plan_input("presence", _FakeHead("mlp"))
+    assert (should_apply_lock, needs_intercarrier) == (True, False) and np.array_equal(
+        pick_row(features, image, intercarrier_features), features)
+    should_apply_lock, needs_intercarrier, pick_row = plan_input("weapon", _FakeHead("variance", "ic27"))
+    assert (should_apply_lock, needs_intercarrier) == (False, True) and np.array_equal(
+        pick_row(features, image, intercarrier_features), intercarrier_features)
+    should_apply_lock, needs_intercarrier, pick_row = plan_input("weapon", _FakeHead("mlp", "fusion"))
+    assert (should_apply_lock, needs_intercarrier) == (True, True) and np.array_equal(
+        pick_row(features, image, intercarrier_features), np.hstack([intercarrier_features, features]))
+    should_apply_lock, needs_intercarrier, pick_row = plan_input("weapon", _FakeHead("cnn", "cnn"))
+    assert (should_apply_lock, needs_intercarrier) == (False, False) and np.array_equal(
+        pick_row(features, image, intercarrier_features), image.reshape(-1))
 
 
 def test_end_to_end_weapon(tmp_path):
     frames = _weapon_recording()
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
-    _, ds = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds",
-                           [(2.5, 7.5)], stage="weapon", window=32, hop=16,
-                           session_id="s0", subject_id="u0")
-    assert ds.X_intercarrier.shape[1] == 27
+    _, dataset = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds",
+                                [(2.5, 7.5)], stage="weapon", window=32, hop=16,
+                                session_id="s0", subject_id="u0")
+    assert dataset.X_intercarrier.shape[1] == 27
     train_weapon([tmp_path / "ds"], out_dir=tmp_path / "m", feature_mode="ic27")
 
-    buf = io.StringIO()
-    with JsonlPublisher(buf, mode="weapon") as pub:
+    buffer = io.StringIO()
+    with JsonlPublisher(buffer, mode="weapon") as pub:
         results = run_inference(SyntheticSource(frames), tmp_path / "cal",
                                 tmp_path / "m" / "model.joblib", "weapon", pub)
-    lines = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
+    lines = [json.loads(line) for line in buffer.getvalue().strip().split("\n")]
     # N windows generates N valid lines. Serving window count must equal dataset sample count.
-    assert len(lines) == len(results) == ds.y.size
-    assert all(set(l) == {"t", "class", "conf", "mode", "bbox", "keypoints"} for l in lines)
-    # Class verdicts must separate weapon span from empty room windows.
-    inside = [l["class"] for l in lines if 2.5 <= l["t"] < 7.5]
-    outside = [l["class"] for l in lines if l["t"] < 2.5 or l["t"] >= 7.5]
+    assert len(lines) == len(results) == dataset.y.size
+    assert all(set(line) == {"t", "class", "conf", "mode", "bbox", "keypoints"} for line in lines)
+    # 2.5..7.5 s is the recording's weapon span; windows outside it are the clear room
+    inside = [line["class"] for line in lines if 2.5 <= line["t"] < 7.5]
+    outside = [line["class"] for line in lines if line["t"] < 2.5 or line["t"] >= 7.5]
     assert np.mean(inside) > 0.6 and np.mean(outside) < 0.25
 
 
 def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
-    frames = _weapon_recording(duration=4.0)
+    frames = _weapon_recording(duration_s=4.0)
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     grid = 4
 
-    def camera_label(t):
-        present = 2.5 <= t <= 7.5
-        lab = Label()
-        lab.class_id = 1 if present else 0
-        lab.name = "weapon" if present else "background"
-        lab.timestamp = float(t)
-        lab.mask = [1.0 if present else 0.0] * (grid * grid)
-        lab.mask_grid = grid
-        return lab
+    def camera_label(timestamp_s):
+        present = 2.5 <= timestamp_s <= 7.5
+        label = Label()
+        label.class_id = 1 if present else 0
+        label.name = "weapon" if present else "background"
+        label.timestamp = float(timestamp_s)
+        label.mask = [1.0 if present else 0.0] * (grid * grid)
+        label.mask_grid = grid
+        return label
 
-    _, ds = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [],
-                           stage="weapon", window=32, hop=16, labeler=camera_label, tier="concealed")
+    _, dataset = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [],
+                                stage="weapon", window=32, hop=16, labeler=camera_label, tier="concealed")
     from wavetrace.groundtruth import load_dataset
     reloaded = load_dataset(tmp_path / "ds")
     assert reloaded.meta["tier"] == "concealed"
-    assert reloaded.y.size > 0 and all(l.mask_grid == grid for l in reloaded.labels)
-    assert all(len(l.mask) == grid * grid for l in reloaded.labels)
+    assert reloaded.y.size > 0 and all(label.mask_grid == grid for label in reloaded.labels)
+    assert all(len(label.mask) == grid * grid for label in reloaded.labels)
 
 
 def test_end_to_end_presence(tmp_path):
     frames = _presence_recording()
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
-    _, ds = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds",
-                           [(3.0, 7.0)], stage="presence", window=32, hop=16,
-                           session_id="s0", subject_id="u0")
-    assert ds.X_intercarrier is None and set(np.unique(ds.y)) == {0, 1}
+    _, dataset = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds",
+                                [(3.0, 7.0)], stage="presence", window=32, hop=16,
+                                session_id="s0", subject_id="u0")
+    assert dataset.X_intercarrier is None and set(np.unique(dataset.y)) == {0, 1}
     train_presence([tmp_path / "ds"], out_dir=tmp_path / "m")
-    buf = io.StringIO()
-    with JsonlPublisher(buf, mode="presence") as pub:
+    buffer = io.StringIO()
+    with JsonlPublisher(buffer, mode="presence") as pub:
         results = run_inference(SyntheticSource(frames), tmp_path / "cal",
                                 tmp_path / "m" / "model.joblib", "presence", pub)
-    assert len(results) == ds.y.size
-    lines = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
-    assert all(l["mode"] == "presence" for l in lines)
+    assert len(results) == dataset.y.size
+    lines = [json.loads(line) for line in buffer.getvalue().strip().split("\n")]
+    assert all(line["mode"] == "presence" for line in lines)
 
 
 def test_run_vote_appends_segment_verdict(tmp_path):
@@ -206,7 +219,7 @@ def test_run_vote_appends_segment_verdict(tmp_path):
 
 
 def test_inference_latency_under_8ms(tmp_path):
-    frames = _weapon_recording(duration=4.0)
+    frames = _weapon_recording(duration_s=4.0)
     calibrate_source(SyntheticSource(_baseline()), tmp_path / "cal", baseline_packets=50)
     collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [(2.5, 7.5)],
                    stage="weapon", window=32, hop=16)
@@ -217,7 +230,10 @@ def test_inference_latency_under_8ms(tmp_path):
 
 
 def test_result_to_dict_schema():
-    r = RecognitionResult(); r.class_id = 1; r.confidence = 0.9; r.timestamp = 1.2
-    d = result_to_dict(r, mode="weapon")
-    assert d == {"t": 1.2, "class": 1, "conf": pytest.approx(0.9), "mode": "weapon",
-                 "bbox": None, "keypoints": []}
+    recognition_result = RecognitionResult()
+    recognition_result.class_id = 1
+    recognition_result.confidence = 0.9
+    recognition_result.timestamp = 1.2
+    result_dict = result_to_dict(recognition_result, mode="weapon")
+    assert result_dict == {"t": 1.2, "class": 1, "conf": pytest.approx(0.9), "mode": "weapon",
+                           "bbox": None, "keypoints": []}

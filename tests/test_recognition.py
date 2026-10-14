@@ -8,20 +8,18 @@ import json
 import numpy as np
 import pytest
 
-from wavetrace.synthetic import generate_stream
 from wavetrace.synthetic import generate_paired_recording
 from wavetrace.adapters.recognition.heads import (
     build_presence_head,
     build_weapon_head,
     load_presence_head,
 )
-from wavetrace.calibration import Calibration
 from wavetrace.config import ModelConfig
 from wavetrace.groundtruth import (
     ScriptedLabeler,
     build_dataset,
     load_dataset,
-    presence_label_fn,
+    presence_label_function,
     save_dataset,
 )
 from wavetrace.recognition import (
@@ -34,34 +32,24 @@ from wavetrace.recognition import (
     segmenter_baseline,
     train_presence,
 )
+from fixtures.synthetic_csi import calibrate_quiet_baseline
 
-NUM_ANT = 2
-NUM_SUB = 32
-FS = 100.0
+NUM_ANTENNAS = 2
+NUM_SUBCARRIERS = 32
+SAMPLE_RATE_HZ = 100.0
 SPAN = (2.5, 7.5)  # presence span (s) inside each 10 s recording
 # turbulence interleaved across subjects so every train fold sees weak AND strong sessions
 RECORDINGS = [("s0", "u0", 100, 0.15), ("s1", "u1", 101, 0.20),
               ("s2", "u1", 102, 0.25), ("s3", "u0", 103, 0.30)]
 
 
-def _calibrate():
-    """Quiet-baseline Calibration -> (result, locked GainLock) shared by all recordings."""
-    baseline, _ = generate_stream(
-        num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS, num_frames=60,
-        perturbation_hz=0.0, perturbation_depth=0.0, cfo_hz=0.0, noise_std=0.005, seed=7,
-    )
-    cal = Calibration(baseline_packets=50)
-    for fr in baseline:
-        cal.observe(fr)
-    return cal.finalize(), cal.gain_lock
-
-
-def _recording(sess, subj, seed, turb, duration=10.0):
+def _recording(session_id, subject_id, seed, turbulence_std, duration_s=10.0):
     """Presence recording: wobble in both classes. Per-subcarrier turbulence only during presence."""
     frames, _, truth = generate_paired_recording(
-        num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS, duration_s=duration,
-        camera_fps=30.0, presence_spans=[SPAN], amplitude_hz=2.0, amplitude_depth=0.45,
-        presence_turbulence_std=turb, session_id=sess, subject_id=subj, seed=seed,
+        num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS, sample_rate_hz=SAMPLE_RATE_HZ,
+        duration_s=duration_s, camera_frame_rate_hz=30.0, presence_spans=[SPAN],
+        amplitude_hz=2.0, amplitude_depth=0.45,
+        presence_turbulence_std=turbulence_std, session_id=session_id, subject_id=subject_id, seed=seed,
     )
     return frames, truth
 
@@ -69,18 +57,20 @@ def _recording(sess, subj, seed, turb, duration=10.0):
 @pytest.fixture(scope="module")
 def presence_data():
     """4 recordings -> labeled datasets -> concatenated (X, y, groups) + CSI images."""
-    result, gain = _calibrate()
+    result, gain = calibrate_quiet_baseline(
+        num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS, sample_rate_hz=SAMPLE_RATE_HZ,
+        num_frames=60, seed=7, baseline_packets=50)
     datasets = []
-    for sess, subj, seed, turb in RECORDINGS:
-        frames, _ = _recording(sess, subj, seed, turb)
-        labeler = ScriptedLabeler([(*SPAN, True)], label_fn=presence_label_fn)
+    for session_id, subject_id, seed, turbulence_std in RECORDINGS:
+        frames, _ = _recording(session_id, subject_id, seed, turbulence_std)
+        labeler = ScriptedLabeler([(*SPAN, True)], label_function=presence_label_function)
         datasets.append(build_dataset(frames, result, gain, labeler, window=32, hop=16,
-                                      session_id=sess, subject_id=subj))
+                                      session_id=session_id, subject_id=subject_id))
     X, y, session_ids, subject_ids = concat_datasets(datasets)
     return {
         "datasets": datasets,
         "X": X, "y": y, "sess": session_ids, "subj": subject_ids,
-        "X_image": np.concatenate([d.X_image for d in datasets]),
+        "X_image": np.concatenate([dataset.X_image for dataset in datasets]),
         "K": len(result.subcarriers),
         "config": ModelConfig(stage="presence", k=len(result.subcarriers)),
     }
@@ -88,38 +78,40 @@ def presence_data():
 
 def test_presence_turbulence_separates_features(presence_data):
     # Present windows must have higher per-subcarrier temporal std (idx 1).
-    X, y, K = presence_data["X"], presence_data["y"], presence_data["K"]
-    stds = X.reshape(X.shape[0], K, 9)[:, :, 1].mean(axis=1)
-    assert stds[y == 1].mean() > 1.5 * stds[y == 0].mean()
+    X, y, subcarrier_count = presence_data["X"], presence_data["y"], presence_data["K"]
+    subcarrier_temporal_std = X.reshape(X.shape[0], subcarrier_count, 9)[:, :, 1].mean(axis=1)
+    assert subcarrier_temporal_std[y == 1].mean() > 1.5 * subcarrier_temporal_std[y == 0].mean()
 
 
 def test_turbulence_touches_only_presence_spans():
-    kwargs = dict(num_antennas=NUM_ANT, num_subcarriers=NUM_SUB, sample_rate_hz=FS, duration_s=2.0,
-                  camera_fps=30.0, presence_spans=[(0.5, 1.0)], seed=11)
+    kwargs = dict(num_antennas=NUM_ANTENNAS, num_subcarriers=NUM_SUBCARRIERS,
+                  sample_rate_hz=SAMPLE_RATE_HZ, duration_s=2.0, camera_frame_rate_hz=30.0,
+                  presence_spans=[(0.5, 1.0)], seed=11)
     plain, _, _ = generate_paired_recording(**kwargs)
-    turb, _, truth = generate_paired_recording(**kwargs, presence_turbulence_std=0.2,
-                                             session_id="sA", subject_id="uA")
-    for fp, ft in zip(plain, turb):
-        same = np.array_equal(np.asarray(fp.grid), np.asarray(ft.grid))
-        inside = 0.5 <= fp.timestamp < 1.0
+    turbulent, _, truth = generate_paired_recording(**kwargs, presence_turbulence_std=0.2,
+                                                    session_id="sA", subject_id="uA")
+    for plain_frame, turbulent_frame in zip(plain, turbulent):
+        same = np.array_equal(np.asarray(plain_frame.grid), np.asarray(turbulent_frame.grid))
+        inside = 0.5 <= plain_frame.timestamp < 1.0
         assert same != inside  # outside spans byte-identical, inside modulated
     assert truth["session_id"] == "sA" and truth["subject_id"] == "uA"
     assert truth["presence_turbulence_std"] == pytest.approx(0.2)
 
 
 def test_dataset_group_ids_roundtrip(presence_data, tmp_path):
-    ds = presence_data["datasets"][0]
-    n = ds.y.size
-    assert list(ds.session_ids) == ["s0"] * n and list(ds.subject_ids) == ["u0"] * n
-    reloaded = load_dataset(save_dataset(ds, tmp_path / "ds"))
-    assert list(reloaded.session_ids) == ["s0"] * n
-    assert list(reloaded.subject_ids) == ["u0"] * n
+    dataset = presence_data["datasets"][0]
+    sample_count = dataset.y.size
+    assert list(dataset.session_ids) == ["s0"] * sample_count and (
+        list(dataset.subject_ids) == ["u0"] * sample_count)
+    reloaded = load_dataset(save_dataset(dataset, tmp_path / "ds"))
+    assert list(reloaded.session_ids) == ["s0"] * sample_count
+    assert list(reloaded.subject_ids) == ["u0"] * sample_count
 
 
 def test_model_config_validates():
     assert ModelConfig(stage="presence", k=12).backend == "mlp"
     with pytest.raises(ValueError):
-        ModelConfig(stage="posture", k=12)          # not a stage
+        ModelConfig(stage="posture", k=12)
     with pytest.raises(ValueError, match="'mlp'/'svm'"):
         build_presence_head(ModelConfig(stage="presence", k=12, backend="cnn"))  # cnn is weapon-side only
     with pytest.raises(ValueError):
@@ -131,18 +123,18 @@ def test_model_config_validates():
 def test_unregistered_backend_rejected_at_resolution_not_at_config():
     """An unregistered `backend` name is accepted by `ModelConfig` and rejected only where it is
     actually resolved: head construction/`load()`, via `get_backend_class`."""
-    config = ModelConfig(stage="presence", k=12, backend="rf")  # accepted; not yet resolved
+    config = ModelConfig(stage="presence", k=12, backend="rf")
     with pytest.raises(ValueError, match="rf"):
         build_presence_head(config)
     with pytest.raises(ValueError, match="rf"):
         build_weapon_head(config)
 
 
-def _blobs(n=120, d=18, seed=0):
+def _blobs(sample_count=120, feature_count=18, seed=0):
     """Two trivially separable feature clusters (per-class mean shift)."""
     rng = np.random.default_rng(seed)
-    X = rng.normal(0, 1, (n, d)).astype(np.float32)
-    y = (np.arange(n) % 2).astype(np.int64)
+    X = rng.normal(0, 1, (sample_count, feature_count)).astype(np.float32)
+    y = (np.arange(sample_count) % 2).astype(np.int64)
     X[y == 1] += 3.0
     return X, y
 
@@ -151,12 +143,12 @@ def _blobs(n=120, d=18, seed=0):
 def test_head_fit_predict_shapes(backend):
     X, y = _blobs()
     head = build_presence_head(ModelConfig(stage="presence", k=2, backend=backend)).fit(X, y)
-    pred = head.predict(X)
+    predictions = head.predict(X)
     proba = head.predict_proba(X)
-    assert pred.shape == (X.shape[0],) and set(pred) <= {0, 1}
+    assert predictions.shape == (X.shape[0],) and set(predictions) <= {0, 1}
     assert proba.shape == (X.shape[0], 2)
     assert np.allclose(proba.sum(axis=1), 1.0, atol=1e-6)
-    assert (pred == y).mean() > 0.95
+    assert (predictions == y).mean() > 0.95
 
 
 def test_head_save_load_roundtrip(tmp_path):
@@ -176,13 +168,14 @@ def test_head_unfitted_raises():
 
 
 def test_train_presence_persists(presence_data, tmp_path):
-    dirs = [save_dataset(d, tmp_path / f"ds{i}") for i, d in enumerate(presence_data["datasets"][:2])]
-    head, metrics = train_presence(dirs, tmp_path / "models")
+    dataset_dirs = [save_dataset(dataset, tmp_path / f"ds{i}")
+                    for i, dataset in enumerate(presence_data["datasets"][:2])]
+    head, metrics = train_presence(dataset_dirs, tmp_path / "models")
     assert (tmp_path / "models" / "model.joblib").exists()
-    with open(tmp_path / "models" / "metrics.json") as f:
-        assert json.load(f) == metrics
+    with open(tmp_path / "models" / "metrics.json") as metrics_file:
+        assert json.load(metrics_file) == metrics
     assert metrics["backend"] == "mlp" and metrics["k"] == presence_data["K"]
-    assert metrics["n_samples"] == sum(d.y.size for d in presence_data["datasets"][:2])
+    assert metrics["n_samples"] == sum(dataset.y.size for dataset in presence_data["datasets"][:2])
     assert metrics["sessions"] == ["s0", "s1"] and metrics["subjects"] == ["u0", "u1"]
     assert metrics["train_accuracy"] > 0.9
     assert head.predict(presence_data["X"][:4]).shape == (4,)
@@ -190,40 +183,43 @@ def test_train_presence_persists(presence_data, tmp_path):
 
 def test_eval_gate_head_beats_both_baselines(presence_data):
     """Logo accuracy must beat the majority class and PresenceSegmenter baselines."""
-    d = presence_data
+    data = presence_data
     report = evaluate_presence(
-        d["X"], d["y"], session_ids=d["sess"], subject_ids=d["subj"],
-        make_head=lambda: build_presence_head(d["config"]),
-        X_image=d["X_image"],
-        segmenter_kwargs={"cv_window": 16, "enter_cv": 0.01, "exit_cv": 0.005},
+        data["X"], data["y"], session_ids=data["sess"], subject_ids=data["subj"],
+        make_head=lambda: build_presence_head(data["config"]),
+        X_image=data["X_image"],
+        segmenter_kwargs={"coefficient_of_variation_window": 16, "enter_coefficient_of_variation": 0.01,
+                          "exit_coefficient_of_variation": 0.005},
     )
     for split in ("session", "subject"):
-        rep = report[split]
-        assert rep["accuracy"] >= 0.92                          # measured 0.98 / 0.975
-        assert rep["accuracy"] >= rep["majority_accuracy"] + 0.30
-        assert rep["accuracy"] >= report["segmenter_accuracy"] + 0.05
-        cm = rep["confusion"]
-        assert cm.shape == (2, 2) and cm.sum() == d["y"].size
+        split_report = report[split]
+        assert split_report["accuracy"] >= 0.92   # measured 0.98 / 0.975
+        assert split_report["accuracy"] >= split_report["majority_accuracy"] + 0.30
+        assert split_report["accuracy"] >= report["segmenter_accuracy"] + 0.05
+        confusion = split_report["confusion"]
+        assert confusion.shape == (2, 2) and confusion.sum() == data["y"].size
     # folds are group-disjoint and cover every group exactly once
-    assert sorted(f["group"] for f in report["session"]["folds"]) == ["s0", "s1", "s2", "s3"]
-    assert sorted(f["group"] for f in report["subject"]["folds"]) == ["u0", "u1"]
-    for f in report["session"]["folds"]:
-        assert f["n"] == int((d["sess"] == f["group"]).sum())   # whole group held out
+    assert sorted(fold["group"] for fold in report["session"]["folds"]) == ["s0", "s1", "s2", "s3"]
+    assert sorted(fold["group"] for fold in report["subject"]["folds"]) == ["u0", "u1"]
+    for fold in report["session"]["folds"]:
+        assert fold["n"] == int((data["sess"] == fold["group"]).sum())
 
 
 def test_logo_requires_two_groups(presence_data):
-    d = presence_data
+    data = presence_data
     with pytest.raises(ValueError, match="2 distinct groups"):
-        leave_one_group_out(d["X"], d["y"], np.full(d["y"].size, "only"), lambda: None)
+        leave_one_group_out(data["X"], data["y"], np.full(data["y"].size, "only"), lambda: None)
 
 
 def test_segmenter_baseline_flags_turbulent_windows(presence_data):
-    d = presence_data
-    pred = segmenter_baseline(d["X_image"], cv_window=16, enter_cv=0.01, exit_cv=0.005)
-    assert pred.shape == d["y"].shape and set(np.unique(pred)) <= {0, 1}
+    data = presence_data
+    predictions = segmenter_baseline(data["X_image"], coefficient_of_variation_window=16,
+                                     enter_coefficient_of_variation=0.01,
+                                     exit_coefficient_of_variation=0.005)
+    assert predictions.shape == data["y"].shape and set(np.unique(predictions)) <= {0, 1}
     # DSP gate baseline: above chance, below the trained head.
-    assert (pred == d["y"]).mean() > 0.75
-    assert pred[d["y"] == 1].mean() > pred[d["y"] == 0].mean()
+    assert (predictions == data["y"]).mean() > 0.75
+    assert predictions[data["y"] == 1].mean() > predictions[data["y"] == 0].mean()
 
 
 @pytest.fixture(scope="module")
@@ -234,24 +230,23 @@ def inference_session(presence_data, tmp_path_factory):
 
 
 def test_infer_predict_window_deterministic(presence_data, inference_session):
-    d = presence_data
-    present_features = d["X"][d["y"] == 1][0]
-    absent_features = d["X"][d["y"] == 0][0]
-    cls1, p1 = inference_session.predict_window(present_features)
-    cls0, p0 = inference_session.predict_window(absent_features)
-    assert (cls1, cls0) == (1, 0)
-    assert 0.5 <= p1 <= 1.0 and 0.5 <= p0 <= 1.0   # argmax probability
-    assert inference_session.predict_window(present_features) == (cls1, p1)  # deterministic
+    data = presence_data
+    present_features = data["X"][data["y"] == 1][0]
+    absent_features = data["X"][data["y"] == 0][0]
+    class_present, probability_present = inference_session.predict_window(present_features)
+    class_absent, probability_absent = inference_session.predict_window(absent_features)
+    assert (class_present, class_absent) == (1, 0)
+    assert 0.5 <= probability_present <= 1.0 and 0.5 <= probability_absent <= 1.0   # argmax probability
+    assert inference_session.predict_window(present_features) == (class_present, probability_present)
 
 
 def test_presence_mode_session(presence_data, tmp_path):
-    # 'presence' mode: independent human-detection operating mode.
     from wavetrace.recognition import open_session
-    d = presence_data
-    head = build_presence_head(d["config"]).fit(d["X"], d["y"])
+    data = presence_data
+    head = build_presence_head(data["config"]).fit(data["X"], data["y"])
     session = open_session("presence", head.save(tmp_path / "p.joblib"))
-    cls, proba = session.predict_window(d["X"][d["y"] == 1][0])
-    assert cls == 1 and 0.5 <= proba <= 1.0
+    class_id, proba = session.predict_window(data["X"][data["y"] == 1][0])
+    assert class_id == 1 and 0.5 <= proba <= 1.0
 
 
 def test_infer_latency_under_8ms(presence_data, inference_session):
@@ -261,15 +256,16 @@ def test_infer_latency_under_8ms(presence_data, inference_session):
 
 
 def test_fuse_concat_shape_and_order():
-    a = np.arange(9, dtype=np.float32)
-    b = np.arange(9, 27, dtype=np.float32)
-    c = np.arange(27, 30, dtype=np.float32)
-    assert np.array_equal(fuse([a]), a)                       # 1 node = identity
-    fused = fuse([a, b, c])
+    node_features_0 = np.arange(9, dtype=np.float32)
+    node_features_1 = np.arange(9, 27, dtype=np.float32)
+    node_features_2 = np.arange(27, 30, dtype=np.float32)
+    assert np.array_equal(fuse([node_features_0]), node_features_0)   # 1 node = identity
+    fused = fuse([node_features_0, node_features_1, node_features_2])
     assert fused.shape == (30,) and fused.dtype == np.float32
-    assert np.array_equal(fused, np.concatenate([a, b, c]))   # stable node order
+    assert np.array_equal(
+        fused, np.concatenate([node_features_0, node_features_1, node_features_2]))   # stable node order
     out = np.empty(30, dtype=np.float32)
-    assert fuse([a, b, c], out=out) is out                    # per-emit buffer reuse
+    assert fuse([node_features_0, node_features_1, node_features_2], out=out) is out   # per-emit buffer reuse
 
 
 def test_fuse_validates():

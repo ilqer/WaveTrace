@@ -263,7 +263,6 @@ const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, re
         </div>
       </div>
 
-      {/* Result card (MLP/SVM one-shot) OR epoch curves (CNN) */}
       {result && metrics.length === 0 ? (
         <div className="bg-slate-950 rounded-xl border border-slate-800 shrink-0">
           <ResultCard result={result} />
@@ -325,7 +324,6 @@ const TrainingDashboard: React.FC<TrainingDashboardProps> = ({ metrics, meta, re
         </div>
       )}
 
-      {/* Per-epoch log (CNN only) */}
       {metrics.length > 0 && (
         <div className="flex flex-col border border-slate-800 bg-slate-950 rounded-xl shrink-0">
           <div className="px-4 py-2 border-b border-slate-900 bg-slate-900/50 flex justify-between items-center rounded-t-xl">

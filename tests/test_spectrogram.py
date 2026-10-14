@@ -8,26 +8,27 @@ from wavetrace import SpectrogramBuilder, WaveTraceError
 
 def test_spectrogram_shape_and_cadence():
     K, T, H = 12, 128, 32
-    sb = SpectrogramBuilder(K, T, H)
-    emits = [i for i in range(300) if sb.push(np.full(K, float(i), dtype=np.float32))]
-    assert sb.image.shape == (K, T)
+    builder = SpectrogramBuilder(K, T, H)
+    emits = [i for i in range(300) if builder.push(np.full(K, float(i), dtype=np.float32))]
+    assert builder.image.shape == (K, T)
     assert emits[0] == T - 1               # First image emitted once window fills.
-    assert all((e - emits[0]) % H == 0 for e in emits)  # Then emits every hop.
+    assert all((emit - emits[0]) % H == 0 for emit in emits)  # Then emits every hop.
 
 
 def test_spectrogram_column_order_and_content():
     # Encode frame index and subcarrier to verify (K x T) layout.
     K, T, H = 4, 8, 2
-    sb = SpectrogramBuilder(K, T, H)
+    builder = SpectrogramBuilder(K, T, H)
     emitted_frame_index = None
     for i in range(T):
-        if sb.push(np.array([i * 10 + s for s in range(K)], dtype=np.float32)):
+        if builder.push(np.array([i * 10 + subcarrier for subcarrier in range(K)], dtype=np.float32)):
             emitted_frame_index = i
     assert emitted_frame_index == T - 1
-    img = sb.image
+    image = builder.image
     # Column j is frame j (oldest..newest); row s is subcarrier s.
-    expected = np.array([[j * 10 + s for j in range(T)] for s in range(K)], dtype=np.float32)
-    assert np.array_equal(img, expected)
+    expected = np.array([[j * 10 + subcarrier for j in range(T)] for subcarrier in range(K)],
+                        dtype=np.float32)
+    assert np.array_equal(image, expected)
 
 
 def test_spectrogram_deterministic():
@@ -36,18 +37,19 @@ def test_spectrogram_deterministic():
     frames = rng.standard_normal((40, K)).astype(np.float32)
 
     def run():
-        sb = SpectrogramBuilder(K, T, H)
-        imgs = []
-        for f in frames:
-            if sb.push(np.ascontiguousarray(f)):
-                imgs.append(sb.image.copy())
-        return imgs
+        builder = SpectrogramBuilder(K, T, H)
+        images = []
+        for frame in frames:
+            if builder.push(np.ascontiguousarray(frame)):
+                images.append(builder.image.copy())
+        return images
 
-    a, b = run(), run()
-    assert len(a) == len(b) and all(np.array_equal(x, y) for x, y in zip(a, b))
+    first_run, second_run = run(), run()
+    assert len(first_run) == len(second_run) and all(
+        np.array_equal(x, y) for x, y in zip(first_run, second_run))
 
 
 def test_spectrogram_push_wrong_length_raises():
-    sb = SpectrogramBuilder(8, 16, 4)
+    builder = SpectrogramBuilder(8, 16, 4)
     with pytest.raises(WaveTraceError):
-        sb.push(np.ones(5, dtype=np.float32))
+        builder.push(np.ones(5, dtype=np.float32))

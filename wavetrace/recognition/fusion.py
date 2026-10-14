@@ -8,14 +8,14 @@ import numpy as np
 
 
 def fuse(node_features, out: np.ndarray | None = None) -> np.ndarray:
-    """Concatenate per-node 1-D feature vectors. Keep node order consistent."""
-    arrs = [np.asarray(v, dtype=np.float32) for v in node_features]
-    if not arrs:
+    """`node_features` order must match training; `out` (float32, exact size) avoids an allocation."""
+    vectors = [np.asarray(features, dtype=np.float32) for features in node_features]
+    if not vectors:
         raise ValueError("fuse: no node features")
-    for i, a in enumerate(arrs):
-        if a.ndim != 1:
-            raise ValueError(f"fuse: node {i} feature vector must be 1-D, got shape {a.shape}")
-    total = sum(a.size for a in arrs)
+    for i, vector in enumerate(vectors):
+        if vector.ndim != 1:
+            raise ValueError(f"fuse: node {i} feature vector must be 1-D, got shape {vector.shape}")
+    total = sum(vector.size for vector in vectors)
     if out is not None and (out.ndim != 1 or out.size != total or out.dtype != np.float32):
         raise ValueError(f"fuse: out must be float32 (={total},), got {out.dtype} {out.shape}")
-    return np.concatenate(arrs, out=out)
+    return np.concatenate(vectors, out=out)

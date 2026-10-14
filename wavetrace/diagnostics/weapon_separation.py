@@ -1,5 +1,5 @@
-"""Static σ²[p] PDF separation diagnostics — the weapon-detection go/no-go check shared by
-`experiments/weapon_litmus.py`'s CLI and the web dashboard's `/api/weapon/litmus` route.
+"""Weapon-detection go/no-go check shared by `experiments/weapon_litmus.py` and the web
+`/api/weapon/litmus` route.
 
 Checks whether per-packet inter-subcarrier variance σ²[p] separates clear vs weapon (see Yousaf
 Fig 17). If the PDFs overlap, the signal is lost at the radio/geometry level — fix hardware before
@@ -20,13 +20,13 @@ import numpy as np
 
 
 def sigma2_per_frame(grid):
-    """(F,A,S) complex CSI -> (F,) per-frame σ²[p]. Sample variance of antenna-collapsed subcarrier magnitudes."""
+    """(F,A,S) complex CSI -> (F,) per-frame σ²[p]."""
     magnitude = np.abs(np.asarray(grid)).mean(axis=1)   # (F, S) antenna-collapsed magnitude
     return magnitude.var(axis=1, ddof=1)                # (F,) inter-subcarrier variance per packet
 
 
 def _node_of(path):
-    """Extract the node id from a .../node<id>/... recording path, or None."""
+    """From a .../node<id>/... recording path, or None."""
     for part in path.split(os.sep):
         if part.startswith("node") and part[len("node"):].isdigit():
             return int(part[len("node"):])
@@ -34,7 +34,7 @@ def _node_of(path):
 
 
 def _link_of(path):
-    """Extract the TX tag from a .../link_<tag>/... recording path, or None (the directed link's TX)."""
+    """TX tag from a .../link_<tag>/... recording path, or None."""
     for part in path.split(os.sep):
         if part.startswith("link_"):
             return part[len("link_"):]
@@ -42,27 +42,29 @@ def _link_of(path):
 
 
 def key_label(key):
-    """Human label for a group key: '2' for a node, '64b8->2' for a tx->rx link."""
+    """'2' for a node key, '64b8->2' for a (rx, tx) link key."""
     return f"{key[1]}->{key[0]}" if isinstance(key, tuple) else str(key)
 
 
-def gather_sigma2(root, node=None, per_link=False):
-    """Walk <root>/weapon_rec for clear/weapon grids -> {key: {"clear": arr, "weapon": arr}}.
-    If per_link=True, key is (rx_node, tx_tag) to score directions separately. Only NLOS-scatter carries weapon signals; pooling washes them out."""
-    out = {}
-    for cond in ("clear", "weapon"):
-        for gpath in glob.glob(os.path.join(root, "weapon_rec", "**", cond, "**", "grid.npy"),
-                               recursive=True):
-            node_id = _node_of(gpath)
-            if node_id is None or (node is not None and node_id != node):
+def gather_sigma2(root, node_id=None, per_link=False):
+    """{key: {"clear": arr, "weapon": arr}} from <root>/weapon_rec grids.
+    per_link=True keys by (rx_node, tx_tag): only NLOS-scatter carries weapon signals; pooling washes
+    them out."""
+    frame_variances_by_key = {}
+    for capture_condition in ("clear", "weapon"):
+        for grid_path in glob.glob(
+                os.path.join(root, "weapon_rec", "**", capture_condition, "**", "grid.npy"), recursive=True):
+            grid_node_id = _node_of(grid_path)
+            if grid_node_id is None or (node_id is not None and grid_node_id != node_id):
                 continue
-            key = (node_id, _link_of(gpath)) if per_link else node_id
+            key = (grid_node_id, _link_of(grid_path)) if per_link else grid_node_id
             if per_link and key[1] is None:
                 continue
-            frame_variance = sigma2_per_frame(np.load(gpath))
-            out.setdefault(key, {}).setdefault(cond, []).append(frame_variance)
-    return {key: {condition: np.concatenate(values) for condition, values in conds.items()}
-            for key, conds in out.items()}
+            frame_variance = sigma2_per_frame(np.load(grid_path))
+            frame_variances_by_key.setdefault(key, {}).setdefault(capture_condition, []).append(
+                frame_variance)
+    return {key: {condition: np.concatenate(values) for condition, values in values_by_condition.items()}
+            for key, values_by_condition in frame_variances_by_key.items()}
 
 
 def separation(clear, weapon):
@@ -88,19 +90,18 @@ def separation(clear, weapon):
     }
 
 
-def json_hist(clear, weapon, bins=20):
-    """JSON-serializable overlaid σ²[p] histogram for the web litmus card.
-    Returns density-normalised heights on a shared edge grid. O(N log N)."""
+def json_histogram(clear, weapon, bins=20):
+    """Density-normalised heights on a shared edge grid. O(N log N)."""
     value_min = float(min(clear.min(), weapon.min()))
     value_max = float(max(clear.max(), weapon.max()))
     edges = np.linspace(value_min, value_max, bins + 1)
-    clear_hist, _ = np.histogram(clear, edges, density=True)
-    weapon_hist, _ = np.histogram(weapon, edges, density=True)
-    return {"edges": edges.tolist(), "clear": clear_hist.tolist(), "weapon": weapon_hist.tolist()}
+    clear_histogram, _ = np.histogram(clear, edges, density=True)
+    weapon_histogram, _ = np.histogram(weapon, edges, density=True)
+    return {"edges": edges.tolist(), "clear": clear_histogram.tolist(), "weapon": weapon_histogram.tolist()}
 
 
 def verdict(auc):
-    """Map direction-folded AUC to a go/no-go call."""
+    """Expects direction-folded AUC (max(auc, 1 - auc), >= 0.5)."""
     if auc < 0.55:
         return "NO SEPARATION — radio/geometry problem; do NOT train (fix hardware first)"
     if auc < 0.65:

@@ -13,7 +13,6 @@ const MockCamera: React.FC<CameraFeedProps> = ({ camUrl, label, isActive }) => {
   const [key,   setKey]     = useState(0);
   const retryTimer          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Clear auto-retry on URL change.
   useEffect(() => {
     setError(false);
     setKey(k => k + 1);

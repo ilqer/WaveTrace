@@ -3,13 +3,13 @@ from types import SimpleNamespace
 import numpy as np
 
 from wavetrace.recognition import plan_input
-from wavetrace.groundtruth.camera_labeler import ScriptedLabeler, weapon_label_fn
+from wavetrace.groundtruth.camera_labeler import ScriptedLabeler, weapon_label_function
 
 
 def test_spans_label_clear_vs_weapon():
     """[] -> class 0, [span] -> class 1."""
-    clear = ScriptedLabeler([], label_fn=weapon_label_fn)
-    armed = ScriptedLabeler([(0.0, 10.0, True)], label_fn=weapon_label_fn)
+    clear = ScriptedLabeler([], label_function=weapon_label_function)
+    armed = ScriptedLabeler([(0.0, 10.0, True)], label_function=weapon_label_function)
     assert clear(5.0).class_id == 0
     assert armed(5.0).class_id == 1
     assert armed(5.0).name == "weapon"

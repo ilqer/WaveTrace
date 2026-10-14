@@ -69,21 +69,21 @@ def _make_frame(node_id, timestamp, value):
 
 
 def test_aggregator_tags_and_keeps_latest_per_node():
-    agg = NodeAggregator()
-    agg.submit(_make_frame(0, 1.00, 1 + 0j))
-    agg.submit(_make_frame(1, 1.01, 2 + 0j))
-    agg.submit(_make_frame(0, 1.02, 9 + 0j))
-    assert agg.num_nodes == 2
-    synced = {int(f.node_id): f for f in agg.synced(tolerance=0.1)}
-    assert synced[0].grid[0, 0] == 9 + 0j
-    assert synced[1].grid[0, 0] == 2 + 0j
+    aggregator = NodeAggregator()
+    aggregator.submit(_make_frame(0, 1.00, 1 + 0j))
+    aggregator.submit(_make_frame(1, 1.01, 2 + 0j))
+    aggregator.submit(_make_frame(0, 1.02, 9 + 0j))
+    assert aggregator.num_nodes == 2
+    latest_by_node_id = {int(frame.node_id): frame for frame in aggregator.synced(tolerance=0.1)}
+    assert latest_by_node_id[0].grid[0, 0] == 9 + 0j
+    assert latest_by_node_id[1].grid[0, 0] == 2 + 0j
 
 
 def test_aggregator_synced_drops_stale_nodes():
-    agg = NodeAggregator()
-    agg.submit(_make_frame(0, 10.00, 1))
-    agg.submit(_make_frame(1, 10.01, 1))
-    agg.submit(_make_frame(2, 10.50, 1))  # Newest.
-    synced_frames = agg.synced(tolerance=0.05)
-    assert {int(f.node_id) for f in synced_frames} == {2}
-    assert {int(f.node_id) for f in agg.synced(tolerance=1.0)} == {0, 1, 2}
+    aggregator = NodeAggregator()
+    aggregator.submit(_make_frame(0, 10.00, 1))
+    aggregator.submit(_make_frame(1, 10.01, 1))
+    aggregator.submit(_make_frame(2, 10.50, 1))  # Newest.
+    synced_frames = aggregator.synced(tolerance=0.05)
+    assert {int(frame.node_id) for frame in synced_frames} == {2}
+    assert {int(frame.node_id) for frame in aggregator.synced(tolerance=1.0)} == {0, 1, 2}

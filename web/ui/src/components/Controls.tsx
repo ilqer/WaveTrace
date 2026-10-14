@@ -14,7 +14,7 @@ interface ControlsProps {
 
 type Action = 'run' | 'calib' | 'collect' | 'train';
 
-// Path input + browse button (uses native macOS osascript via /api/paths/browse).
+// Browse uses native macOS osascript via /api/paths/browse.
 interface FilePickerProps {
   value: string;
   onChange: (v: string) => void;
@@ -84,19 +84,16 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
     udp_port: 9876,
     cam_url: '/api/camera/stream',
     cam_index: 0,
-    // Shared across all tabs
+    // shared by every tab
     calibration: 'data/2g4_ht40/ui/cal',
-    // Run
     mode: 'presence',
     model: 'data/2g4_ht40/ui/model/model.joblib',
     gain_lock: true,
     vote: true,
     frame_average: 1,
     use_baseline: false,
-    // Calib
     baseline_packets: 300,
     cal_out: 'data/2g4_ht40/ui/cal',
-    // Collect
     col_stage: 'presence',
     col_spans: '0:5,10:15,20:25',
     col_window: 128,
@@ -105,7 +102,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
     camera_collect: false,
     cam_duration: 30,
     yolo_weights: 'yolov8n-seg.pt',
-    // Train
     train_backend: 'cnn',
     train_out: 'data/2g4_ht40/ui/model',
     train_data: 'output/dataset_ui',
@@ -120,7 +116,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
     }
   }, [config.col_stage]);
 
-  // Fetch pinned subcarrier width when calib path changes.
   useEffect(() => {
     fetch(`/api/calib/info?path=${encodeURIComponent(config.calibration)}`)
       .then(r => r.json())
@@ -159,7 +154,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
     onStart({ action: effectiveAction, ...config, per_link: perLink, synthetic: false, duration } as StartPayload);
   };
 
-  // Ordered to match the workflow: Calib → Data → Fit → Run
   const tabs: { id: Action; label: string; icon: LucideIcon; step: number }[] = [
     { id: 'calib',   label: 'Calib', icon: Target,   step: 1 },
     { id: 'collect', label: 'Data',  icon: Database, step: 2 },
@@ -170,7 +164,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
   return (
     <div className="flex flex-col gap-4 bg-slate-800 p-4 rounded-xl border border-slate-700">
 
-      {/* Shared hardware config */}
       <div className="space-y-2 pb-3 border-b border-slate-700">
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Hardware Config</p>
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600 pl-1.5 border-l-2 border-slate-600">Camera</p>
@@ -211,7 +204,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
         </div>
 
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-600 pl-1.5 border-l-2 border-sky-800 mt-1">RF Capture</p>
-        {/* Shared config */}
         <div className="space-y-1">
           <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center justify-between">
             <span>Calibration Dir</span>
@@ -272,7 +264,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
                 : "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
             )}
           >
-            {/* step connector */}
             {i < tabs.length - 1 && (
               <span className="absolute -right-0.5 top-1/2 -translate-y-1/2 text-slate-700 text-[8px] z-10">›</span>
             )}
@@ -288,7 +279,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
           {action === 'run' ? 'Inference' : action === 'calib' ? 'Calibration' : action === 'collect' ? 'Data Collection' : 'Fit Model'} Settings
         </label>
 
-        {/* ── RUN ── */}
         {action === 'run' && (
           <>
             <div className="space-y-1">
@@ -344,7 +334,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
           </>
         )}
 
-        {/* ── CALIB ── */}
         {action === 'calib' && (
           <>
             <p className="text-[10px] text-slate-500 italic">Calibration dir is set in Hardware Config above.</p>
@@ -370,7 +359,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
           </>
         )}
 
-        {/* ── COLLECT ── */}
         {action === 'collect' && (
           <>
             <div className="space-y-1">
@@ -456,7 +444,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
           </>
         )}
 
-        {/* ── TRAIN ── */}
         {action === 'train' && (
           <>
             <div className="space-y-1">
@@ -525,7 +512,6 @@ const Controls: React.FC<ControlsProps> = ({ onStart, onStop, isRunning, isConne
         )}
       </div>
 
-      {/* ── Start / Stop ── */}
       <div className="flex gap-2 shrink-0 pt-2 mt-auto border-t border-slate-700">
         <button
           onClick={handleStart}

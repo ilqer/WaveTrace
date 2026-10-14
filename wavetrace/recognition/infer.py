@@ -12,8 +12,6 @@ from wavetrace.domain.recognition import PresenceHead
 
 
 class InferenceSession:
-    """Serve a persisted head."""
-
     def __init__(self, model_path=None, *, head=None, loader=None):
         if head is not None:
             self._head = head
@@ -26,7 +24,7 @@ class InferenceSession:
         return self._head
 
     def predict_window_proba(self, feature_vector) -> np.ndarray:
-        """Predict class probabilities. Reuses row buffer. O(1)."""
+        """Copies the input into a reused (1, d) row buffer. O(1)."""
         flattened = np.asarray(feature_vector, dtype=np.float32).ravel()
         if self._row is None or self._row.shape[1] != flattened.size:
             self._row = np.empty((1, flattened.size), dtype=np.float32)
@@ -68,7 +66,7 @@ def open_session(mode: str, model_path) -> InferenceSession:
 
 
 def measure_latency(session: InferenceSession, feature_vector, iters: int = 200) -> dict:
-    """Measure inference latency over iters calls. Returns ms stats."""
+    """Latency stats in ms over `iters` timed calls, after 5 warm-up calls."""
     for _ in range(5):
         session.predict_window(feature_vector)
     samples = np.empty(iters)

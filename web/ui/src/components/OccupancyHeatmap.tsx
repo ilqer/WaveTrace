@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react';
 
 interface Props {
   grid?: number[];        // G*G flat array of probabilities in [0,1]
-  g?: number;             // grid dimension (default 16)
+  g?: number;             // grid side length in cells
   track?: { x: number; y: number; measured: boolean };
 }
 
@@ -30,7 +30,6 @@ export function OccupancyHeatmap({ grid, g = 16, track }: Props) {
       ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, canvas.height); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(canvas.width, i * cell); ctx.stroke();
     }
-    // Kalman track marker
     if (track) {
       const cx = (track.x / (g * 0.25) + g / 2) * cell;
       const cy = (g - track.y / 0.25) * cell;

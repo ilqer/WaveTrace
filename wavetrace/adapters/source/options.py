@@ -1,12 +1,9 @@
-"""Settings shared by every CSI transport."""
-
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SourceOptions:
-    """Settings shared by every `CsiSource` transport: how long to wait for the next packet with
-    no data before ending the stream, and an optional cap on total frames yielded."""
+    """`timeout_seconds` is the idle wait for the next packet before the stream ends."""
 
     timeout_seconds: float = 5.0
     max_frames: int | None = None

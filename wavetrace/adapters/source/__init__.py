@@ -51,7 +51,8 @@ def build_csi_source(options) -> CsiSource:
         spans = parse_time_spans(options.presence)
         frames, _, _ = generate_paired_recording(
             num_antennas=options.antennas, num_subcarriers=options.subcarriers, sample_rate_hz=options.fs,
-            duration_s=options.duration, camera_fps=30.0, presence_spans=spans or [(0.0, options.duration)],
+            duration_s=options.duration, camera_frame_rate_hz=30.0,
+            presence_spans=spans or [(0.0, options.duration)],
             presence_turbulence_std=0.10, weapon_spans=parse_time_spans(options.weapon),
             weapon_signature_depth=options.weapon_depth, seed=options.seed,
         )

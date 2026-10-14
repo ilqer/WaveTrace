@@ -23,7 +23,7 @@ export function DevicePanel({ subcarriers }: { subcarriers: number }) {
   const [piPreset, setPiPreset] = useState(PI_PRESETS[0].cmd);
   const [piCmd, setPiCmd] = useState(PI_PRESETS[0].cmd);
   const [scriptName, setScriptName] = useState('scripts/health_monitor.py');
-  const [opts, setOpts] = useState<Record<string, string>>({});  // per-option values for the picked script
+  const [opts, setOpts] = useState<Record<string, string>>({});
   const [cleanBuild, setCleanBuild] = useState(false);
   const [logFilter, setLogFilter] = useState('All');
   const [closedTabs, setClosedTabs] = useState<string[]>([]);

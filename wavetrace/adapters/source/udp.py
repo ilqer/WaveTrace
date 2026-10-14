@@ -26,8 +26,6 @@ def bind_udp_socket(port, *, timeout_s=None):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class UdpSourceOptions(SourceOptions):
-    """Settings for `UdpSource` (batched-UDP CSI backhaul)."""
-
     port: int = 5566
     tx_mac: str | None = None
 
@@ -38,9 +36,8 @@ class UdpSourceOptions(SourceOptions):
 
 
 class UdpSource(CsiSource):
-    """Receive batched-UDP CSI. frames() binds 0.0.0.0:port and yields until
-    timeout_seconds elapses with no packet (or max_frames). The socket loop is a thin shell over
-    parse_batch."""
+    """Binds 0.0.0.0:port. frames() stops after `timeout_seconds` with no packet (an idle timeout,
+    not a capture duration) or at `max_frames`."""
 
     def __init__(self, options: UdpSourceOptions = UdpSourceOptions()):
         self._port = options.port
@@ -49,7 +46,6 @@ class UdpSource(CsiSource):
         self._max_frames = options.max_frames
 
     def frames(self):
-        """Bind UDP socket and yield CsiFrames; stop on timeout or max_frames."""
         udp_socket = bind_udp_socket(self._port, timeout_s=self._timeout_seconds)
         try:
             count = 0

@@ -1,6 +1,3 @@
-"""The run/serve use-case: stream a source through the front-end and publish one verdict per
-window."""
-
 import numpy as np
 
 from wavetrace.calibration import load_calibration, build_image_baseline
@@ -10,25 +7,26 @@ from wavetrace import RecognitionResult
 
 
 def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=False, guard=False):
-    """Stream a source through the front-end and publish one verdict per window (+ a final soft-vote
-    verdict when vote=True). When guard=True, wires AlertGuard+DriftMonitor for debounce and drift
-    advisory (O(S)/frame extra — acceptable on the Pi serving side). O(windows)."""
-    result, gain_lock = load_calibration(calibration_dir)
+    """Publishes one verdict per window, plus a final soft-vote verdict when vote=True. guard=True adds
+    AlertGuard + DriftMonitor (O(S) extra per frame). O(windows)."""
+    calibration_result, gain_lock = load_calibration(calibration_dir)
     session = open_session(mode, model_path)
     should_apply_lock, intercarrier, pick = plan_input(mode, session.head)
     config = session.head.config
 
-    image_subcarriers = getattr(result, "image_subcarriers", None)
+    image_subcarriers = getattr(calibration_result, "image_subcarriers", None)
     image_baseline = None
     if config.subtract_baseline:
-        image_baseline = build_image_baseline(result, locked=(should_apply_lock and gain_lock is not None))
+        image_baseline = build_image_baseline(calibration_result,
+                                              locked=(should_apply_lock and gain_lock is not None))
     # the raw baseline, inter-carrier path only, exactly as training subtracted it
-    ic_baseline = result.baseline_mag if getattr(config, "subtract_ic_baseline", False) else None
+    intercarrier_baseline = (calibration_result.baseline_mag
+                             if getattr(config, "subtract_ic_baseline", False) else None)
 
     frames_iter = source.frames()
     if guard:
         from wavetrace.output.guard import AlertGuard, DriftMonitor
-        drift_monitor = DriftMonitor(result.baseline_mag)
+        drift_monitor = DriftMonitor(calibration_result.baseline_mag)
         alert_guard = AlertGuard()
         # tee the raw, pre-lock magnitudes to DriftMonitor without disturbing the frame stream
         def _tee_drift(frames, monitor, publisher):
@@ -44,12 +42,12 @@ def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=
     voter = SegmentVoter() if vote else None
     results = []
     for timestamp, features, image, intercarrier_features in iter_windows(
-        frames_iter, result.subcarriers, gain_lock if should_apply_lock else None,
+        frames_iter, calibration_result.subcarriers, gain_lock if should_apply_lock else None,
         window=config.window, hop=config.hop, intercarrier=intercarrier,
         image_subcarriers=image_subcarriers,
         frame_average=config.frame_average,
         image_baseline=image_baseline,
-        ic_baseline=ic_baseline,
+        intercarrier_baseline=intercarrier_baseline,
     ):
         predicted_class, confidence = session.predict_window(pick(features, image, intercarrier_features))
         result_row = RecognitionResult()

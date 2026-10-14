@@ -1,6 +1,4 @@
-"""Offline training: load datasets, concatenate them, fit a head, write the model and its metrics.
-
-Train-set accuracy is a sanity check only. The number that counts is leave_one_group_out, held out
+"""Train-set accuracy is a sanity check only. The number that counts is leave_one_group_out, held out
 over sessions and subjects.
 """
 
@@ -49,7 +47,6 @@ def _logo_metrics(X, y, session_ids, subject_ids, make_head) -> dict:
 
 
 def concat_datasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Stack multiple recordings. O(n total)."""
     recordings = list(datasets)
     if not recordings:
         raise ValueError("concat_datasets: no datasets")
@@ -64,7 +61,6 @@ def concat_datasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.nd
 
 
 def concat_arrays(datasets, field_name: str) -> np.ndarray:
-    """Stack optional array field across recordings. O(n total)."""
     field_values = []
     for i, dataset in enumerate(datasets):
         field_value = getattr(dataset, field_name)
@@ -81,7 +77,7 @@ def train_presence(
     out_dir="models/presence",
     config: ModelConfig | None = None,
 ) -> tuple[PresenceHead, dict]:
-    """Fit the Stage-A presence head; writes `model.joblib` and `metrics.json` into out_dir."""
+    """Writes `model.joblib` and `metrics.json` into out_dir."""
     if isinstance(dataset_dirs, (str, Path)):
         dataset_dirs = [dataset_dirs]
     loaded: list[Dataset] = [load_dataset(dataset_dir) for dataset_dir in dataset_dirs]
@@ -133,7 +129,7 @@ def train_weapon(
     feature_mode: str = "ic27",
     report=None,
 ) -> tuple[WeaponHead, dict]:
-    """Fit the Stage-E weapon head; writes `model.joblib` and `metrics.json` into out_dir.
+    """Writes `model.joblib` and `metrics.json` into out_dir.
 
     feature_mode:
     - 'ic27': inter-carrier block (variance/mlp/svm).

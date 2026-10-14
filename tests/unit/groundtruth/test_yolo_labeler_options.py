@@ -5,7 +5,7 @@ ultralytics import entirely."""
 import numpy as np
 import pytest
 
-from wavetrace.groundtruth import YoloLabeler, YoloLabelerOptions, YoloSegLabeler, presence_label_fn
+from wavetrace.groundtruth import YoloLabeler, YoloLabelerOptions, YoloSegLabeler, presence_label_function
 
 
 class _StubYoloResult:
@@ -24,17 +24,17 @@ def _stub_net(calls):
 def test_yolo_labeler_model_bypasses_weights_loading():
     """Passing model= a prebuilt callable never touches options.weights_path or ultralytics."""
     calls = []
-    lab = YoloLabeler(model=_stub_net(calls), options=YoloLabelerOptions(weights_path="should-not-load"),
-                       label_fn=presence_label_fn)
-    label = lab.label(np.zeros((4, 4, 3), dtype=np.uint8), timestamp=1.0)
+    labeler = YoloLabeler(model=_stub_net(calls), options=YoloLabelerOptions(weights_path="should-not-load"),
+                          label_function=presence_label_function)
+    label = labeler.label(np.zeros((4, 4, 3), dtype=np.uint8), timestamp=1.0)
     assert label.class_id == 0 and label.name == "absent"  # no boxes -> no person detected
     assert len(calls) == 1  # the stub net was invoked, not a real ultralytics load
 
 
 def test_yolo_seg_labeler_model_bypasses_weights_loading():
     calls = []
-    lab = YoloSegLabeler(model=_stub_net(calls), label_fn=presence_label_fn)
-    label = lab.label(np.zeros((4, 4, 3), dtype=np.uint8), timestamp=1.0)
+    labeler = YoloSegLabeler(model=_stub_net(calls), label_function=presence_label_function)
+    label = labeler.label(np.zeros((4, 4, 3), dtype=np.uint8), timestamp=1.0)
     assert label.class_id == 0
     assert len(calls) == 1
 

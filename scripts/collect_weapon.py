@@ -21,47 +21,47 @@ from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WI
 from link_capture import capture_links
 
 
-def _emit(cap, root, cal_root, nid, sess_id, subject, carry, cond, weapon, bg_subtract=False):
-    """Writes one labeled dataset per link of node `nid` (class 1 if `weapon` else 0) and returns
-    their directories."""
-    out = []
-    for key in sorted(k for k in cap if k[1] == nid):
-        fr = resample_uniform(cap.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
-        if len(fr) < DEFAULT_WINDOW_FRAMES:  # a link shorter than this on the grid emits no window
+def _emit(capture, root, calibration_root, node_id, session_id, subject, carry, condition, is_weapon,
+          should_subtract_baseline=False):
+    """Writes one dataset per link of `node_id`, class 1 if `is_weapon` else 0; returns their directories."""
+    dataset_dirs = []
+    for key in sorted(link_key for link_key in capture if link_key[1] == node_id):
+        frames = resample_uniform(capture.get(key, []), DEFAULT_TARGET_SAMPLE_RATE_HZ)
+        if len(frames) < DEFAULT_WINDOW_FRAMES:  # a link shorter than this on the grid emits no window
             continue
-        span = (fr[0].timestamp, fr[-1].timestamp + 1.0)
+        span = (frames[0].timestamp, frames[-1].timestamp + 1.0)
         tag = make_link_tag(key[0])
-        rec = f"{root}/weapon_rec/{sess_id}/{cond}/node{nid}/link_{tag}"
-        ds = f"{root}/weapon_ds/node{nid}/{sess_id}_{cond}_link{tag}"
-        save_recording(fr, rec)
-        # a span marks class 1 over the segment and no span marks class 0; bg_subtract takes the
+        recording_dir = f"{root}/weapon_rec/{session_id}/{condition}/node{node_id}/link_{tag}"
+        dataset_dir = f"{root}/weapon_ds/node{node_id}/{session_id}_{condition}_link{tag}"
+        save_recording(frames, recording_dir)
+        # a span marks class 1 over the segment and no span marks class 0; should_subtract_baseline takes the
         # quiet-room level out of σ²[p]
-        collect_source(RecordingSource(rec), f"{cal_root}/node{nid}", ds,
-                       [span] if weapon else [],
-                       stage="weapon", session_id=sess_id, subject_id=subject,
-                       subtract_ic_baseline=bg_subtract)
-        out.append(ds)
-    return out
+        collect_source(RecordingSource(recording_dir), f"{calibration_root}/node{node_id}", dataset_dir,
+                       [span] if is_weapon else [],
+                       stage="weapon", session_id=session_id, subject_id=subject,
+                       subtract_ic_baseline=should_subtract_baseline)
+        dataset_dirs.append(dataset_dir)
+    return dataset_dirs
 
 
-def _train_and_report(ds_dirs, out_dir, label):
-    """Trains one weapon head on `ds_dirs`, prints its LOGO line under `label`, and returns whether
+def _train_and_report(dataset_dirs, out_dir, label):
+    """Trains one weapon head on `dataset_dirs`, prints its LOGO line under `label`, and returns whether
     it trained."""
-    if not ds_dirs:
+    if not dataset_dirs:
         print(f"   [SKIP] {label}: no datasets in pool.")
         return False
     try:
-        _, m = train_weapon(ds_dirs, out_dir=out_dir, feature_mode="ic27")
-    except ValueError as e:  # WeaponHead.fit needs BOTH classes in the pool
-        print(f"   [SKIP] {label}: {e}")
+        _, metrics = train_weapon(dataset_dirs, out_dir=out_dir, feature_mode="ic27")
+    except ValueError as error:  # WeaponHead.fit needs BOTH classes in the pool
+        print(f"   [SKIP] {label}: {error}")
         return False
-    logo = m.get("logo", {})
-    sess = logo.get("session") or logo.get("subject")
-    line = (f"   [OK]   {label}: samples={m['n_samples']} class_counts={m['class_counts']} "
-            f"train_acc={m['train_accuracy']:.3f}")
-    if sess:
-        line += (f"  LOGO={sess['accuracy']:.3f} (majority {sess['majority_accuracy']:.3f}, "
-                 f"TPR {sess.get('tpr', 0):.3f}, FP {sess.get('fp_rate', 0):.3f})")
+    logo = metrics.get("logo", {})
+    session_logo = logo.get("session") or logo.get("subject")
+    line = (f"   [OK]   {label}: samples={metrics['n_samples']} class_counts={metrics['class_counts']} "
+            f"train_acc={metrics['train_accuracy']:.3f}")
+    if session_logo:
+        line += (f"  LOGO={session_logo['accuracy']:.3f} (majority {session_logo['majority_accuracy']:.3f}, "
+                 f"TPR {session_logo.get('tpr', 0):.3f}, FP {session_logo.get('fp_rate', 0):.3f})")
     carry = logo.get("carry")  # does it generalize across carry pose, or ride that confound
     if carry:
         line += f"  carry-LOGO={carry['accuracy']:.3f} (maj {carry['majority_accuracy']:.3f})"
@@ -97,9 +97,9 @@ def main():
     if args.model is None:
         args.model = f"{args.root}/model_weapon"
 
-    calibrated_node_ids = sorted(int(os.path.basename(d)[len("node"):])
-                                 for d in glob.glob(os.path.join(args.cal, "node*"))
-                                 if os.path.basename(d)[len("node"):].isdigit())
+    calibrated_node_ids = sorted(int(os.path.basename(directory)[len("node"):])
+                                 for directory in glob.glob(os.path.join(args.cal, "node*"))
+                                 if os.path.basename(directory)[len("node"):].isdigit())
     if not calibrated_node_ids:
         print(f"\n[ERROR] no per-node calibrations in {args.cal}/node*. Run collect_baseline.py first.",
               file=sys.stderr)
@@ -120,40 +120,40 @@ def main():
         armed = capture_links(f"session {i+1}/{args.sessions} — stand still, weapon concealed on you.",
                               args.frames, args.port, calibrated_node_ids, countdown=5,
                               capture_hint="hold the condition steady (stand STILL)...")
-        for nid in calibrated_node_ids:
-            _emit(clear, args.root, args.cal, nid, session_id, args.subject, args.carry, "clear",
-                  weapon=False, bg_subtract=args.bg_subtract)
-            _emit(armed, args.root, args.cal, nid, session_id, args.subject, args.carry, "weapon",
-                  weapon=True, bg_subtract=args.bg_subtract)
+        for node_id in calibrated_node_ids:
+            _emit(clear, args.root, args.cal, node_id, session_id, args.subject, args.carry, "clear",
+                  is_weapon=False, should_subtract_baseline=args.bg_subtract)
+            _emit(armed, args.root, args.cal, node_id, session_id, args.subject, args.carry, "weapon",
+                  is_weapon=True, should_subtract_baseline=args.bg_subtract)
 
     unit = "per-link (tx->rx)" if args.per_link else "per-node"
     print(f"\ntraining {unit} weapon models (ic27) on the cumulative pool...")
     trained = []
-    for nid in calibrated_node_ids:
-        dataset_dirs = sorted(glob.glob(f"{args.root}/weapon_ds/node{nid}/*"))
+    for node_id in calibrated_node_ids:
+        dataset_dirs = sorted(glob.glob(f"{args.root}/weapon_ds/node{node_id}/*"))
         if not args.per_link:
-            if _train_and_report(dataset_dirs, f"{args.model}/node{nid}", f"Node {nid}"):
-                trained.append(nid)
+            if _train_and_report(dataset_dirs, f"{args.model}/node{node_id}", f"Node {node_id}"):
+                trained.append(node_id)
             continue
         dataset_dirs_by_tag = collections.defaultdict(list)
-        for d in dataset_dirs:
-            tag = parse_link_tag(d)
+        for directory in dataset_dirs:
+            tag = parse_link_tag(directory)
             if tag is not None:
-                dataset_dirs_by_tag[tag].append(d)
+                dataset_dirs_by_tag[tag].append(directory)
         if not dataset_dirs_by_tag:
-            print(f"   [SKIP] node {nid}: no per-link datasets, re-capture with collect_weapon.")
+            print(f"   [SKIP] node {node_id}: no per-link datasets, re-capture with collect_weapon.")
             continue
         for tag in sorted(dataset_dirs_by_tag):
-            if _train_and_report(dataset_dirs_by_tag[tag], f"{args.model}/node{nid}/link{tag}",
-                                 f"Node {nid} link{tag}"):
-                trained.append((nid, tag))
+            if _train_and_report(dataset_dirs_by_tag[tag], f"{args.model}/node{node_id}/link{tag}",
+                                 f"Node {node_id} link{tag}"):
+                trained.append((node_id, tag))
 
     if not trained:
         print("\n[ERROR] nothing trained — need both no-weapon and weapon captures in the pool.",
               file=sys.stderr)
         return
-    dest = f"{args.model}/node*/link*/" if args.per_link else f"{args.model}/node*/"
-    print(f"\nweapon models saved ({len(trained)} {unit} heads) -> {dest}  "
+    destination = f"{args.model}/node*/link*/" if args.per_link else f"{args.model}/node*/"
+    print(f"\nweapon models saved ({len(trained)} {unit} heads) -> {destination}  "
           "(LOGO must clearly beat majority; expect this to need many subjects/positions/objects.)")
 
     print('\a', end='', flush=True)

@@ -1,25 +1,23 @@
-"""Per-node link health + dataset diagnostics. All numpy, all off the hot path.
-
-A `NodeHealthMeter` ingests the same CsiFrame stream the front-end sees (tee it through), tracks a
-rolling window per node_id, and emits a health dict per node on demand. The cluster_sync / drift /
-separation helpers are one-shot computations for the UI's calibration & training panels.
+"""Per-node link health + dataset diagnostics, off the hot path.
 
 node_id < 100 => 2.4 GHz (ESP32), node_id >= 100 => 5 GHz (nexmon Pi).
 """
 
 import time
 from collections import defaultdict, deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
 
+from wavetrace.calibration import CalibrationResult
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ
+
+_UNCALIBRATED_REFERENCE = (0.0, ())
 
 
 @dataclass(frozen=True, slots=True)
 class HealthMeterOptions:
-    """Tuning knobs for `NodeHealthMeter`."""
-
     target_sample_rate_hz: float = DEFAULT_TARGET_SAMPLE_RATE_HZ
     min_sample_rate_fraction: float = 0.8
     rolling_window_frames: int = 200
@@ -34,11 +32,14 @@ class HealthMeterOptions:
 
 
 class NodeHealthMeter:
-    """Rolling per-node link health. Feed every CsiFrame via `observe`; read `snapshot()` whenever
-    the UI wants an update (e.g. once per second). O(1) per frame, O(nodes·rolling_window_frames)
-    per snapshot."""
+    """O(1) per frame, O(nodes·rolling_window_frames) per snapshot.
 
-    def __init__(self, options: HealthMeterOptions = HealthMeterOptions(), *, gain_ref_by_node=None):
+    gain_drift = rolling mean |H| / the calibration's quiet-room mean |H| (1.0 = gain unchanged), None
+    for a node with neither its own calibration nor `default_calibration`."""
+
+    def __init__(self, options: HealthMeterOptions = HealthMeterOptions(), *,
+                 calibration_by_node: Mapping[int, CalibrationResult] | None = None,
+                 default_calibration: CalibrationResult | None = None):
         self.target_sample_rate_hz = options.target_sample_rate_hz
         self.min_sample_rate_hz = options.target_sample_rate_hz * options.min_sample_rate_fraction
         self.rolling_window_frames = options.rolling_window_frames
@@ -48,18 +49,13 @@ class NodeHealthMeter:
         self._variation_coefficients = defaultdict(lambda: deque(maxlen=self.rolling_window_frames))
         self._frame_counts = defaultdict(int)
         self._last_timestamps_s = {}
-        self._reference_amplitude_by_node = dict(gain_ref_by_node or {})
-        self._subcarriers_by_node = {}
-
-    def set_reference(self, node_id, ref_scale=None, subcarriers=None):
-        """Record a node's calibration reference amplitude + NBVI subcarriers for display."""
-        if ref_scale is not None:
-            self._reference_amplitude_by_node[int(node_id)] = float(ref_scale)
-        if subcarriers is not None:
-            self._subcarriers_by_node[int(node_id)] = list(subcarriers)
+        self._reference_by_node = {int(node_id): _calibration_reference(result)
+                                   for node_id, result in (calibration_by_node or {}).items()}
+        self._default_reference = (_calibration_reference(default_calibration)
+                                   if default_calibration is not None else _UNCALIBRATED_REFERENCE)
 
     def observe(self, frame) -> None:
-        """One CsiFrame. O(A·S)."""
+        """O(A·S)."""
         node_id = int(frame.node_id)
         now_s = time.time()
         csi = np.asarray(frame.grid)               # (A, S) complex
@@ -82,7 +78,7 @@ class NodeHealthMeter:
         return (len(receive_times_s) - 1) / span_s if span_s > 0 else 0.0
 
     def snapshot(self) -> list[dict]:
-        """Per-node health dict list. Call on UI cadence (~1 Hz), not per frame."""
+        """Call on UI cadence (~1 Hz), not per frame."""
         node_health = []
         for node_id in sorted(self._wall_receive_times_s.keys()):
             mean_amplitudes = np.asarray(self._mean_amplitudes[node_id], dtype=np.float64)
@@ -91,9 +87,7 @@ class NodeHealthMeter:
                            else mean_amplitude * 0.1)
             snr_db = float(20.0 * np.log10(mean_amplitude / noise_floor)) if noise_floor > 1e-12 else 0.0
             sample_rate_hz = self._sample_rate_hz(node_id)
-            reference_amplitude = self._reference_amplitude_by_node.get(node_id)
-            gain_drift = (round(mean_amplitude / reference_amplitude, 3)
-                          if (reference_amplitude and reference_amplitude > 0) else None)
+            reference_amplitude, subcarriers = self._reference_by_node.get(node_id, self._default_reference)
             node_health.append({
                 "node_id": node_id,
                 "band": "5GHz" if node_id >= 100 else "2.4GHz",
@@ -107,21 +101,28 @@ class NodeHealthMeter:
                     if self._variation_coefficients[node_id] else 0.0,
                     4,
                 ),
-                "gain_drift": gain_drift,
+                "gain_drift": (round(mean_amplitude / reference_amplitude, 3)
+                               if reference_amplitude > 0 else None),
                 "loss_pct": round(
                     max(0.0, (self.target_sample_rate_hz - sample_rate_hz) / self.target_sample_rate_hz
                         * 100.0),
                     1,
                 ),
-                "subcarriers": self._subcarriers_by_node.get(node_id, []),
+                "subcarriers": list(subcarriers),
                 "last_ts": round(self._last_timestamps_s.get(node_id, 0.0), 4),
             })
         return node_health
 
 
+def _calibration_reference(result: CalibrationResult) -> tuple[float, tuple[int, ...]]:
+    # baseline_mag is antenna-averaged per subcarrier, so its mean is the same all-(antenna,
+    # subcarrier) mean |H| that observe() records live
+    return float(np.mean(result.baseline_mag)), tuple(int(subcarrier) for subcarrier in result.subcarriers)
+
+
 def cluster_sync(meter: NodeHealthMeter) -> dict:
-    """Time-alignment health: spread of the latest per-node frame timestamps.
-    Large spread => nodes are de-synced => stacking will drop windows. O(nodes)."""
+    """Large spread of the latest per-node timestamps => nodes de-synced => stacking drops windows.
+    O(nodes)."""
     last_timestamp_s_by_node = {node_id: meter._last_timestamps_s.get(node_id, 0.0)
                                 for node_id in meter._wall_receive_times_s.keys()}
     if len(last_timestamp_s_by_node) < 2:
@@ -133,8 +134,7 @@ def cluster_sync(meter: NodeHealthMeter) -> dict:
 
 
 def baseline_drift(calibration_result, recent_frames) -> dict:
-    """How far the current quiet room has drifted from the calibrated baseline.
-    >~20% mean ratio suggests recalibration. O(F·S)."""
+    """Mean ratio more than ~20% from 1 suggests recalibration. O(F·S)."""
     if not recent_frames:
         return {"mean_ratio": None, "max_ratio": None, "recalibrate": False}
     amplitudes = np.stack([np.abs(np.asarray(frame.grid)).mean(axis=0) for frame in recent_frames])  # (F, S)
@@ -149,40 +149,7 @@ def baseline_drift(calibration_result, recent_frames) -> dict:
             "recalibrate": abs(mean_ratio - 1.0) > 0.2}
 
 
-def feature_separation(x_intercarrier, y, *, variance_col=9) -> dict:
-    """Is the σ²[p] weapon signature separable? Returns two histograms (weapon vs none) of the
-    inter-carrier variance feature + a rank-AUC separability score. O(n log n).
-
-    auc = 0.5 means no separation, 1.0 means perfect. Threshold 0.65 is a rough 'worth training' gate."""
-    X = np.asarray(x_intercarrier, dtype=np.float64)
-    y = np.asarray(y)
-    if X.ndim != 2 or X.shape[0] != y.size:
-        return {"error": "shape"}
-    variance_feature = X[:, variance_col]
-    positives, negatives = variance_feature[y == 1], variance_feature[y == 0]
-    if positives.size == 0 or negatives.size == 0:
-        return {"error": "single_class"}
-    # rank-AUC (Mann-Whitney U / n*m): P(random positive > random negative)
-    order = np.argsort(np.concatenate([positives, negatives]), kind="stable")
-    ranks = np.empty(order.size, dtype=np.float64)
-    ranks[order] = np.arange(1, order.size + 1)
-    auc = ((ranks[:positives.size].sum() - positives.size * (positives.size + 1) / 2)
-           / (positives.size * negatives.size))
-    auc = float(max(auc, 1 - auc))  # fold: 0.5=random, 1.0=perfect
-    bin_edges = np.linspace(float(variance_feature.min()), float(variance_feature.max()), 33)
-    positive_histogram, _ = np.histogram(positives, bins=bin_edges)
-    negative_histogram, _ = np.histogram(negatives, bins=bin_edges)
-    return {
-        "auc": round(auc, 3),
-        "edges": bin_edges.tolist(),
-        "weapon_hist": positive_histogram.tolist(),
-        "none_hist": negative_histogram.tolist(),
-        "separable": auc > 0.65,
-    }
-
-
 def dataset_report(dataset) -> dict:
-    """4-quadrant style summary of a built dataset for the training UI panel."""
     y = np.asarray(dataset.y)
     classes, counts = np.unique(y, return_counts=True)
     return {

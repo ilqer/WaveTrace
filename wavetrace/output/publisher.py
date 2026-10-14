@@ -1,8 +1,5 @@
-"""Where a verdict goes: one RecognitionResult per inference, serialized and sent.
-
-`Publisher` is the transport-agnostic sink. `JsonlPublisher` is the default: one JSON line per
-result to stdout or a file, with no broker or server to run. A network transport subclasses
-Publisher and reuses `result_to_dict`. O(1) per result.
+"""Result sinks: `JsonlPublisher` writes one JSON line per result; a network transport subclasses
+`Publisher` and reuses `result_to_dict`. O(1) per result.
 """
 
 from abc import ABC, abstractmethod
@@ -14,8 +11,7 @@ from wavetrace.output.guard import GuardEvent
 
 
 def result_to_dict(result, *, mode: str = "") -> dict:
-    """RecognitionResult -> the wire schema. bbox/keypoints ride along only when the head is spatial
-    (the ladder's location/posture heads); presence/weapon leave them null/empty."""
+    """bbox/keypoints ride along only for spatial results; presence/weapon leave them null/empty."""
     bounding_box = getattr(result, "bbox", None)
     return {
         "t": float(result.timestamp),
@@ -28,20 +24,18 @@ def result_to_dict(result, *, mode: str = "") -> dict:
 
 
 class Publisher(ABC):
-    """Backend-agnostic result sink. Subclasses implement the transport; callers see publish/close.
-
-    Event lines carry an "event" key; result lines never do. publish_event has a no-op default so
-    subclasses without an override do not crash (non-breaking for existing subclasses)."""
+    """Event lines carry an "event" key; result lines never do. publish_event is a no-op by default so
+    subclasses without an override do not crash."""
 
     def __init__(self, *, mode: str = ""):
         self.mode = mode  # stamped on every message so a consumer knows presence from weapon
 
     @abstractmethod
     def publish(self, result) -> None:
-        """Serialize and emit one RecognitionResult. O(1)."""
+        """O(1)."""
 
     def publish_event(self, event: GuardEvent) -> None:
-        """Emit one guard/advisory event. Default is a no-op; override to transport it."""
+        """No-op by default."""
 
     def close(self) -> None:
         """Flush/close the transport. No-op by default."""
@@ -49,32 +43,32 @@ class Publisher(ABC):
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exception_info):
         self.close()
 
 
 class JsonlPublisher(Publisher):
-    """One JSON line per result to a stream or file (default stdout). Zero-dependency."""
+    """Default sink is stdout; a str/Path sink is opened for writing and closed by `close`."""
 
     def __init__(self, sink=None, *, mode: str = ""):
         super().__init__(mode=mode)
         if sink is None:
-            self._fh, self._owned = sys.stdout, False
+            self._stream, self._is_owned = sys.stdout, False
         elif isinstance(sink, (str, Path)):
             sink_path = Path(sink)
             sink_path.parent.mkdir(parents=True, exist_ok=True)
-            self._fh, self._owned = open(sink_path, "w"), True
+            self._stream, self._is_owned = open(sink_path, "w"), True
         else:
-            self._fh, self._owned = sink, False
+            self._stream, self._is_owned = sink, False
 
     def publish(self, result) -> None:
-        self._fh.write(json.dumps(result_to_dict(result, mode=self.mode)) + "\n")
-        self._fh.flush()  # a downstream tail should see each verdict as it happens
+        self._stream.write(json.dumps(result_to_dict(result, mode=self.mode)) + "\n")
+        self._stream.flush()  # a downstream tail should see each verdict as it happens
 
     def publish_event(self, event: GuardEvent) -> None:
-        self._fh.write(json.dumps(event.to_dict()) + "\n")
-        self._fh.flush()
+        self._stream.write(json.dumps(event.to_dict()) + "\n")
+        self._stream.flush()
 
     def close(self) -> None:
-        if self._owned:
-            self._fh.close()
+        if self._is_owned:
+            self._stream.close()

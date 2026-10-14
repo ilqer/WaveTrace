@@ -10,8 +10,6 @@ from wavetrace.adapters.recognition._sklearn_pipeline import SklearnPipelineBack
 
 
 class MlpBackend(SklearnPipelineBackend):
-    """`StandardScaler` + `MLPClassifier` — the user-locked default (`ModelConfig.backend`)."""
-
     def _build_classifier(self, config) -> MLPClassifier:
         return MLPClassifier(
             hidden_layer_sizes=(config.hidden,),

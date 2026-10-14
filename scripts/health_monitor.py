@@ -21,7 +21,7 @@ discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 last_ping_time_s = 0
 
-last = {}
+latest_by_node = {}
 print(f"health monitor on udp/{PORT}  (Ctrl+C to stop)\n")
 try:
     while True:
@@ -31,23 +31,24 @@ try:
             last_ping_time_s = now
 
         try:
-            payload, addr = sock.recvfrom(2048)
-            h = json.loads(payload.decode("utf-8", "replace").splitlines()[0])
-            if h.get("type") == "health":
-                last[int(h["node"])] = (time.time(), h, addr[0])
+            payload, sender_address = sock.recvfrom(2048)
+            health = json.loads(payload.decode("utf-8", "replace").splitlines()[0])
+            if health.get("type") == "health":
+                latest_by_node[int(health["node"])] = (time.time(), health, sender_address[0])
         except (socket.timeout, ValueError, KeyError, IndexError):
             pass
         now = time.time()
         rows = ["  node  ip              age   csi_hz tx_hz peers leader gain  agc rssi heap(KB) up(s) clk"]
-        for n in sorted(last):
-            t0, h, ip = last[n]
-            age = now - t0
-            mark = "STALE" if age > STALE_S else f"{age:4.1f}s"
+        for node_id in sorted(latest_by_node):
+            last_heard_s, health, node_address = latest_by_node[node_id]
+            age_s = now - last_heard_s
+            mark = "STALE" if age_s > STALE_S else f"{age_s:4.1f}s"
             rows.append(
-                f"  {n:<4}  {ip:<14}  {mark:>5} {h.get('csi_hz',0):>6} {h.get('tx_hz',0):>5} "
-                f"{h.get('peers',0):>5} {h.get('leader','?'):>6} {h.get('gain','?'):>4} "
-                f"{h.get('agc',0):>3} {h.get('rssi',0):>4} {h.get('heap',0)//1024:>7} "
-                f"{h.get('up_s',0):>5} {'ok' if h.get('synced') else 'no':>3}")
+                f"  {node_id:<4}  {node_address:<14}  {mark:>5} {health.get('csi_hz',0):>6} "
+                f"{health.get('tx_hz',0):>5} {health.get('peers',0):>5} {health.get('leader','?'):>6} "
+                f"{health.get('gain','?'):>4} {health.get('agc',0):>3} {health.get('rssi',0):>4} "
+                f"{health.get('heap',0)//1024:>7} "
+                f"{health.get('up_s',0):>5} {'ok' if health.get('synced') else 'no':>3}")
         print("\033[2J\033[H" + "\n".join(rows), flush=True)  # ansi: clear screen, cursor home
         time.sleep(0.0)
 except KeyboardInterrupt:

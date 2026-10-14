@@ -29,7 +29,7 @@ sock.settimeout(1.0)
 
 total = collections.Counter()   # (tx, rx) -> all-time frames
 window = collections.Counter()  # (tx, rx) -> frames this second
-dgrams = 0
+datagram_count = 0
 start = last_print_time_s = time.time()
 print(f"listening on udp/{PORT}  (Ctrl+C to stop)")
 
@@ -38,20 +38,21 @@ def count_links(payload):
     """Tally (tx_short, rx_node) per record in one batch, stepping over the CSI bytes undecoded."""
     if len(payload) < _HDR.size:
         return
-    magic, ver, rx, _ntp, n = _HDR.unpack_from(payload, 0)
-    if magic != _MAGIC or ver not in (2, 3):
+    magic, wire_version, rx, _ntp, record_count = _HDR.unpack_from(payload, 0)
+    if magic != _MAGIC or wire_version not in (2, 3):
         return
-    step = 2 if ver == 2 else 4   # bytes/subcarrier: int8 (2) vs int16 (4)
-    off, end = _HDR.size, len(payload)
-    for _ in range(n):
-        if off + 12 > end:
+    bytes_per_subcarrier = 2 if wire_version == 2 else 4   # int8 (2) vs int16 (4) I/Q pair
+    offset_bytes, end_offset = _HDR.size, len(payload)
+    for _ in range(record_count):
+        if offset_bytes + 12 > end_offset:
             break
-        tx = f"{payload[off + 4]:02x}:{payload[off + 5]:02x}"  # last two octets of the tx MAC
-        L = struct.unpack_from("<H", payload, off + 10)[0]
-        off += 12
-        if L % step != 0 or off + L > end:
+        # last two octets of the tx MAC
+        tx = f"{payload[offset_bytes + 4]:02x}:{payload[offset_bytes + 5]:02x}"
+        csi_length_bytes = struct.unpack_from("<H", payload, offset_bytes + 10)[0]
+        offset_bytes += 12
+        if csi_length_bytes % bytes_per_subcarrier != 0 or offset_bytes + csi_length_bytes > end_offset:
             break
-        off += L
+        offset_bytes += csi_length_bytes
         total[(tx, rx)] += 1
         window[(tx, rx)] += 1
 
@@ -63,7 +64,7 @@ try:
         except socket.timeout:
             payload = None
         if payload:
-            dgrams += 1
+            datagram_count += 1
             count_links(payload)
         now = time.time()
         if now - last_print_time_s >= 1.0:
@@ -80,4 +81,4 @@ finally:
 print("\n=== totals (tx -> rx : frames) ===")
 for (tx, rx) in sorted(total):
     print(f"  {tx} -> {rx} : {total[(tx, rx)]}")
-print(f"distinct links seen: {len(total)}   datagrams: {dgrams}")
+print(f"distinct links seen: {len(total)}   datagrams: {datagram_count}")

@@ -5,7 +5,6 @@ Appears as node 5 alongside ESP32 mesh."""
 PC_IP = "TODO_MAC_LAN_IP"          # e.g. "10.8.1.103"
 UDP_PORT = 9876
 
-# --- Node identity ---
 NODE_ID = 5  # unique vs ESP nodes 1-4
 
 # Modem B 5 GHz BSSID. Must match -m in makecsiparams.
@@ -26,7 +25,7 @@ CSI_SCALE = 1.0
 
 
 def validate() -> None:
-    """Fail loudly if the TODO placeholders were not filled in (called at node startup)."""
+    """Raises SystemExit while the TODO placeholders are unfilled."""
     missing = [name for name in ("PC_IP", "AP_BSSID") if globals()[name].startswith("TODO_")]
     if missing:
         raise SystemExit(

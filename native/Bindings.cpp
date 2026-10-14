@@ -1,4 +1,3 @@
-// pybind11 module `_wavetrace`: exposes the core C++ types and hot-path DSP to Python orchestration.
 #include <pybind11/complex.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
@@ -20,17 +19,17 @@
 namespace py = pybind11;
 using namespace wavetrace;
 
-// Zero-copy writable (antennaCount x subcarrierCount) complex64 view sharing the frame's buffer; `frame` is the base object so the buffer outlives the array.
+// `frame` is the array's base object so the shared buffer outlives the view.
 static py::array GridView(py::object frame) {
   CsiFrame& csiFrame = frame.cast<CsiFrame&>();
   const auto rows = static_cast<py::ssize_t>(csiFrame.AntennaCount());
   const auto columns = static_cast<py::ssize_t>(csiFrame.SubcarrierCount());
   const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(CsiFrame::Sample));
   return py::array_t<std::complex<float>>(
-      {rows, columns},                 // shape
-      {columns * elementSizeBytes, elementSizeBytes},          // row-major strides
-      csiFrame.Data(),              // shared buffer
-      frame);                       // base keepalive
+      {rows, columns},
+      {columns * elementSizeBytes, elementSizeBytes},
+      csiFrame.Data(),
+      frame);
 }
 
 PYBIND11_MODULE(_wavetrace, m) {
@@ -68,7 +67,6 @@ PYBIND11_MODULE(_wavetrace, m) {
       .def_readwrite("mask", &Label::mask)
       .def_readwrite("mask_grid", &Label::maskGrid);
 
-  // Phase 2 — hardware ingest.
   py::class_<FrameParser>(m, "FrameParser")
       .def(py::init<uint16_t, uint16_t>(), py::arg("num_antennas"), py::arg("num_subcarriers"))
       .def_property_readonly("num_antennas", &FrameParser::AntennaCount)
@@ -94,7 +92,6 @@ PYBIND11_MODULE(_wavetrace, m) {
       .def("synced", &NodeAggregator::CollectFramesWithin, py::arg("tolerance"),
            "Latest frame per node within `tolerance` s of the newest submit (copies). O(m).");
 
-  // Signal preprocessing: stateless transforms first (bound for unit tests), then the streaming Preprocessor.
   m.def("conjugate_multiply", &ConjugateMultiply, py::arg("in_frame"), py::arg("out_frame"),
         "Geometry-adaptive conjugate multiply (cancels CFO/SFO) into out_frame (reshaped). O(n).");
   m.def("combined_channel_difference", &CombinedChannelDifference, py::arg("in_frame"),
@@ -135,7 +132,6 @@ PYBIND11_MODULE(_wavetrace, m) {
       .def_property_readonly("locked", &GainLock::IsLocked)
       .def_property_readonly("reference_scale", &GainLock::ReferenceScale);
 
-  // NBVI subcarrier selection (offline). amp = float32 (frames x subcarriers) baseline matrix.
   m.def(
       "nbvi_scores",
       [](py::array_t<float, py::array::c_style | py::array::forcecast> amplitudes, float alpha) {
@@ -192,13 +188,12 @@ PYBIND11_MODULE(_wavetrace, m) {
             const auto rows = static_cast<py::ssize_t>(p.OutRows());
             const auto columns = static_cast<py::ssize_t>(p.OutCols());
             const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(float));
-            // Zero-copy float32 view of the reused output grid (same buffer each call).
+            // reused buffer: the view is overwritten by the next call
             return py::array_t<float>({rows, columns}, {columns * elementSizeBytes, elementSizeBytes}, p.Data(), self);
           },
           py::arg("frame"),
           "Process one frame -> drift-free differential-phase grid (zero-copy view). O(n).");
 
-  // Features + spectrogram: stateless FFT/feature fns (bound for unit tests), then the streaming extractors.
   m.def(
       "fft",
       [](py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> values) {
@@ -370,7 +365,7 @@ PYBIND11_MODULE(_wavetrace, m) {
             FeatureExtractor& f = self.cast<FeatureExtractor&>();
             const auto outputLength = static_cast<py::ssize_t>(f.OutputSize());
             const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(float));
-            // Zero-copy float32 view of the reused output (length 9*num_series, same buffer each emit).
+            // reused buffer: the view is overwritten by the next emit
             return py::array_t<float>({outputLength}, {elementSizeBytes}, f.Data(), self);
           },
           "Zero-copy view of the latest emitted feature vector (length 9*num_series).");
@@ -397,7 +392,7 @@ PYBIND11_MODULE(_wavetrace, m) {
             InterCarrierExtractor& f = self.cast<InterCarrierExtractor&>();
             const auto outputLength = static_cast<py::ssize_t>(f.OutputSize());
             const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(float));
-            // Zero-copy float32 view of the reused output (length 27, same buffer each emit).
+            // reused buffer: the view is overwritten by the next emit
             return py::array_t<float>({outputLength}, {elementSizeBytes}, f.Data(), self);
           },
           "Zero-copy view of the latest emitted feature block (length 27 = 3*9: mu|sigma2|cv).");
@@ -450,7 +445,7 @@ PYBIND11_MODULE(_wavetrace, m) {
             const auto rows = static_cast<py::ssize_t>(s.SubcarrierCount());
             const auto columns = static_cast<py::ssize_t>(s.TimeSteps());
             const auto elementSizeBytes = static_cast<py::ssize_t>(sizeof(float));
-            // Zero-copy float32 view of the reused (num_subcarriers x time_steps) image.
+            // reused buffer: the view is overwritten by the next emit
             return py::array_t<float>({rows, columns}, {columns * elementSizeBytes, elementSizeBytes}, s.Data(), self);
           },
           "Zero-copy view of the latest emitted (num_subcarriers x time_steps) CSI image.");

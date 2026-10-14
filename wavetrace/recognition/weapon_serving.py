@@ -16,34 +16,30 @@ from wavetrace.recognition.serving import load_logo_accuracy, required_subcarrie
 
 
 def dwell_proba(frames, sample_rate_hz, entry):
-    """One link's serving math, shared by `run_weapon` and the web streamer. `entry` is a serving
-    entry — the dict from `load_weapon_links` or a mesh node dict; both carry
-    result/lock/cfg/intercarrier/pick/session and an optional ic_baseline.
+    """One link's serving math, shared by `run_weapon` and the web streamer. `entry` is a dict from
+    `load_weapon_links` or a mesh node dict (result/lock/cfg/intercarrier/pick/session, optional ic_baseline).
 
-    Resamples to sample_rate_hz, windows the dwell, and returns a temporal vote: the mean class
-    probability over every window in the buffer, not just the last one. Aggregating a whole
-    crossing this way lifted a single window's 51% to 93%. The mean is soft rather than a hard
-    majority so it composes with the soft cross-link LinkVoter. Also returns the last window's
-    (image, features, intercarrier_features) for the web spectrogram, and the window count, or
-    (None, None, None, None, 0) when no full window fits. ic_baseline is subtracted from the
-    inter-carrier path and must match what training used."""
+    Returns the mean class probability over every window in the buffer (soft, so it composes with the
+    cross-link LinkVoter), the last window's (image, features, intercarrier_features) for the web
+    spectrogram, and the window count; (None, None, None, None, 0) when no full window fits.
+    ic_baseline is subtracted from the inter-carrier path and must match training."""
     resampled = resample_uniform(frames, sample_rate_hz)
     config = entry["cfg"]
     if len(resampled) < config.window:
         return None, None, None, None, 0
-    probas = []
+    window_probas = []
     image = features = intercarrier_features = None
     for _window_timestamp_s, features, image, intercarrier_features in iter_windows(
         resampled, entry["result"].subcarriers, entry["lock"],
         window=config.window, hop=config.hop, intercarrier=entry["intercarrier"],
-        image_subcarriers=entry["result"].image_subcarriers, ic_baseline=entry.get("ic_baseline"),
+        image_subcarriers=entry["result"].image_subcarriers, intercarrier_baseline=entry.get("ic_baseline"),
     ):
-        probas.append(
+        window_probas.append(
             entry["session"].predict_window_proba(entry["pick"](features, image, intercarrier_features))
         )
-    if not probas:
+    if not window_probas:
         return None, None, None, None, 0
-    return np.mean(probas, axis=0), image, features, intercarrier_features, len(probas)  # temporal vote
+    return np.mean(window_probas, axis=0), image, features, intercarrier_features, len(window_probas)
 
 
 def load_weapon_links(calibration_root, model_root):
@@ -57,14 +53,14 @@ def load_weapon_links(calibration_root, model_root):
     LinkVoter `weight` from its OWN LOGO accuracy (accuracy_weights; chance->0 so a weak direction
     drops out without being explicitly removed) and the serving plan matching how it was trained."""
     entries = {}
-    accs = {}
+    accuracy_by_key = {}
     for model_dir in sorted(glob.glob(os.path.join(model_root, "node*"))):
         base = os.path.basename(model_dir)
         if not base[len("node"):].isdigit():
             continue
         node_id = int(base[len("node"):])
-        cal_dir = os.path.join(calibration_root, base)
-        if not os.path.isdir(cal_dir):
+        calibration_dir = os.path.join(calibration_root, base)
+        if not os.path.isdir(calibration_dir):
             continue
         link_models = sorted(glob.glob(os.path.join(model_dir, "link*", "model.joblib")))
         if link_models:  # per-link: tag from the link<tag> dir name
@@ -72,10 +68,10 @@ def load_weapon_links(calibration_root, model_root):
                 (os.path.basename(os.path.dirname(path))[len("link"):], path) for path in link_models
             ]
         elif os.path.exists(os.path.join(model_dir, "model.joblib")):
-            found = [(None, os.path.join(model_dir, "model.joblib"))]  # per-node fallback
+            found = [(None, os.path.join(model_dir, "model.joblib"))]
         else:
             continue
-        result, gain_lock = load_calibration(cal_dir)
+        result, gain_lock = load_calibration(calibration_dir)
         for link_tag, model_path in found:
             session = open_session("weapon", model_path)
             should_apply_lock, intercarrier, pick = plan_input("weapon", session.head)
@@ -90,11 +86,15 @@ def load_weapon_links(calibration_root, model_root):
                 min_width=required_subcarrier_width(result), weapon_i=classes.index(1) if 1 in classes else -1,
                 ic_baseline=ic_baseline,
             )
-            accs[key] = load_logo_accuracy(os.path.join(os.path.dirname(model_path), "metrics.json"))
-    weights = accuracy_weights({key: accuracy for key, accuracy in accs.items() if accuracy is not None})
+            accuracy_by_key[key] = load_logo_accuracy(
+                os.path.join(os.path.dirname(model_path), "metrics.json"))
+    weights = accuracy_weights(
+        {key: accuracy for key, accuracy in accuracy_by_key.items() if accuracy is not None})
     for key in entries:
         entries[key]["weight"] = weights.get(key, 1.0)
-    orders = {tuple(int(class_id) for class_id in e["session"].head.classes_) for e in entries.values()}
+    orders = {
+        tuple(int(class_id) for class_id in entry["session"].head.classes_) for entry in entries.values()
+    }
     if len(orders) > 1:
         raise ValueError(f"weapon heads disagree on class ordering {orders}; retrain consistently")
     return entries
@@ -130,10 +130,10 @@ def link_health(frames):
     if inter_arrival.size == 0:
         return 0.0, 0.0
     span = timestamps[-1] - timestamps[0]
-    hz = (len(frames) - 1) / span if span > 0 else 0.0
+    delivered_hz = (len(frames) - 1) / span if span > 0 else 0.0
     median_inter_arrival = float(np.median(inter_arrival))
     if median_inter_arrival <= 0:
-        return hz, 0.0
+        return delivered_hz, 0.0
     missing = float(np.clip(np.round(inter_arrival / median_inter_arrival) - 1.0, 0.0, None).sum())
     expected = missing + inter_arrival.size
-    return hz, (missing / expected if expected > 0 else 0.0)
+    return delivered_hz, (missing / expected if expected > 0 else 0.0)

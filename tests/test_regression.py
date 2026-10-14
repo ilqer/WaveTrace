@@ -5,7 +5,7 @@ import pytest
 from wavetrace.synthetic import generate_paired_recording
 from wavetrace.calibration import Calibration
 from wavetrace.config import ModelConfig
-from wavetrace.groundtruth import ScriptedLabeler, build_dataset, presence_label_fn
+from wavetrace.groundtruth import ScriptedLabeler, build_dataset, presence_label_function
 from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
 
 
@@ -38,14 +38,14 @@ def test_synthetic_weapon_zero_depth_warns():
 
 def test_build_dataset_accepts_generator():
     frames, _, _ = generate_paired_recording(
-        num_antennas=2, num_subcarriers=32, sample_rate_hz=100.0, duration_s=4.0, camera_fps=30.0,
+        num_antennas=2, num_subcarriers=32, sample_rate_hz=100.0, duration_s=4.0, camera_frame_rate_hz=30.0,
         presence_spans=[(0.0, 4.0)], presence_turbulence_std=0.1, seed=1,
     )
-    cal = Calibration(baseline_packets=50)
-    for fr in frames[:50]:
-        cal.observe(fr)
-    result = cal.finalize()
-    labeler = ScriptedLabeler([(0.0, 4.0, True)], label_fn=presence_label_fn)
-    # Pass a generator: build_dataset must materialize it before fs estimation.
-    ds = build_dataset(iter(frames), result, cal.gain_lock, labeler, window=128, hop=32)
-    assert ds.meta["fs"] > 0.0 and ds.y.size > 0
+    calibration = Calibration(baseline_packets=50)
+    for frame in frames[:50]:
+        calibration.observe(frame)
+    result = calibration.finalize()
+    labeler = ScriptedLabeler([(0.0, 4.0, True)], label_function=presence_label_function)
+    # Pass a generator: build_dataset must materialize it before sample-rate estimation.
+    dataset = build_dataset(iter(frames), result, calibration.gain_lock, labeler, window=128, hop=32)
+    assert dataset.meta["fs"] > 0.0 and dataset.y.size > 0

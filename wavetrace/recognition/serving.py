@@ -1,5 +1,3 @@
-"""Per-link serving math shared by every live front end (presence, count and weapon)."""
-
 import json
 
 import numpy as np
@@ -15,7 +13,7 @@ def required_subcarrier_width(result):
 
 
 def load_logo_accuracy(metrics_path):
-    """A node head's honest (LOGO) accuracy — session axis preferred, subject fallback; None if absent."""
+    """Session-axis LOGO accuracy preferred, subject fallback; None if absent."""
     try:
         with open(metrics_path) as metrics_file:
             logo = json.load(metrics_file).get("logo", {})

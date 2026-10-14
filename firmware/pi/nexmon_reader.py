@@ -1,5 +1,4 @@
-"""Read live Nexmon CSI stream on Pi and yield complex CSI vectors.
-Decodes UDP datagrams on port 5500 from Nexmon firmware (CYW43455).
+"""Decodes Nexmon (CYW43455) CSI UDP datagrams on port 5500.
 
 Payload layout: 18-byte header then NFFT complex subcarriers (int16 I/Q).
 NFFT = (len-18)//4. 5GHz HT80 = 256.
@@ -13,13 +12,12 @@ import time
 from typing import Iterator, Optional, Tuple
 import numpy as np
 
-_HEADER = struct.Struct("<H b B 6s H H H H")  # 18 bytes; see module docstring
+_HEADER = struct.Struct("<H b B 6s H H H H")  # 18 bytes
 _HEADER_BYTES = _HEADER.size
 _SOURCE_MAC_OFFSET = 4
 
 
 def parse_nexmon_csi(payload: bytes) -> Optional[Tuple[bytes, np.ndarray]]:
-    """Parse UDP payload to (mac, csi) or None."""
     if len(payload) <= _HEADER_BYTES or (len(payload) - _HEADER_BYTES) % 4 != 0:
         return None
     source_mac = payload[_SOURCE_MAC_OFFSET:_SOURCE_MAC_OFFSET + 6]
@@ -29,8 +27,7 @@ def parse_nexmon_csi(payload: bytes) -> Optional[Tuple[bytes, np.ndarray]]:
 
 
 class NexmonReader:
-    """Yield (timestamp_s, mac, csi) from local UDP stream.
-    expected_subcarrier_count pins the subcarrier width (None: lock to the first frame's) and drops
+    """expected_subcarrier_count pins the subcarrier width (None: lock to the first frame's) and drops
     off-width frames. access_point_mac filters the transmitter."""
 
     def __init__(self, port: int, expected_subcarrier_count: Optional[int] = None,

@@ -12,7 +12,7 @@ import uvicorn
 
 from web.server_options import WebServerOptions
 from web.streamer import WaveTraceRunner
-from web.foxglove import fg_server
+from web.foxglove import foxglove_server
 from web.device_ctl import DeviceHub, list_serial_ports
 
 
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     telemetry_queue = asyncio.Queue()
     device_queue = asyncio.Queue()
     device_hub = DeviceHub(asyncio.get_running_loop(), device_queue)
-    await fg_server.start()
+    await foxglove_server.start()
     asyncio.create_task(broadcast_inference())
     asyncio.create_task(broadcast_stream())
     asyncio.create_task(broadcast_logs())
@@ -110,10 +110,6 @@ class StartRequest(BaseModel):
     per_link: bool = False
     yolo_weights: str = "yolov8n-seg.pt"
 
-class MockArgs:
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
 clients_inference = set()
 clients_stream = set()
 clients_logs = set()
@@ -124,7 +120,7 @@ clients_device = set()
 async def broadcast_inference():
     while True:
         data = await inference_queue.get()
-        await fg_server.publish_inference(json.loads(data))
+        await foxglove_server.publish_inference(json.loads(data))
         for client in list(clients_inference):
             try:
                 await client.send_text(data)
@@ -134,7 +130,7 @@ async def broadcast_inference():
 async def broadcast_stream():
     while True:
         data = await stream_queue.get()
-        await fg_server.publish_stream(json.loads(data))
+        await foxglove_server.publish_stream(json.loads(data))
         for client in list(clients_stream):
             try:
                 await client.send_text(data)
@@ -178,7 +174,7 @@ async def broadcast_device():
                 clients_device.discard(client)
 
 @app.post("/api/action/start")
-async def start_action(req: StartRequest):
+async def start_action(request: StartRequest):
     global runner, runner_task, inference_queue, stream_queue, logs_queue
     
     if runner and runner.is_running:
@@ -191,16 +187,16 @@ async def start_action(req: StartRequest):
     
     def run_request():
         try:
-            if req.action == "run":
-                runner.run_inference_request(req)
-            elif req.action == "calib":
-                runner.run_calibration_request(req)
-            elif req.action == "collect":
-                runner.run_collection_request(req)
-            elif req.action == "train":
-                runner.run_training_request(req)
-            elif req.action == "camera_collect":
-                runner.run_camera_collection_request(req)
+            if request.action == "run":
+                runner.run_inference_request(request)
+            elif request.action == "calib":
+                runner.run_calibration_request(request)
+            elif request.action == "collect":
+                runner.run_collection_request(request)
+            elif request.action == "train":
+                runner.run_training_request(request)
+            elif request.action == "camera_collect":
+                runner.run_camera_collection_request(request)
         except Exception as error:
             loop.call_soon_threadsafe(logs_queue.put_nowait, f"FATAL ERROR: {str(error)}")
 
@@ -309,7 +305,7 @@ async def fusion_weights(path: str):
 async def weapon_litmus(root: str = "data", node: int | None = None, per_link: bool = False):
     """Static σ²[p] separation between clear and weapon captures, per node or per tx→rx link.
     Each row's `hist` holds histogram bins for the client's PDF overlay."""
-    from wavetrace.diagnostics import gather_sigma2, json_hist, key_label, separation, verdict
+    from wavetrace.diagnostics import gather_sigma2, json_histogram, key_label, separation, verdict
     try:
         sigma2_by_key = gather_sigma2(root, node, per_link=per_link)
         if not sigma2_by_key:
@@ -335,7 +331,7 @@ async def weapon_litmus(root: str = "data", node: int | None = None, per_link: b
                          "cohens_d": round(separation_result["cohens_d"], 2),
                          "n_clear": separation_result["n_clear"], "n_weapon": separation_result["n_weapon"],
                          "verdict": verdict(separation_result["auc"]),
-                         "hist": json_hist(clear_sigma2, weapon_sigma2)
+                         "hist": json_histogram(clear_sigma2, weapon_sigma2)
                          if clear_sigma2.size >= 10 and weapon_sigma2.size >= 10 else None})
         return {"rows": rows, "per_link": per_link}
     except Exception as error:
@@ -416,21 +412,23 @@ async def scan_paths():
 async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str = ""):
     """macOS only: the dialog comes from osascript.
     Returns {"path": "/abs/path"}, or {"path": null} when the user cancels."""
-    import subprocess as _sp
+    import subprocess as _subprocess
 
     def _open_dialog():
         if type == "dir":
             script = f'POSIX path of (choose folder with prompt "{prompt}")'
         else:
             if ext:
-                allowed_extensions = "{" + ", ".join(f'"{e.strip()}"' for e in ext.split(",")) + "}"
+                allowed_extensions = ("{" + ", ".join(f'"{extension.strip()}"'
+                                                                     for extension in ext.split(","))
+                                      + "}")
                 script = (f'POSIX path of (choose file with prompt "{prompt}" '
                           f'of type {allowed_extensions})')
             else:
                 script = f'POSIX path of (choose file with prompt "{prompt}")'
 
         try:
-            result = _sp.run(
+            result = _subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True, text=True, timeout=120,
             )
@@ -439,12 +437,12 @@ async def browse_path(type: str = "dir", prompt: str = "Select path", ext: str =
             # osascript returns the path with a trailing newline
             chosen = result.stdout.strip().rstrip("/")
             return {"path": chosen}
-        except _sp.TimeoutExpired:
+        except _subprocess.TimeoutExpired:
             return {"path": None, "cancelled": True}
         except FileNotFoundError:
             return {"path": None, "error": "osascript not found — macOS only"}
-        except Exception as e:
-            return {"path": None, "error": str(e)}
+        except Exception as error:
+            return {"path": None, "error": str(error)}
 
     return await asyncio.to_thread(_open_dialog)
 
@@ -459,13 +457,13 @@ class ModelUploadRequest(BaseModel):
     dest: str = "output/model.pkl/model.joblib"
 
 @app.post("/api/model/upload")
-async def model_upload(req: ModelUploadRequest):
+async def model_upload(request: ModelUploadRequest):
     import base64
     try:
-        destination_path = _resolve_output_path(req.dest)
+        destination_path = _resolve_output_path(request.dest)
         os.makedirs(os.path.dirname(destination_path), exist_ok=True)
         with open(destination_path, "wb") as model_file:
-            model_file.write(base64.b64decode(req.file_b64))
+            model_file.write(base64.b64decode(request.file_b64))
         return {"status": "uploaded", "dest": destination_path}
     except Exception as error:
         return {"error": str(error)}
@@ -504,29 +502,30 @@ class SerialMonitorRequest(BaseModel):
     baud: int = 115200
 
 @app.post("/api/serial/monitor/start")
-async def serial_monitor_start(req: SerialMonitorRequest):
-    return device_hub.start_monitor(req.port, req.baud)
+async def serial_monitor_start(request: SerialMonitorRequest):
+    return device_hub.start_monitor(request.port, request.baud)
 
 @app.post("/api/serial/monitor/stop")
-async def serial_monitor_stop(req: StopMonitorRequest = None):
-    port = req.port if req else None
+async def serial_monitor_stop(request: StopMonitorRequest = None):
+    port = request.port if request else None
     return device_hub.stop_monitor(port)
 
 @app.post("/api/flash")
-async def flash(req: FlashRequest):
+async def flash(request: FlashRequest):
     # the build-and-flash blocks, so it runs on a worker thread and the event loop keeps streaming
-    asyncio.create_task(asyncio.to_thread(device_hub.flash, req.role, req.node_id, req.port, req.clean))
-    return {"status": "flashing", "role": req.role, "port": req.port, "clean": req.clean}
+    asyncio.create_task(asyncio.to_thread(device_hub.flash, request.role, request.node_id, request.port,
+                                          request.clean))
+    return {"status": "flashing", "role": request.role, "port": request.port, "clean": request.clean}
 
 @app.post("/api/pi/run")
-async def pi_run(req: PiRequest):
-    asyncio.create_task(asyncio.to_thread(device_hub.run_on_pi, req.host, req.command))
-    return {"status": "running", "host": req.host}
+async def pi_run(request: PiRequest):
+    asyncio.create_task(asyncio.to_thread(device_hub.run_on_pi, request.host, request.command))
+    return {"status": "running", "host": request.host}
 
 @app.post("/api/script/run")
-async def script_run(req: ScriptRequest):
-    asyncio.create_task(asyncio.to_thread(device_hub.run_script, req.script, req.args))
-    return {"status": "running", "script": req.script}
+async def script_run(request: ScriptRequest):
+    asyncio.create_task(asyncio.to_thread(device_hub.run_script, request.script, request.args))
+    return {"status": "running", "script": request.script}
 
 
 
@@ -534,8 +533,8 @@ class StopProcRequest(BaseModel):
     proc_id: str | None = None
 
 @app.post("/api/device/stop")
-async def device_stop(req: StopProcRequest = None):
-    process_id = req.proc_id if req else None
+async def device_stop(request: StopProcRequest = None):
+    process_id = request.proc_id if request else None
     return device_hub.stop_process(process_id)
 
 class InputRequest(BaseModel):
@@ -543,8 +542,8 @@ class InputRequest(BaseModel):
     input: str
 
 @app.post("/api/device/input")
-async def device_input(req: InputRequest):
-    return device_hub.send_input(req.proc_id, req.input)
+async def device_input(request: InputRequest):
+    return device_hub.send_input(request.proc_id, request.input)
 
 @app.websocket("/ws/device")
 async def websocket_device(websocket: WebSocket):
@@ -718,7 +717,7 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
                     frame_index += 1
 
                     if model is not None:
-                        # throttle YOLO to 5 fps: 1 frame in every 6 of the 30 fps source
+                        # throttle YOLO to 5 Hz: 1 frame in every 6 of the 30 Hz source
                         if frame_index % 6 != 0:
                             continue
 

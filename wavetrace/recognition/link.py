@@ -3,10 +3,6 @@
 This is where a blocked link recovers: its live quality collapses, so weight shifts to the links
 still seeing the target. It is also the only level at which the 2.4 GHz mesh and the 5 GHz Pi link
 can combine, since their feature spaces never share a tensor.
-
-One trained head per link, then `add` per link per window, then `finalize`. `quality` comes from
-the caller (a max-probability margin, window motion energy). Static priors come from
-`accuracy_weights` over per-link LOGO results, or from the operator.
 """
 
 from dataclasses import dataclass
@@ -21,9 +17,6 @@ def accuracy_weights(balanced_accuracy: dict) -> dict:
 
 @dataclass(frozen=True, slots=True)
 class LinkFusionReport:
-    """Offline measurement of decision-level band fusion (`evaluate_link_fusion`): fused accuracy
-    against each link's own accuracy and the static prior weight it was blended with."""
-
     fused_accuracy: float
     per_link_accuracy: dict
     weights: dict
@@ -31,10 +24,7 @@ class LinkFusionReport:
 
 
 def evaluate_link_fusion(links, y, *, qualities=None) -> LinkFusionReport:
-    """Measure band fusion offline: blend each link's per-window class probabilities with
-    accuracy-derived static priors, and report fused accuracy against the best single link.
-
-    links: dict[node_id -> (proba, balanced_acc)]. proba is (n, C) from that link's own head, and
+    """links: dict[node_id -> (proba, balanced_acc)]. proba is (n, C) from that link's own head;
     balanced_acc is its LOGO balanced accuracy, turned into a static prior by accuracy_weights.
     qualities: optional dict[node_id -> (n,) live quality], e.g. per-window max-proba margin.
 
@@ -63,9 +53,7 @@ def evaluate_link_fusion(links, y, *, qualities=None) -> LinkFusionReport:
 
 
 class LinkVoter:
-    """Blend per-link class probabilities with static-prior x live-quality weights. O(C)/add.
-
-    Reusable per window: finalize() resets all state so a new round of add() is independent."""
+    """Blend per-link class probabilities with static-prior x live-quality weights. O(C)/add."""
 
     def __init__(self, static_weights: dict | None = None, *, quality_floor: float = 0.05):
         self._static_weights = static_weights or {}
@@ -75,7 +63,6 @@ class LinkVoter:
         self._class_count: int | None = None
 
     def add(self, node_id: int, proba, quality: float = 1.0) -> None:
-        """Accumulate one link's probability vector with its combined weight. O(C)."""
         probabilities = np.asarray(proba, dtype=np.float64)
         if probabilities.ndim != 1:
             raise ValueError(f"LinkVoter.add: proba must be 1-D, got shape {probabilities.shape}")
@@ -91,7 +78,7 @@ class LinkVoter:
         self._total_weight += weight
 
     def finalize(self) -> tuple:
-        """Blend and return (class_id, blended_proba); reset all state for the next window."""
+        """Returns (class_id, blended_proba) and resets all state for the next window."""
         if self._weighted_probability_sum is None or self._total_weight == 0.0:
             raise ValueError("LinkVoter.finalize: no probabilities added")
         blended = self._weighted_probability_sum / self._total_weight

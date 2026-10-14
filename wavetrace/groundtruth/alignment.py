@@ -18,7 +18,7 @@ from wavetrace import Label
 @dataclass
 class AlignmentResult:
     matched: list[tuple[int, Label]]  # (window index, nearest Label) within tolerance
-    dts: np.ndarray                   # matched Δt = label_ts − window_ts, shape (len(matched),)
+    time_deltas_s: np.ndarray         # matched Δt = label_ts − window_ts, shape (len(matched),)
     dropped: list[int]                # window indices with no label in tolerance
     stats: dict                       # mean_dt, max_abs_dt, p95_abs_dt, matched, dropped
 
@@ -32,7 +32,7 @@ def align(window_timestamps, labels, tolerance: float) -> AlignmentResult:
     collected_time_deltas_s: list[float] = []
     dropped: list[int] = []
 
-    j = 0  # monotonically advances across the sorted windows -> O(W+L) overall
+    j = 0  # advances monotonically over the sorted windows -> O(W+L)
     for window_index, window_timestamp in enumerate(window_timestamps):
         if num_labels == 0:
             dropped.append(window_index)
@@ -56,10 +56,10 @@ def align(window_timestamps, labels, tolerance: float) -> AlignmentResult:
         "matched": len(matched),
         "dropped": len(dropped),
     }
-    return AlignmentResult(matched=matched, dts=time_deltas_s, dropped=dropped, stats=stats)
+    return AlignmentResult(matched=matched, time_deltas_s=time_deltas_s, dropped=dropped, stats=stats)
 
 
-def estimate_clock_offset(truth_times, truth_classes, labels, *, max_lag=0.2, step=0.005):
+def estimate_clock_offset(truth_times, truth_classes, labels, *, max_lag_s=0.2, step_s=0.005):
     """Recover a CONSTANT clock offset of `labels` relative to a KNOWN-truth class sequence
     (truth_times/truth_classes on the CSI clock) by the lag that maximizes class agreement.
 
@@ -76,25 +76,26 @@ def estimate_clock_offset(truth_times, truth_classes, labels, *, max_lag=0.2, st
     num_labels = len(label_timestamps)
     truth_timestamps = list(truth_times)
     truth_class_ids = list(truth_classes)
-    lags = np.arange(-max_lag, max_lag + 1e-9, step)
-    agrees = np.empty(lags.size)
+    lags = np.arange(-max_lag_s, max_lag_s + 1e-9, step_s)
+    agreement_by_lag = np.empty(lags.size)
     for lag_index, lag_s in enumerate(lags):
         agreement_count = 0
-        # target = truth_timestamp + lag_s is monotonic in truth_timestamp -> single forward sweep
-        # per candidate
+        # target_timestamp_s = truth_timestamp + lag_s is monotonic in truth_timestamp -> single forward
+        # sweep per candidate
         j = 0
         for truth_timestamp, truth_class_id in zip(truth_timestamps, truth_class_ids):
             if num_labels == 0:
                 break
-            target = truth_timestamp + lag_s
+            target_timestamp_s = truth_timestamp + lag_s
             while (j + 1 < num_labels
-                   and abs(label_timestamps[j + 1] - target) <= abs(label_timestamps[j] - target)):
+                   and abs(label_timestamps[j + 1] - target_timestamp_s)
+                   <= abs(label_timestamps[j] - target_timestamp_s)):
                 j += 1
             if label_class_ids[j] == truth_class_id:
                 agreement_count += 1
-        agrees[lag_index] = agreement_count / len(truth_timestamps) if truth_timestamps else 0.0
-    best = agrees.max() if agrees.size else 0.0
+        agreement_by_lag[lag_index] = agreement_count / len(truth_timestamps) if truth_timestamps else 0.0
+    best_agreement = agreement_by_lag.max() if agreement_by_lag.size else 0.0
     # discrete labels give a perfect-agreement PLATEAU ~one label period wide; its midpoint is the
     # offset estimate (first-argmax would bias to the plateau edge).
-    plateau = lags[agrees >= best - 1e-9]
-    return float(plateau.mean()), float(best)
+    plateau = lags[agreement_by_lag >= best_agreement - 1e-9]
+    return float(plateau.mean()), float(best_agreement)

@@ -64,9 +64,7 @@ def binary_rates(confusion) -> dict:
     positive_count = confusion_counts[1].sum()
     negative_count = confusion_counts[0].sum()
     return {
-        # correct weapon detections
         "tpr": float(confusion_counts[1, 1] / positive_count) if positive_count else 0.0,
-        # false alarms on the negative class
         "fp_rate": float(confusion_counts[0, 1] / negative_count) if negative_count else 0.0,
     }
 
@@ -147,25 +145,28 @@ def evaluate_concealment_gap(
     return {
         "concealed": concealed,
         "visible": visible,
-        "tpr_gap": float(visible.get("tpr", 0.0) - concealed["tpr"]),  # how much transfer costs
+        "tpr_gap": float(visible.get("tpr", 0.0) - concealed["tpr"]),
         "verdict": "PASS" if not reasons else "FAIL",
         "reasons": reasons,
     }
 
 
 def segmenter_baseline(
-    X_image, *, cv_window: int = 32, enter_cv: float = 0.08, exit_cv: float = 0.04
+    X_image, *, coefficient_of_variation_window: int = 32, enter_coefficient_of_variation: float = 0.08,
+    exit_coefficient_of_variation: float = 0.04,
 ) -> np.ndarray:
-    """No-train DSP baseline: per-window present/absent from PresenceSegmenter. O(n * window * cv_window)."""
+    """No-train DSP baseline: per-window present/absent from PresenceSegmenter.
+    O(n * window * coefficient_of_variation_window)."""
     X_image = np.asarray(X_image, dtype=np.float32)
     if X_image.ndim != 3:
         raise ValueError(f"segmenter_baseline expects (n, K, window), got {X_image.shape}")
     window_count, _, frames_per_window = X_image.shape
-    if cv_window > frames_per_window:
-        raise ValueError("cv_window must be <= the front-end window length")
+    if coefficient_of_variation_window > frames_per_window:
+        raise ValueError("coefficient_of_variation_window must be <= the front-end window length")
     predictions = np.zeros(window_count, dtype=np.int64)
     for i in range(window_count):
-        segmenter = PresenceSegmenter(cv_window, enter_cv, exit_cv)
+        segmenter = PresenceSegmenter(coefficient_of_variation_window, enter_coefficient_of_variation,
+                                      exit_coefficient_of_variation)
         frame_magnitudes = np.ascontiguousarray(X_image[i].T)  # (window, K): one frame's K magnitudes per row
         for frame_index in range(frames_per_window):
             if segmenter.push(frame_magnitudes[frame_index]):

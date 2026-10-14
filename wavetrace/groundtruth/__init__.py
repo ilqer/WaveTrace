@@ -19,8 +19,8 @@ from wavetrace.groundtruth.camera_labeler import (
     YoloLabeler,
     YoloLabelerOptions,
     YoloSegLabeler,
-    presence_label_fn,
-    weapon_label_fn,
+    presence_label_function,
+    weapon_label_function,
 )
 from wavetrace.groundtruth.dataset_builder import (
     Dataset,
@@ -47,8 +47,8 @@ __all__ = [
     "Segment",
     "Detection",
     "FrameDetection",
-    "presence_label_fn",
-    "weapon_label_fn",
+    "presence_label_function",
+    "weapon_label_function",
     "Dataset",
     "build_dataset",
     "save_dataset",

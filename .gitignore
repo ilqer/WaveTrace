@@ -31,7 +31,9 @@ __pycache__/
 
 # Retired scripts and superseded guides, kept locally for reference
 /archive/
-/docs/archive/
+
+# Private documents: literature, research reports, example code, the presentation
+/docs/
 
 # IDE
 .idea/
@@ -42,5 +44,3 @@ __pycache__/
 # Large model weight checked out beside the source, not part of the repo
 /yolov8n-seg.pt
 
-# Presentation stuff, private
-/presentation

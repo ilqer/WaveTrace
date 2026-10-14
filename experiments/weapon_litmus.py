@@ -24,26 +24,20 @@ import numpy as np
 
 from wavetrace.diagnostics import gather_sigma2, key_label, separation, verdict
 
-# dead code: no caller here or elsewhere. Left in place rather than deleted.
-def _key_nid(key):
-    """RX node id for a group key (int node, or (node, tx_tag) link)."""
-    return key[0] if isinstance(key, tuple) else key
-
-
 def ascii_hist(clear, weapon, bins=24, width=40):
     """Overlaid terminal histogram of the two σ²[p] PDFs on a shared bin grid (C=clear, W=weapon)."""
-    lo = float(min(clear.min(), weapon.min()))
-    hi = float(max(clear.max(), weapon.max()))
-    edges = np.linspace(lo, hi, bins + 1)
-    hc, _ = np.histogram(clear, edges, density=True)
-    hw, _ = np.histogram(weapon, edges, density=True)
-    peak = max(hc.max(), hw.max(), 1e-12)
+    min_value = float(min(clear.min(), weapon.min()))
+    max_value = float(max(clear.max(), weapon.max()))
+    edges = np.linspace(min_value, max_value, bins + 1)
+    clear_density, _ = np.histogram(clear, edges, density=True)
+    weapon_density, _ = np.histogram(weapon, edges, density=True)
+    peak = max(clear_density.max(), weapon_density.max(), 1e-12)
     lines = []
     for i in range(bins):
-        cbar = "C" * int(round(hc[i] / peak * width))
-        wbar = "W" * int(round(hw[i] / peak * width))
-        lines.append(f"{edges[i]:>10.3g} | {cbar}")
-        lines.append(f"{'':>10} | {wbar}")
+        clear_bar = "C" * int(round(clear_density[i] / peak * width))
+        weapon_bar = "W" * int(round(weapon_density[i] / peak * width))
+        lines.append(f"{edges[i]:>10.3g} | {clear_bar}")
+        lines.append(f"{'':>10} | {weapon_bar}")
     return "\n".join(lines)
 
 
@@ -57,18 +51,18 @@ def _maybe_plot(data, out_path):
         print("[plot] matplotlib not installed; skipping PNG (pip install matplotlib)")
         return
     keys = sorted(data, key=key_label)
-    fig, axes = plt.subplots(len(keys), 1, figsize=(7, 3 * len(keys)), squeeze=False)
-    for ax, key in zip(axes[:, 0], keys):
-        c = data[key].get("clear", np.array([]))
-        w = data[key].get("weapon", np.array([]))
-        if c.size:
-            ax.hist(c, bins=40, density=True, alpha=0.5, label="clear")
-        if w.size:
-            ax.hist(w, bins=40, density=True, alpha=0.5, label="weapon")
-        ax.set_title(f"{key_label(key)} — σ²[p] PDF")
-        ax.set_xlabel("σ²[p]"); ax.legend()
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
+    figure, axes = plt.subplots(len(keys), 1, figsize=(7, 3 * len(keys)), squeeze=False)
+    for axis, key in zip(axes[:, 0], keys):
+        clear = data[key].get("clear", np.array([]))
+        weapon = data[key].get("weapon", np.array([]))
+        if clear.size:
+            axis.hist(clear, bins=40, density=True, alpha=0.5, label="clear")
+        if weapon.size:
+            axis.hist(weapon, bins=40, density=True, alpha=0.5, label="weapon")
+        axis.set_title(f"{key_label(key)} — σ²[p] PDF")
+        axis.set_xlabel("σ²[p]"); axis.legend()
+    figure.tight_layout()
+    figure.savefig(out_path, dpi=120)
     print(f"[plot] wrote {out_path}")
 
 
@@ -96,40 +90,42 @@ def main():
     print(f"{unit:>8}  {'AUC':>6}  {'dir':>4}  {'cohen_d':>8}  {'clear~':>10}  {'weapon~':>10}  "
           f"{'n(c/w)':>13}  verdict")
 
-    def _sortkey(key):
-        s = separation(data[key].get("clear", np.array([])), data[key].get("weapon", np.array([])))
-        return (-s["auc"], key_label(key)) if (args.per_link and s) else (0.0, str(key))
+    def _sort_key(key):
+        stats = separation(data[key].get("clear", np.array([])), data[key].get("weapon", np.array([])))
+        return (-stats["auc"], key_label(key)) if (args.per_link and stats) else (0.0, str(key))
 
     pooled = {"clear": [], "weapon": []}
-    for key in sorted(data, key=_sortkey):
-        c = data[key].get("clear", np.array([]))
-        w = data[key].get("weapon", np.array([]))
-        pooled["clear"].append(c); pooled["weapon"].append(w)
+    for key in sorted(data, key=_sort_key):
+        clear = data[key].get("clear", np.array([]))
+        weapon = data[key].get("weapon", np.array([]))
+        pooled["clear"].append(clear); pooled["weapon"].append(weapon)
         label = key_label(key)
-        s = separation(c, w)
-        if s is None:
+        stats = separation(clear, weapon)
+        if stats is None:
             print(f"{label:>8}  {'-':>6}  {'-':>4}  {'-':>8}  {'-':>10}  {'-':>10}  "
-                  f"{c.size}/{w.size:>6}  (need BOTH clear and weapon captures)")
+                  f"{clear.size}/{weapon.size:>6}  (need BOTH clear and weapon captures)")
             continue
-        direction = "ok" if s["lower_when_armed"] else "INV"  # INV = armed σ² higher, wrong direction
-        print(f"{label:>8}  {s['auc']:>6.3f}  {direction:>4}  {s['cohens_d']:>8.2f}  "
-              f"{s['clear_med']:>10.3g}  {s['weapon_med']:>10.3g}  "
-              f"{s['n_clear']}/{s['n_weapon']:<7}  {verdict(s['auc'])}")
+        direction = "ok" if stats["lower_when_armed"] else "INV"  # INV = armed σ² higher, wrong direction
+        print(f"{label:>8}  {stats['auc']:>6.3f}  {direction:>4}  {stats['cohens_d']:>8.2f}  "
+              f"{stats['clear_med']:>10.3g}  {stats['weapon_med']:>10.3g}  "
+              f"{stats['n_clear']}/{stats['n_weapon']:<7}  {verdict(stats['auc'])}")
 
-    pc = np.concatenate(pooled["clear"]) if any(a.size for a in pooled["clear"]) else np.array([])
-    pw = np.concatenate(pooled["weapon"]) if any(a.size for a in pooled["weapon"]) else np.array([])
-    ps = separation(pc, pw)
-    if ps is not None:
+    pooled_clear = (np.concatenate(pooled["clear"])
+                    if any(scores.size for scores in pooled["clear"]) else np.array([]))
+    pooled_weapon = (np.concatenate(pooled["weapon"])
+                     if any(scores.size for scores in pooled["weapon"]) else np.array([]))
+    pooled_stats = separation(pooled_clear, pooled_weapon)
+    if pooled_stats is not None:
         print(f"\nPOOLED (all {unit}s — blurred by per-board gain scale, read with care): "
-              f"AUC={ps['auc']:.3f}  {verdict(ps['auc'])}")
+              f"AUC={pooled_stats['auc']:.3f}  {verdict(pooled_stats['auc'])}")
 
     if not args.no_hist:
-        for key in sorted(data, key=_sortkey):
-            c = data[key].get("clear", np.array([]))
-            w = data[key].get("weapon", np.array([]))
-            if c.size and w.size:
+        for key in sorted(data, key=_sort_key):
+            clear = data[key].get("clear", np.array([]))
+            weapon = data[key].get("weapon", np.array([]))
+            if clear.size and weapon.size:
                 print(f"\n--- {unit} {key_label(key)} σ²[p] PDF (C=clear  W=weapon) ---")
-                print(ascii_hist(c, w))
+                print(ascii_hist(clear, weapon))
 
     if args.plot:
         _maybe_plot(data, os.path.join(args.root, "weapon_litmus.png"))

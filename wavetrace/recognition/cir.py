@@ -34,15 +34,13 @@ class CirError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Cir:
-    """A recovered delay-domain channel impulse response and its summary statistics."""
-
     taps: np.ndarray            # complex (G,) — fine-grid tap amplitudes; index 0 = zero delay
     tap_delays_s: np.ndarray    # float (G,) — delay of each bin in seconds
     subcarrier_spacing_hz: float
-    dominant_bin: int           # argmax |tap|^2
-    dominant_ratio: float       # peak power / total power (high => coherent reflector / strong LOS)
+    dominant_bin: int           # peak with the most basin power (argmax |tap|^2 if no peak clears floor)
+    dominant_ratio: float       # its basin / total power, 0 if no peak (high => coherent reflector / LOS)
     rms_delay_spread_s: float   # power-weighted RMS spread (diffuse body => large; flat metal => small)
-    active_tap_count: int       # taps above the noise floor
+    active_tap_count: int       # local-maximum taps above the noise floor
 
     @property
     def dominant_delay_s(self) -> float:
@@ -86,7 +84,7 @@ def estimate_cir_taps(H: np.ndarray, phi: np.ndarray, *, lam: float = 0.05,
         raise CirError("estimate_cir_taps: H contains non-finite values (sanitize first)")
     phi_hermitian = phi.conj().T
     matched = phi_hermitian @ H                 # ΦᴴH — the IFFT/matched-filter seed
-    shrink_threshold = float(lam) * float(np.max(np.abs(matched)))  # absolute shrink, scale-invariant in lam
+    shrink_threshold = float(lam) * float(np.max(np.abs(matched)))
     lipschitz = float(np.linalg.norm(phi, 2)) ** 2 or 1.0
     step = 1.0 / lipschitz
     taps = np.zeros(phi.shape[1], dtype=np.complex64)

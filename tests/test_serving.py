@@ -55,5 +55,6 @@ def test_last_window_proba_predicts_only_the_last_window():
 
 def test_last_window_proba_is_none_without_a_full_window():
     session = _RecordingSession()
-    assert last_window_proba(_frames(10), SAMPLE_RATE_HZ, RESULT, None, CONFIG, False, _features, session) is None
+    assert last_window_proba(
+        _frames(10), SAMPLE_RATE_HZ, RESULT, None, CONFIG, False, _features, session) is None
     assert session.inputs == []
