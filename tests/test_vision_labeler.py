@@ -7,13 +7,8 @@ without model dependency.
 import numpy as np
 import pytest
 
-from wavetrace.groundtruth import (
-    Detection,
-    LabelerOptions,
-    VisionLabeler,
-    presence_label_function,
-    weapon_label_function,
-)
+from wavetrace.groundtruth import Detection, LabelerOptions, VisionLabeler
+from wavetrace.domain.groundtruth.labeler import presence_label_function, weapon_label_function
 
 IMAGE = np.zeros((8, 8, 3), dtype=np.uint8)  # Dummy frame. Stub detector ignores content.
 

@@ -7,4 +7,3 @@ Handles what happens after the model produces a prediction.
 | File | What it does |
 |---|---|
 | `publisher.py` | `Publisher` abstract base class + `JsonlPublisher` (default, zero extra dependencies) + WebSocket seam. Each prediction is serialized as one JSON line: `{t, class, conf, mode, bbox, keypoints}`. |
-| `guard.py` | Deduplicates and rate-limits output events. Prevents rapid oscillation (e.g. Present → Empty → Present within one second) from generating noisy output. |

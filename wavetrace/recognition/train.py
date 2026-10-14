@@ -11,9 +11,10 @@ import numpy as np
 
 from wavetrace.adapters.recognition import DEFAULT_BACKEND_BY_FEATURE_MODE
 from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
-from wavetrace.config import ModelConfig
+from wavetrace.adapters.store.dataset import load_dataset
+from wavetrace.domain.groundtruth.dataset import Dataset
+from wavetrace.domain.model_config import ModelConfig
 from wavetrace.domain.recognition import PresenceHead, WeaponHead
-from wavetrace.groundtruth.dataset_builder import Dataset, load_dataset
 from wavetrace.recognition.evaluate import leave_one_group_out
 
 

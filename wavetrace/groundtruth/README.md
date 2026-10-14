@@ -7,9 +7,9 @@ Tools for producing labels during data collection. A label tells the model what 
 | File | What it does |
 |---|---|
 | `camera_labeler.py` | Reads an MJPEG stream from the Pi camera and runs a YOLO or SAM vision model to produce bounding-box or segmentation labels at each frame |
-| `dataset_builder.py` | Pairs CSI windows with labels and serializes them to `x.npy` + `y.npy` + `meta.json` |
-| `alignment.py` | Matches camera timestamps to CSI timestamps using nearest-neighbour lookup; measures residual clock skew with `estimate_clock_offset` |
 | `webcam.py` | OpenCV (e.g. MacBook) webcam frame source whose timestamps share the CSI wall clock; `record_frames` buffers frames during capture, `stream_labels` runs YOLO offline |
+
+Timestamp alignment (`align`, `estimate_clock_offset`) lives in `domain/groundtruth/alignment.py`; the `Labeler` interface, `ScriptedLabeler` and the label functions in `domain/groundtruth/labeler.py`; dataset building in `domain/groundtruth/dataset.py` and its persistence in `adapters/store/dataset.py`.
 
 ## Ground-truth tiers (weapon mode)
 

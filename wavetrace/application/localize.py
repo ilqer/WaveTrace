@@ -1,7 +1,8 @@
 import numpy as np
 
-from wavetrace.localize import Localizer, Tracker, save_localization
 from wavetrace import RecognitionResult
+from wavetrace.application.ports import CsiSource
+from wavetrace.domain.localize import Localization, Localizer, Tracker
 
 
 def _spatial_result(timestamp_s, x_m, y_m, angle_deg, range_m, confidence, is_located):
@@ -16,32 +17,22 @@ def _spatial_result(timestamp_s, x_m, y_m, angle_deg, range_m, confidence, is_lo
     return result
 
 
-def localize_source(source, out_dir, *, num_antennas, antenna_spacing_wavelengths=0.5,
-                     method="music", num_sources=1, num_angles=181,
-                     subcarrier_spacing_hz=312.5e3, max_range_m=12.0, num_ranges=64,
-                     range_enabled=True, filter_track=True, publisher=None):
-    """Returns (path, aggregate Localization). Needs >= 2 RX antennas (2-antenna ESP32 / Pi NIC).
+def localize(source: CsiSource, localizer: Localizer, tracker: Tracker | None, publisher) -> Localization:
+    """Publishes one fix per frame (none when publisher is None) and returns the aggregate room map.
 
-    filter_track: the published track goes through a constant-velocity Kalman `Tracker` (confidence-
-    weighted fusion, gates impossible jumps); the saved room map is the raw aggregate.
-    O(F·(A²S + A·G) + (A·S)³)."""
-    localizer = Localizer(num_antennas, spacing=antenna_spacing_wavelengths, method=method,
-                           num_sources=num_sources, num_angles=num_angles,
-                           subcarrier_spacing_hz=subcarrier_spacing_hz, max_range_m=max_range_m,
-                           num_ranges=num_ranges, range_enabled=range_enabled)
-    tracker = Tracker(range_enabled=range_enabled) if filter_track else None
+    tracker: the published track goes through this constant-velocity Kalman filter (confidence-weighted
+    fusion, gates impossible jumps); None publishes the raw per-frame fixes. The room map is always the
+    raw aggregate. O(F·(A²S + A·G) + (A·S)³)."""
     frames = list(source.frames())
-    for localization in localizer.locate_stream(frames):
-        if publisher is None:
-            continue
-        if tracker is not None:
-            track_state = tracker.update(localization)
-            publisher.publish(_spatial_result(track_state.timestamp, track_state.x_m, track_state.y_m,
-                                               track_state.angle_deg, track_state.range_m,
-                                               track_state.confidence, track_state.measured))
-        else:
-            publisher.publish(_spatial_result(localization.timestamp, localization.x_m, localization.y_m,
-                                               localization.peak_angle_deg, localization.peak_range_m,
-                                               localization.confidence, localization.confidence >= 0.5))
-    aggregate_localization = localizer.aggregate(frames)
-    return save_localization(aggregate_localization, out_dir), aggregate_localization
+    if publisher is not None:
+        for localization in localizer.locate_stream(frames):
+            if tracker is not None:
+                track_state = tracker.update(localization)
+                publisher.publish(_spatial_result(track_state.timestamp, track_state.x_m, track_state.y_m,
+                                                   track_state.angle_deg, track_state.range_m,
+                                                   track_state.confidence, track_state.measured))
+            else:
+                publisher.publish(_spatial_result(localization.timestamp, localization.x_m, localization.y_m,
+                                                   localization.peak_angle_deg, localization.peak_range_m,
+                                                   localization.confidence, localization.confidence >= 0.5))
+    return localizer.aggregate(frames)

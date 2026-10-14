@@ -24,7 +24,7 @@ def refresh_norm_stats(head, recent_images, *, blend=0.5) -> tuple[float, float]
 def recalibrate(calibrate_function, source, out_dir, *, baseline_packets=300, use_gain_lock=True) -> str:
     """Re-run quiet-room calibration (gain, baseline, NBVI) with weights intact. Returns path.
 
-    calibrate_function takes the same arguments as wavetrace.application.calibrate.calibrate_source.
+    calibrate_function takes the same arguments as wavetrace.pipeline.calibrate_source.
     """
     calibration_path, _ = calibrate_function(source, out_dir, baseline_packets=baseline_packets,
                                        use_gain_lock=use_gain_lock)

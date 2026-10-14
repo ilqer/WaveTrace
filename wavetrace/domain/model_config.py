@@ -2,26 +2,6 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
-class CaptureConfig:
-    num_antennas: int
-    num_subcarriers: int
-    sample_rate_hz: float
-
-    def __post_init__(self) -> None:
-        if self.num_antennas <= 0 or self.num_subcarriers <= 0:
-            raise ValueError("num_antennas and num_subcarriers must be positive")
-        if self.sample_rate_hz <= 0:
-            raise ValueError("sample_rate_hz must be positive")
-
-
-@dataclass(frozen=True, slots=True)
-class SignalConfig:
-    """The gain lock applies to the amplitude path only."""
-
-    gain_lock_enabled: bool = True
-
-
-@dataclass(frozen=True, slots=True)
 class ModelConfig:
     """An unregistered `backend` name is rejected when the head is built or loaded, not here."""
 

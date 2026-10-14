@@ -7,7 +7,7 @@
 import numpy as np
 
 from wavetrace import CsiFrame, GainLock
-from wavetrace.calibration import Calibration, CalibrationResult
+from wavetrace.domain.calibration import Calibration, CalibrationResult
 from wavetrace.synthetic import generate_stream
 
 __all__ = ["calibrate_quiet_baseline", "encode_frame", "generate_quiet_baseline", "generate_raw_frames"]

@@ -11,7 +11,7 @@ import sys
 import time
 
 from wavetrace.adapters.source import RecordingSource, UdpSource, UdpSourceOptions, save_recording
-from wavetrace.application.calibrate import calibrate_source
+from wavetrace.pipeline import calibrate_source
 from link_capture import detect_nodes
 
 

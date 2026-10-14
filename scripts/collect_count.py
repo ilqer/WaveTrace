@@ -13,11 +13,11 @@ import sys
 import numpy as np
 
 from wavetrace.adapters.source import RecordingSource, save_recording
-from wavetrace.domain.dsp.resample import resample_uniform
-from wavetrace.application.collect import collect_source
-from wavetrace.recognition import count_name, train_presence
-from wavetrace.groundtruth.camera_labeler import ScriptedLabeler
+from wavetrace.pipeline import collect_source
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
+from wavetrace.domain.dsp.resample import resample_uniform
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler
+from wavetrace.recognition import count_name, train_presence
 from link_capture import capture_links
 
 SUBJECT = "u0"

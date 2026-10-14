@@ -7,20 +7,16 @@ import numpy as np
 import pytest
 
 from wavetrace.synthetic import generate_paired_recording
-from wavetrace.config import ModelConfig
-from wavetrace.groundtruth import build_dataset, load_dataset, save_dataset, weapon_label_function
-from wavetrace.groundtruth.camera_labeler import ScriptedLabeler
+from wavetrace.domain.model_config import ModelConfig
+from wavetrace.domain.groundtruth.dataset import build_dataset
+from wavetrace.adapters.store.dataset import load_dataset, save_dataset
+from wavetrace.domain.groundtruth.labeler import weapon_label_function
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler
 from wavetrace.adapters.recognition.heads import build_weapon_head, load_weapon_head
+from wavetrace.domain.recognition.vote import SegmentVoter
 from wavetrace.recognition import (
-    SegmentVoter,
-    binary_rates,
-    concat_arrays,
-    concat_datasets,
-    evaluate_concealment_gap,
-    evaluate_weapon,
-    open_session,
-    tier_verdict,
-)
+    binary_rates, concat_arrays, concat_datasets, evaluate_concealment_gap, evaluate_weapon, tier_verdict)
+from wavetrace.adapters.recognition.session import open_session
 from fixtures.synthetic_csi import calibrate_quiet_baseline
 
 NUM_ANTENNAS = 2

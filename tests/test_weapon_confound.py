@@ -3,7 +3,7 @@ import numpy as np
 
 from wavetrace.recognition.train import _carry_groups, _logo_metrics
 from wavetrace.adapters.recognition.heads import build_weapon_head
-from wavetrace.config import ModelConfig
+from wavetrace.domain.model_config import ModelConfig
 
 
 def test_carry_groups_parses_weapon_session_ids():

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from wavetrace import CsiFrame
-from wavetrace.calibration import Calibration, CalibrationResult, reflection_signature
+from wavetrace.domain.calibration import Calibration, CalibrationResult, reflection_signature
 
 
 def _quiet_baseline(antenna_count, subcarrier_count, frame_count, informative, seed):

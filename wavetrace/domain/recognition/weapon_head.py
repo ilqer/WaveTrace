@@ -4,8 +4,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-from wavetrace.config import ModelConfig
 from wavetrace.domain.contracts import SCHEMA_VERSION, PipelineContract, derive_pipeline_contract
+from wavetrace.domain.model_config import ModelConfig
 
 # Column 9 of the 27-wide inter-carrier block: the window mean of the per-packet σ²[p] series
 # (the block is µ | σ² | CV, 9 stats each, stat 0 = mean). Metal flattens amplitude across
@@ -33,7 +33,6 @@ class WeaponHead:
         cls, config: ModelConfig, backend, contract: PipelineContract, *,
         feature_mode: str | None, variance_feature: int,
     ) -> "WeaponHead":
-        """Rebuild a fitted head around an already-loaded backend and contract."""
         head = cls(config, backend, variance_feature=variance_feature)
         head.feature_mode = feature_mode
         head.contract = contract

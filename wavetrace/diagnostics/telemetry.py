@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from wavetrace.calibration import CalibrationResult
+from wavetrace.domain.calibration import CalibrationResult
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ
 
 _UNCALIBRATED_REFERENCE = (0.0, ())

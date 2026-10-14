@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from wavetrace import CsiFrame
-from wavetrace.frontend import iter_windows
+from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.recognition import VARIANCE_FEATURE
 
 SUBCARRIER_COUNT = 32

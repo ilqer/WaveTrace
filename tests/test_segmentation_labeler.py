@@ -6,13 +6,8 @@ policy.
 import numpy as np
 import pytest
 
-from wavetrace.groundtruth import (
-    LabelerOptions,
-    Segment,
-    SegmentationLabeler,
-    presence_label_function,
-    weapon_label_function,
-)
+from wavetrace.groundtruth import LabelerOptions, Segment, SegmentationLabeler
+from wavetrace.domain.groundtruth.labeler import presence_label_function, weapon_label_function
 
 IMAGE = np.zeros((8, 8, 3), dtype=np.uint8)  # Dummy frame. Stub segmenter ignores content.
 MASK_HEIGHT = MASK_WIDTH = 16

@@ -14,24 +14,14 @@ from wavetrace.adapters.recognition.heads import (
     build_weapon_head,
     load_presence_head,
 )
-from wavetrace.config import ModelConfig
-from wavetrace.groundtruth import (
-    ScriptedLabeler,
-    build_dataset,
-    load_dataset,
-    presence_label_function,
-    save_dataset,
-)
+from wavetrace.domain.model_config import ModelConfig
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler, presence_label_function
+from wavetrace.domain.groundtruth.dataset import build_dataset
+from wavetrace.adapters.store.dataset import load_dataset, save_dataset
+from wavetrace.adapters.recognition.session import InferenceSession
 from wavetrace.recognition import (
-    InferenceSession,
-    concat_datasets,
-    evaluate_presence,
-    fuse,
-    leave_one_group_out,
-    measure_latency,
-    segmenter_baseline,
-    train_presence,
-)
+    concat_datasets, evaluate_presence, fuse, leave_one_group_out, measure_latency, segmenter_baseline,
+    train_presence)
 from fixtures.synthetic_csi import calibrate_quiet_baseline
 
 NUM_ANTENNAS = 2
@@ -241,7 +231,7 @@ def test_infer_predict_window_deterministic(presence_data, inference_session):
 
 
 def test_presence_mode_session(presence_data, tmp_path):
-    from wavetrace.recognition import open_session
+    from wavetrace.adapters.recognition.session import open_session
     data = presence_data
     head = build_presence_head(data["config"]).fit(data["X"], data["y"])
     session = open_session("presence", head.save(tmp_path / "p.joblib"))

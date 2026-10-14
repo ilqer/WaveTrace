@@ -3,7 +3,7 @@ import pytest
 
 from collect_count import count_name
 from run_count import _expand_proba
-from wavetrace.groundtruth.camera_labeler import ScriptedLabeler
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler
 
 
 def test_count_name_bins_top_as_open_ended():

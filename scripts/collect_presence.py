@@ -12,7 +12,7 @@ import sys
 
 from wavetrace.adapters.source import RecordingSource, save_recording
 from wavetrace.domain.dsp.resample import resample_uniform
-from wavetrace.application.collect import collect_source
+from wavetrace.pipeline import collect_source
 from wavetrace.recognition import train_presence
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES
 from link_capture import capture_links

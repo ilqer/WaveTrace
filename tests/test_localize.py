@@ -10,13 +10,8 @@ import json
 import numpy as np
 import pytest
 
-from wavetrace.localize import (
-    Localizer,
-    Localization,
-    Tracker,
-    save_localization,
-    SPEED_OF_LIGHT,
-)
+from wavetrace.domain.localize import Localizer, Localization, Tracker, SPEED_OF_LIGHT
+from wavetrace.adapters.store.localization import save_localization
 
 
 def _measurement(angle_deg, confidence, timestamp_s, range_m=5.0):
@@ -161,7 +156,7 @@ def test_localize_source_publishes_track_and_saves_map(tmp_path):
     from wavetrace.synthetic import generate_stream
     from wavetrace.adapters.source import SyntheticSource
     from wavetrace.output import JsonlPublisher
-    from wavetrace.application.localize import localize_source
+    from wavetrace.pipeline import localize_source
 
     frames, _ = generate_stream(num_antennas=2, num_subcarriers=32, sample_rate_hz=100.0, num_frames=20,
                                perturbation_hz=1.0, perturbation_depth=0.3, cfo_hz=10.0,

@@ -7,10 +7,11 @@ import os
 
 import numpy as np
 
-from wavetrace.calibration import load_calibration
-from wavetrace.frontend import iter_windows
+from wavetrace.adapters.recognition.session import open_session
+from wavetrace.adapters.store.calibration import load_calibration
+from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
-from wavetrace.recognition.infer import open_session, plan_input
+from wavetrace.domain.recognition.input_plan import plan_input
 from wavetrace.recognition.link import accuracy_weights
 from wavetrace.recognition.serving import load_logo_accuracy, required_subcarrier_width
 

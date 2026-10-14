@@ -13,11 +13,12 @@ import os
 import socket
 import time
 
+from wavetrace.adapters.recognition.session import open_session
 from wavetrace.adapters.source import parse_batch_by_link, bind_udp_socket
-from wavetrace.calibration import load_calibration
-from wavetrace.recognition import open_session, plan_input
-from wavetrace.recognition.serving import last_window_proba, load_logo_accuracy, required_subcarrier_width
+from wavetrace.adapters.store.calibration import load_calibration
+from wavetrace.domain.recognition.input_plan import plan_input
 from wavetrace.recognition.link import LinkVoter, accuracy_weights
+from wavetrace.recognition.serving import last_window_proba, load_logo_accuracy, required_subcarrier_width
 
 
 CHUNK_S = 1.5          # fuse + print at this cadence

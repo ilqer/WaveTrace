@@ -3,9 +3,10 @@ import numpy as np
 import pytest
 
 from wavetrace.synthetic import generate_paired_recording
-from wavetrace.calibration import Calibration
-from wavetrace.config import ModelConfig
-from wavetrace.groundtruth import ScriptedLabeler, build_dataset, presence_label_function
+from wavetrace.domain.calibration import Calibration
+from wavetrace.domain.model_config import ModelConfig
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler, presence_label_function
+from wavetrace.domain.groundtruth.dataset import build_dataset
 from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
 
 

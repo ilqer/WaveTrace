@@ -1,16 +1,19 @@
 import numpy as np
 
-from wavetrace.calibration import load_calibration, build_image_baseline
-from wavetrace.frontend import iter_windows
-from wavetrace.recognition import SegmentVoter, open_session, plan_input
-from wavetrace import RecognitionResult
+from wavetrace import GainLock, RecognitionResult
+from wavetrace.application.ports import CsiSource
+from wavetrace.domain.calibration import CalibrationResult, build_image_baseline
+from wavetrace.domain.dsp.frontend import iter_windows
+from wavetrace.domain.guard import AlertGuard, DriftMonitor
+from wavetrace.domain.recognition.input_plan import plan_input
+from wavetrace.domain.recognition.vote import SegmentVoter
 
 
-def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=False, guard=False):
-    """Publishes one verdict per window, plus a final soft-vote verdict when vote=True. guard=True adds
-    AlertGuard + DriftMonitor (O(S) extra per frame). O(windows)."""
-    calibration_result, gain_lock = load_calibration(calibration_dir)
-    session = open_session(mode, model_path)
+def infer_windows(source: CsiSource, calibration_result: CalibrationResult, gain_lock: GainLock | None, session,
+                  mode, publisher, *, vote, guard) -> list[RecognitionResult]:
+    """session: has `.head` (a presence or weapon head) and `.predict_window(row) -> (class_id,
+    confidence)`. Publishes one verdict per window, plus a final soft-vote verdict when vote=True.
+    guard=True adds AlertGuard + DriftMonitor (O(S) extra per frame). O(windows)."""
     should_apply_lock, intercarrier, pick = plan_input(mode, session.head)
     config = session.head.config
 
@@ -25,15 +28,13 @@ def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=
 
     frames_iter = source.frames()
     if guard:
-        from wavetrace.output.guard import AlertGuard, DriftMonitor
         drift_monitor = DriftMonitor(calibration_result.baseline_mag)
         alert_guard = AlertGuard()
         # tee the raw, pre-lock magnitudes to DriftMonitor without disturbing the frame stream
         def _tee_drift(frames, monitor, publisher):
-            import numpy as _np
             for frame in frames:
                 event = monitor.update(float(frame.timestamp),
-                                        _np.abs(_np.asarray(frame.grid)).mean(axis=0).astype(_np.float32))
+                                       np.abs(np.asarray(frame.grid)).mean(axis=0).astype(np.float32))
                 if event:
                     publisher.publish_event(event)
                 yield frame

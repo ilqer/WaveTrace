@@ -120,12 +120,18 @@ source_modules = ["wavetrace.*", "web", "scripts"]
 forbidden_modules = ["wavetrace.cli"]
 
 [[tool.importlinter.contracts]]
-# The heads are pure classifiers: backends are resolved only in wavetrace.adapters.recognition.heads
-# and handed to a head's constructor.
-name = "the domain layer depends on neither adapters nor the recognition package"
-type = "forbidden"
-source_modules = ["wavetrace.domain"]
-forbidden_modules = ["wavetrace.adapters", "wavetrace.recognition"]
+# cli > outer ring > application > domain; indirect chains count. The outer ring is adapters plus every package
+# not in another layer; exhaustive = true fails an unplaced top-level module.
+name = "wavetrace layers: cli > outer ring > application > domain"
+type = "layers"
+containers = ["wavetrace"]
+layers = [
+    "cli",
+    "adapters : diagnostics : groundtruth : output : pipeline : recognition : source : synthetic",
+    "application",
+    "domain",
+]
+exhaustive = true
 
 [[tool.importlinter.contracts]]
 # One-way only: adapters read the domain's heads, never the training/serving package around them.

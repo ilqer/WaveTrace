@@ -3,10 +3,10 @@ import pytest
 
 from wavetrace.synthetic import generate_paired_recording
 from wavetrace import CsiFrame
-from wavetrace.frontend import group_frames_by_node, iter_windows, iter_stacked_windows
-from wavetrace.groundtruth import save_dataset, load_dataset
-from wavetrace.groundtruth.dataset_builder import build_stacked_dataset
-from wavetrace.groundtruth.camera_labeler import ScriptedLabeler
+from wavetrace.domain.dsp.frontend import group_frames_by_node, iter_windows, iter_stacked_windows
+from wavetrace.adapters.store.dataset import save_dataset, load_dataset
+from wavetrace.domain.groundtruth.dataset import build_stacked_dataset
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler
 from fixtures.synthetic_csi import calibrate_quiet_baseline
 
 NUM_ANTENNAS, NUM_SUBCARRIERS, SAMPLE_RATE_HZ = 2, 32, 100.0
@@ -186,7 +186,7 @@ def test_cnn_multichannel_fit_predict_roundtrip(tmp_path):
     """CNN takes (samples, nodes, image_subcarriers, window) images: save→load gives identical probas."""
     pytest.importorskip("torch")
     import joblib
-    from wavetrace.config import ModelConfig
+    from wavetrace.domain.model_config import ModelConfig
     from wavetrace.adapters.recognition.heads import build_weapon_head, load_weapon_head
 
     subcarrier_count, image_subcarrier_count, window_frames, node_count = 6, 20, 16, 2

@@ -15,17 +15,18 @@ import threading
 import time
 
 from wavetrace.adapters.source import parse_batch_by_link, bind_udp_socket, save_recording, RecordingSource
-from wavetrace.domain.dsp.resample import resample_uniform
-from wavetrace.calibration import load_calibration
-from wavetrace.application.collect import collect_source
-from wavetrace.groundtruth.dataset_builder import build_stacked_dataset, save_dataset
-from wavetrace.recognition import train_presence
-from wavetrace.groundtruth.camera_labeler import (YoloLabelerOptions, YoloSegLabeler, presence_label_function,
-                                                 weapon_label_function)
-from wavetrace.groundtruth.webcam import (WebcamCapture, WebcamOptions, record_labels_online,
-                                          COCO_WEAPON_CLASSES)
+from wavetrace.adapters.store.calibration import load_calibration
+from wavetrace.adapters.store.dataset import save_dataset
+from wavetrace.pipeline import collect_source
 from wavetrace.domain.contracts import (DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPLE_RATE_HZ,
                                         DEFAULT_WINDOW_FRAMES)
+from wavetrace.domain.dsp.resample import resample_uniform
+from wavetrace.domain.groundtruth.dataset import build_stacked_dataset
+from wavetrace.domain.groundtruth.labeler import presence_label_function, weapon_label_function
+from wavetrace.groundtruth.camera_labeler import YoloLabelerOptions, YoloSegLabeler
+from wavetrace.groundtruth.webcam import (WebcamCapture, WebcamOptions, record_labels_online,
+                                          COCO_WEAPON_CLASSES)
+from wavetrace.recognition import train_presence
 
 
 def capture_csi(duration_s, port, node_ids):
@@ -183,7 +184,7 @@ def main():
 
 
 def _train_heatmap(dataset_dir, out_path):
-    from wavetrace.groundtruth import load_dataset
+    from wavetrace.adapters.store.dataset import load_dataset
     from wavetrace.recognition.heatmap import train_heatmap
     dataset = load_dataset(dataset_dir)
     try:

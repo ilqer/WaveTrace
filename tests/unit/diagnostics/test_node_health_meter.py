@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from fixtures.synthetic_csi import calibrate_quiet_baseline, generate_quiet_baseline
-from wavetrace.calibration import CalibrationResult
+from wavetrace.domain.calibration import CalibrationResult
 from wavetrace.diagnostics import NodeHealthMeter
 
 NUM_ANTENNAS = 2

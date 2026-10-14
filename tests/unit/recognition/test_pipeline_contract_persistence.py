@@ -8,9 +8,10 @@ import joblib
 import numpy as np
 
 from wavetrace import Label
-from wavetrace.config import ModelConfig
+from wavetrace.domain.model_config import ModelConfig
 from wavetrace.domain.contracts import SCHEMA_VERSION, derive_pipeline_contract
-from wavetrace.groundtruth import Dataset, save_dataset
+from wavetrace.domain.groundtruth.dataset import Dataset
+from wavetrace.adapters.store.dataset import save_dataset
 from wavetrace.adapters.recognition.heads import (
     build_presence_head,
     build_weapon_head,

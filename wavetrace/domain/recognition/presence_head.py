@@ -4,8 +4,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-from wavetrace.config import ModelConfig
 from wavetrace.domain.contracts import SCHEMA_VERSION, PipelineContract, derive_pipeline_contract
+from wavetrace.domain.model_config import ModelConfig
 
 
 class PresenceHead:
@@ -21,7 +21,6 @@ class PresenceHead:
 
     @classmethod
     def restore(cls, config: ModelConfig, backend, contract: PipelineContract) -> "PresenceHead":
-        """Rebuild a fitted head around an already-loaded backend and contract."""
         head = cls(config, backend)
         head.contract = contract
         head._fitted = True

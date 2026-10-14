@@ -5,14 +5,16 @@ import numpy as np
 import json
 from collections import deque
 
-from wavetrace.calibration import load_calibration, build_image_baseline
-from wavetrace.recognition import find_weapon_entry, open_session, plan_input, train_presence, train_weapon
-from wavetrace.frontend import iter_windows
-from wavetrace.application.calibrate import calibrate_source
-from wavetrace.application.collect import collect_source
+from wavetrace.adapters.recognition.session import open_session
 from wavetrace.adapters.source import build_csi_source, parse_time_spans
+from wavetrace.adapters.store.calibration import load_calibration
+from wavetrace.domain.calibration import build_image_baseline
 from wavetrace.domain.contracts import (DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPLE_RATE_HZ,
                                         DEFAULT_WINDOW_FRAMES)
+from wavetrace.domain.dsp.frontend import iter_windows
+from wavetrace.domain.recognition.input_plan import plan_input
+from wavetrace.pipeline import calibrate_source, collect_source
+from wavetrace.recognition import find_weapon_entry, train_presence, train_weapon
 
 _OCCUPANCY_GRID_SIZE = 16
 # labels change slowly next to the 1.28 s CSI window, so 5 Hz is enough and costs
@@ -59,7 +61,7 @@ class ArgsMock:
     def __init__(self, **kwargs): self.__dict__.update(kwargs)
 
 
-from wavetrace.localize import Localizer
+from wavetrace.domain.localize import Localizer
 
 
 class FrameSnooper:
@@ -182,7 +184,7 @@ class WaveTraceRunner:
 
         dataset = None
         try:
-            from wavetrace.groundtruth import load_dataset
+            from wavetrace.adapters.store.dataset import load_dataset
             from wavetrace.diagnostics import dataset_report
             dataset = load_dataset(dataset_dirs[0])
             summary = dataset_report(dataset)
@@ -212,7 +214,7 @@ class WaveTraceRunner:
                              f"ignoring '{request.train_backend}', using mlp.")
                 config = None
                 if dataset is not None:
-                    from wavetrace.config import ModelConfig
+                    from wavetrace.domain.model_config import ModelConfig
                     meta = dataset.meta
                     config = ModelConfig(stage="presence", k=int(meta["K"]), backend=backend,
                                          window=int(meta["window"]), hop=int(meta["hop"]),
@@ -243,8 +245,8 @@ class WaveTraceRunner:
                         link_model_dir = os.path.join(request.train_out, f"node{node_id_digits}",
                                                       f"link{link_tag}")
                         try:
-                            from wavetrace.groundtruth import load_dataset
-                            from wavetrace.config import ModelConfig
+                            from wavetrace.adapters.store.dataset import load_dataset
+                            from wavetrace.domain.model_config import ModelConfig
                             first_link_dataset = load_dataset(link_dataset_dirs[0])
                             subcarrier_count = int(first_link_dataset.meta["K"])
                             link_config = ModelConfig(stage="weapon", k=subcarrier_count, backend="ic27")
@@ -257,8 +259,8 @@ class WaveTraceRunner:
                             self.log(f"[WPN] WARN link {link_tag}->node{node_id_digits}: {link_error}")
                 self.log(f"[WPN] Per-link training done: {trained_link_count} heads.")
             else:
-                from wavetrace.config import ModelConfig
-                from wavetrace.groundtruth import load_dataset
+                from wavetrace.domain.model_config import ModelConfig
+                from wavetrace.adapters.store.dataset import load_dataset
                 subcarrier_count = int(load_dataset(dataset_dirs[0]).meta["K"])
                 config = ModelConfig(stage="weapon", k=subcarrier_count, backend=request.train_backend)
                 from wavetrace.adapters.recognition import get_backend_class
@@ -278,7 +280,7 @@ class WaveTraceRunner:
             self.is_running = False
 
     def _train_heatmap(self, dataset_path: str, request, report) -> dict:
-        from wavetrace.groundtruth import load_dataset
+        from wavetrace.adapters.store.dataset import load_dataset
         from wavetrace.recognition.heatmap import train_heatmap
         import os
         head, masked_window_count = train_heatmap(load_dataset(dataset_path), report=report)
@@ -296,7 +298,7 @@ class WaveTraceRunner:
         self.is_running = True
         import os
         from wavetrace.diagnostics import NodeHealthMeter, cluster_sync
-        from wavetrace.output.guard import AlertGuard, WeaponAlertEvent
+        from wavetrace.domain.guard import AlertGuard, WeaponAlertEvent
         from wavetrace.recognition.link import LinkVoter, accuracy_weights
         
         is_mesh = os.path.isdir(model_path) and any(os.path.isdir(os.path.join(model_path, dir_name)) for dir_name in os.listdir(model_path) if dir_name.startswith("node"))
@@ -641,15 +643,16 @@ class WaveTraceRunner:
         import os, glob, socket, threading, collections
 
         try:
-            from wavetrace.groundtruth.camera_labeler import (YoloLabelerOptions, YoloSegLabeler,
-                                                              presence_label_function, weapon_label_function)
+            from wavetrace.groundtruth.camera_labeler import YoloLabelerOptions, YoloSegLabeler
+            from wavetrace.domain.groundtruth.labeler import presence_label_function, weapon_label_function
             from wavetrace.groundtruth.webcam import (WebcamCapture, WebcamOptions, record_labels_online,
                                                        COCO_WEAPON_CLASSES)
-            from wavetrace.groundtruth.dataset_builder import build_stacked_dataset, save_dataset
+            from wavetrace.domain.groundtruth.dataset import build_stacked_dataset
+            from wavetrace.adapters.store.dataset import save_dataset
             from wavetrace.adapters.source import (parse_batch_by_link, bind_udp_socket, save_recording,
                                                    RecordingSource)
             from wavetrace.domain.dsp.resample import resample_uniform
-            from wavetrace.calibration import load_calibration
+            from wavetrace.adapters.store.calibration import load_calibration
         except ImportError as import_error:
             self.log(f"ERROR: missing dependency: {import_error}")
             self._emit_inference({"event": "pipeline_done"})

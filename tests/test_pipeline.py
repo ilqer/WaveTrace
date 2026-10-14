@@ -13,22 +13,17 @@ import pytest
 from fixtures.synthetic_csi import generate_quiet_baseline
 from wavetrace.synthetic import generate_paired_recording
 from wavetrace import CsiFrame, Label, RecognitionResult
-from wavetrace.calibration import Calibration, load_calibration, save_calibration
-from wavetrace.application.calibrate import calibrate_source
-from wavetrace.application.collect import collect_source
-from wavetrace.application.serve import run_inference
-from wavetrace.frontend import iter_windows
+from wavetrace.domain.calibration import Calibration
+from wavetrace.adapters.store.calibration import load_calibration, save_calibration
+from wavetrace.pipeline import calibrate_source, collect_source, run_inference
+from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.adapters.source import RecordingSource, SyntheticSource, load_recording, save_recording
-from wavetrace.groundtruth import build_dataset
-from wavetrace.groundtruth.camera_labeler import ScriptedLabeler
+from wavetrace.domain.groundtruth.dataset import build_dataset
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler
 from wavetrace.output import JsonlPublisher, result_to_dict
-from wavetrace.recognition import (
-    InferenceSession,
-    measure_latency,
-    plan_input,
-    train_presence,
-    train_weapon,
-)
+from wavetrace.adapters.recognition.session import InferenceSession
+from wavetrace.recognition import measure_latency, train_presence, train_weapon
+from wavetrace.domain.recognition.input_plan import plan_input
 
 NUM_ANTENNAS, NUM_SUBCARRIERS, SAMPLE_RATE_HZ = 2, 32, 100.0
 
@@ -118,7 +113,7 @@ def test_run_features_match_build_dataset(tmp_path):
 
 class _FakeHead:
     def __init__(self, backend, feature_mode=None):
-        from wavetrace.config import ModelConfig
+        from wavetrace.domain.model_config import ModelConfig
         self.config = ModelConfig(stage="weapon", k=12, backend=backend)
         self.feature_mode = feature_mode
 
@@ -181,7 +176,7 @@ def test_collect_with_camera_labeler_persists_mask_and_tier(tmp_path):
 
     _, dataset = collect_source(SyntheticSource(frames), tmp_path / "cal", tmp_path / "ds", [],
                                 stage="weapon", window=32, hop=16, labeler=camera_label, tier="concealed")
-    from wavetrace.groundtruth import load_dataset
+    from wavetrace.adapters.store.dataset import load_dataset
     reloaded = load_dataset(tmp_path / "ds")
     assert reloaded.meta["tier"] == "concealed"
     assert reloaded.y.size > 0 and all(label.mask_grid == grid for label in reloaded.labels)

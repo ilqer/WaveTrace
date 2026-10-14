@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-from wavetrace.output.guard import GuardEvent
+from wavetrace.domain.guard import GuardEvent
 
 
 def result_to_dict(result, *, mode: str = "") -> dict:

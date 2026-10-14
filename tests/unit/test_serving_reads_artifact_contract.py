@@ -3,10 +3,10 @@ so every existing artifact's contract carries `DEFAULT_TARGET_SAMPLE_RATE_HZ`.""
 
 import numpy as np
 
-from wavetrace.config import ModelConfig
+from wavetrace.domain.model_config import ModelConfig
 from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
 from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ
-from wavetrace.recognition import open_session
+from wavetrace.adapters.recognition.session import open_session
 
 
 def test_presence_session_contract_rate_matches_old_hardcoded_default(tmp_path):

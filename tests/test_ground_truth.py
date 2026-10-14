@@ -5,20 +5,13 @@ import pytest
 
 from wavetrace.synthetic import generate_paired_recording
 from wavetrace import Label
-from wavetrace.groundtruth import (
-    Dataset,
-    LocationChipLabeler,
-    ReplayLabeler,
-    ScriptedLabeler,
-    ThermalLabeler,
-    align,
-    build_dataset,
-    estimate_clock_offset,
-    load_dataset,
-    presence_label_function,
-    save_dataset,
-    weapon_label_function,
-)
+from wavetrace.adapters.store.scripted_spans import load_scripted_spans
+from wavetrace.domain.groundtruth.dataset import Dataset, build_dataset
+from wavetrace.groundtruth import LocationChipLabeler, ReplayLabeler, ThermalLabeler
+from wavetrace.domain.groundtruth.labeler import (
+    ScriptedLabeler, presence_label_function, weapon_label_function)
+from wavetrace.domain.groundtruth.alignment import align, estimate_clock_offset
+from wavetrace.adapters.store.dataset import load_dataset, save_dataset
 from fixtures.synthetic_csi import calibrate_quiet_baseline
 
 NUM_ANTENNAS = 2
@@ -60,7 +53,7 @@ def test_scripted_labeler_spans_and_manifest(tmp_path):
 
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps({"spans": [{"start": 1.0, "end": 2.0, "present": True}]}))
-    manifest_labeler = ScriptedLabeler.from_manifest(path)
+    manifest_labeler = ScriptedLabeler(load_scripted_spans(path))
     assert manifest_labeler(1.5).class_id == 1 and manifest_labeler(2.5).class_id == 0
 
 

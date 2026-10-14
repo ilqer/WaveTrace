@@ -1,10 +1,9 @@
-from wavetrace.calibration import Calibration, save_calibration
+from wavetrace.application.ports import CsiSource
+from wavetrace.domain.calibration import Calibration, CalibrationResult
 
 
-def calibrate_source(source, out_dir, *, baseline_packets=300, use_gain_lock=True, nbvi_max=12):
-    calibration = Calibration(baseline_packets=baseline_packets, nbvi_max=nbvi_max,
-                               use_gain_lock=use_gain_lock)
+def calibrate(source: CsiSource, calibration: Calibration) -> CalibrationResult:
+    """Consumes `calibration`: finalize() also locks its `gain_lock` when enabled."""
     for frame in source.frames():
         calibration.observe(frame)
-    calibration_result = calibration.finalize()
-    return save_calibration(calibration_result, out_dir), calibration_result
+    return calibration.finalize()

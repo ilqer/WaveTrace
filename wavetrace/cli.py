@@ -1,4 +1,4 @@
-"""The command-line entry point: argparse modes wired to the `wavetrace.application` use-cases.
+"""The command-line entry point: argparse modes wired to the `wavetrace.pipeline` entry points.
 
 `run` is the real-time path (front-end -> head -> publish) and reuses `frontend.iter_windows`, so the
 features it serves are the features the model trained on. Every other mode is offline.
@@ -9,13 +9,10 @@ import sys
 
 import numpy as np
 
-from wavetrace.config import ModelConfig
 from wavetrace.adapters.source import build_csi_source, parse_time_spans, save_recording
-from wavetrace.application.calibrate import calibrate_source
-from wavetrace.application.collect import collect_source
-from wavetrace.application.localize import localize_source
-from wavetrace.application.serve import run_inference
+from wavetrace.domain.model_config import ModelConfig
 from wavetrace.output import JsonlPublisher
+from wavetrace.pipeline import calibrate_source, collect_source, localize_source, run_inference
 from wavetrace.recognition import train_presence, train_weapon
 
 
@@ -125,7 +122,7 @@ def main(argv=None) -> int:
             config = None
             if args.backend:
                 # config only needed to override the backend; k still comes from dataset meta
-                from wavetrace.groundtruth import load_dataset
+                from wavetrace.adapters.store.dataset import load_dataset
                 nbvi_subcarrier_count = int(load_dataset(args.datasets[0]).meta["K"])
                 config = ModelConfig(stage="weapon", k=nbvi_subcarrier_count, backend=args.backend)
             _, metrics = train_weapon(args.datasets, out_dir=args.out, config=config,

@@ -4,8 +4,8 @@ import joblib
 
 from wavetrace.adapters.recognition import get_backend_class, is_sklearn_backend
 from wavetrace.adapters.recognition.variance_backend import VarianceBackend
-from wavetrace.config import ModelConfig
 from wavetrace.domain.contracts import PipelineContract, derive_pipeline_contract
+from wavetrace.domain.model_config import ModelConfig
 from wavetrace.domain.recognition import VARIANCE_FEATURE, PresenceHead, WeaponHead
 
 

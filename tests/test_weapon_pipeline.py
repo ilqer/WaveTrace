@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from wavetrace.recognition import plan_input
-from wavetrace.groundtruth.camera_labeler import ScriptedLabeler, weapon_label_function
+from wavetrace.domain.recognition.input_plan import plan_input
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler, weapon_label_function
 
 
 def test_spans_label_clear_vs_weapon():

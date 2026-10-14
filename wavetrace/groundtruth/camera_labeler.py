@@ -1,87 +1,41 @@
-"""Label sources behind one interface: a per-frame observation and a timestamp become a `Label`.
+"""Concrete labelers: replay, object-detector, segmentation, thermal and location-chip sources.
 
-Which target the label names - presence or weapon - is decided by a pluggable `label_function`, so one
-labeler serves both. The raw box, keypoints and any weapon position are always preserved, so later
-localization work needs no re-run.
-
-Two kinds share the interface:
-  * stream labelers (`ReplayLabeler`, `ThermalLabeler`) read an observation stream on their OWN
-    clock, so their labels must be timestamp-aligned to the CSI windows.
+Two kinds share the `Labeler` interface:
+  * stream labelers (`ReplayLabeler`, `VisionLabeler`, `SegmentationLabeler`, `ThermalLabeler`) read an
+    observation stream on their OWN clock, so their labels must be timestamp-aligned to the CSI windows.
   * time labelers (`ScriptedLabeler`, `LocationChipLabeler`) are functions of CSI-clock time, so
-    DatasetBuilder evaluates them at each window timestamp and needs no alignment.
+    `build_dataset` evaluates them at each window timestamp and needs no alignment.
 
 The concrete vision models (YOLO, MediaPipe, SAM) and the thermal model are seams: subclass and
 override `_detect`. They need a model and recordings that are not in this repo.
 """
 
-from abc import ABC, abstractmethod
 import bisect
 from dataclasses import dataclass, field
-import json
 
 import numpy as np
 
 from wavetrace import Label
+from wavetrace.domain.groundtruth.labeler import (
+    FrameDetection,
+    Labeler,
+    presence_label_function,
+    weapon_label_function,
+)
 
-
-def presence_label_function(raw: "FrameDetection", timestamp: float) -> tuple[int, str]:
-    return (1, "present") if raw.present else (0, "absent")
-
-
-def weapon_label_function(raw: "FrameDetection", timestamp: float) -> tuple[int, str]:
-    return (1, "weapon") if raw.weapon else (0, "no_weapon")
-
-
-@dataclass(frozen=True, slots=True)
-class FrameDetection:
-    """One `Labeler._detect()` result — the input `Labeler.label()` turns into a core `Label`. Not
-    to be confused with `Detection` (a single object-detector box)."""
-
-    present: bool = False
-    weapon: bool = False
-    bbox: tuple | list | None = None
-    keypoints: list = field(default_factory=list)
-    position: tuple | list | None = None
-    mask: list | None = None
-    mask_grid: int = 0
-
-
-class Labeler(ABC):
-    """Turn an observation (+timestamp) into a core `Label` via a pluggable `label_function`.
-
-    `label_function(raw, timestamp) -> (class_id, name)` sets the stage target; raw bbox/keypoints and an
-    optional weapon `position` are copied onto the Label (position -> bbox when no person box exists,
-    so the weapon location survives for segment-training)."""
-
-    def __init__(self, label_function=presence_label_function):
-        self._label_function = label_function
-
-    @abstractmethod
-    def _detect(self, observation, timestamp: float) -> FrameDetection:
-        """Return this observation's detection."""
-
-    def label(self, observation, timestamp: float) -> Label:
-        raw = self._detect(observation, timestamp)
-        class_id, name = self._label_function(raw, timestamp)
-        label = Label()
-        label.class_id = class_id
-        label.name = name
-        label.timestamp = float(timestamp)
-        box = raw.bbox or raw.position  # person box if present, else weapon location
-        if box is not None:
-            label.bbox = list(box)
-        if raw.keypoints:
-            label.keypoints = list(raw.keypoints)
-        if raw.mask:  # camera-supervised occupancy grid -> CSI heatmap-head target
-            label.mask = [float(mask_value) for mask_value in raw.mask]
-            label.mask_grid = int(raw.mask_grid or 0)
-        return label
-
-    def label_stream(self, observations) -> list[Label]:
-        """observations: iterable of {"t": ts, ...} -> Labels sorted by timestamp (for Align)."""
-        labels = [self.label(observation, observation["t"]) for observation in observations]
-        labels.sort(key=lambda label: label.timestamp)
-        return labels
+__all__ = [
+    "Detection",
+    "LabelerOptions",
+    "LocationChipLabeler",
+    "ReplayLabeler",
+    "Segment",
+    "SegmentationLabeler",
+    "ThermalLabeler",
+    "VisionLabeler",
+    "YoloLabeler",
+    "YoloLabelerOptions",
+    "YoloSegLabeler",
+]
 
 
 class ReplayLabeler(Labeler):
@@ -381,34 +335,6 @@ class ThermalLabeler(Labeler):
             "ThermalLabeler is a hardware seam: provide a thermal detector and gate weapon "
             "detections on a person bbox."
         )
-
-
-class ScriptedLabeler(Labeler):
-    """A camera cannot see a concealed weapon, so the label is known by construction: the weapon was
-    planted. `spans` is (start, end, present) on the CSI clock, and a timestamp inside a present
-    span is labeled weapon. Called as `__call__(t)` / `label_at(t)`."""
-
-    def __init__(self, spans, label_function=weapon_label_function):
-        super().__init__(label_function)
-        self._present = sorted((float(start_s), float(end_s))
-                               for start_s, end_s, is_present in spans if is_present)
-
-    def _detect(self, observation, timestamp: float) -> FrameDetection:
-        weapon = any(start_s <= timestamp < end_s for start_s, end_s in self._present)
-        return FrameDetection(present=weapon, weapon=weapon)
-
-    def label_at(self, timestamp: float) -> Label:
-        return self.label(None, timestamp)
-
-    __call__ = label_at
-
-    @classmethod
-    def from_manifest(cls, path, label_function=weapon_label_function) -> "ScriptedLabeler":
-        """JSON sidecar: {"spans": [{"start":s,"end":e,"present":bool}, ...]}."""
-        with open(path) as manifest_file:
-            manifest = json.load(manifest_file)
-        spans = [(span["start"], span["end"], span.get("present", True)) for span in manifest["spans"]]
-        return cls(spans, label_function)
 
 
 class LocationChipLabeler(Labeler):

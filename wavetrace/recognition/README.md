@@ -8,8 +8,7 @@ Machine learning for WaveTrace. Takes feature vectors or spectrograms from the p
 |---|---|
 | `train.py` | Trains a presence or weapon head from a `.npy` dataset; saves `model.joblib` |
 | `evaluate.py` | LOGO cross-validation (leave-one-session-out, leave-one-subject-out); reports confusion matrix and per-tier verdicts |
-| `infer.py` | Runs `predict_window()` on a feature window; target latency < 8 ms |
-| `vote.py` | `SegmentVoter` — accumulates per-window predictions over one motion segment and emits a single stable verdict |
+| `infer.py` | `measure_latency` (budget 8 ms per window) |
 | `fusion.py` | `fuse()` — concatenates per-node feature vectors; O(m) for m nodes |
 | `link.py` | Per-(tx, rx)-link model and calibration bookkeeping |
 | `stack.py` | Stacks per-node windows into a batch tensor for the CNN path |

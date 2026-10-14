@@ -5,7 +5,8 @@ ultralytics import entirely."""
 import numpy as np
 import pytest
 
-from wavetrace.groundtruth import YoloLabeler, YoloLabelerOptions, YoloSegLabeler, presence_label_function
+from wavetrace.groundtruth import YoloLabeler, YoloLabelerOptions, YoloSegLabeler
+from wavetrace.domain.groundtruth.labeler import presence_label_function
 
 
 class _StubYoloResult:

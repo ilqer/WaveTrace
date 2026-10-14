@@ -199,19 +199,16 @@ native/             C++ signal processing (compiled into the wavetrace package v
 └── util/           radix-2 FFT, ring buffers
 
 wavetrace/          the Python library
-├── frontend.py     shared pipeline loop: source → preprocess → features → emit windows
-├── calibration.py  saves/loads per-session calibration: gain-lock scalar, NBVI mask, quiet baseline
 ├── cli.py          `wavetrace` CLI: capture / calibrate / collect-data / train / localize / run
-├── config/         runtime config: mode, backend, head, subcarrier count, window/hop sizes
-├── localize.py     AoA / delay MUSIC localization (parked: needs ≥ 2 phase-coherent RX antennas)
 ├── synthetic.py    synthetic CSI + paired labels for `--synthetic` mode
-├── domain/         pure pipeline descriptions, no I/O: PipelineContract, LinkKey, presence/weapon heads, dsp/ resampling
-├── application/    use-cases (calibrate, collect, localize, serve) + ports (the Protocols adapters implement)
+├── domain/         pure pipeline descriptions, no I/O: PipelineContract, ModelConfig, LinkKey, Calibration (gain-lock scale, NBVI mask, quiet baseline), presence/weapon heads, `recognition/input_plan.py` (`plan_input`), `groundtruth/` (`alignment.py`: timestamp alignment; `labeler.py`: `Labeler`, `ScriptedLabeler`, label functions; `dataset.py`: `Dataset`, `build_dataset`, `build_stacked_dataset`), SegmentVoter, AlertGuard/DriftMonitor (guard.py), `localize.py` (AoA/delay MUSIC `Localizer`, Kalman `Tracker`), dsp/ (resampling and frontend.py, the shared pipeline loop: source → preprocess → features → emit windows)
+├── application/    use-cases (calibrate, collect, localize, serve) on loaded values, no I/O + ports (the Protocols adapters implement)
+├── pipeline.py     directory-based entry points (calibrate_source, collect_source, run_inference, localize_source): load → use-case → save
 ├── adapters/       behind the ports: source/ (CSI frame sources: live UDP, serial, Pi, recorded file, synthetic;
-│                   wire-format parsers) and recognition/ (MLP, SVM, CNN, variance backends; head construction)
+│                   wire-format parsers), store/ (save/load the calibration dir; `dataset.py`: `save_dataset`, `load_dataset`; `localization.py`: `save_localization`; `scripted_spans.py`: `load_scripted_spans`) and recognition/ (MLP, SVM, CNN, variance backends; head construction; `session.py`: `InferenceSession`, `open_session`)
 ├── source.py       compatibility path for the old `wavetrace.source` imports (the golden test uses it)
-├── recognition/    heads (presence, people-count, occupancy heatmap, weapon) + training, inference, voting, multi-node fusion, evaluation, CIR
-├── groundtruth/    camera labeler, timestamp alignment, dataset serializer
+├── recognition/    heads (presence, people-count, occupancy heatmap, weapon) + training, multi-node fusion, evaluation, CIR; `infer.py` holds only `measure_latency`
+├── groundtruth/    concrete camera labelers (`camera_labeler.py`); `webcam.py`, `weapon_separation.py`
 ├── output/         result publisher (JSONL default; WebSocket seam for the dashboard)
 └── diagnostics/    per-node health telemetry
 

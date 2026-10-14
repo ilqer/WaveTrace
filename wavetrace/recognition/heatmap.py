@@ -14,7 +14,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-from wavetrace.config import ModelConfig
+from wavetrace.domain.model_config import ModelConfig
 
 
 def _torch():

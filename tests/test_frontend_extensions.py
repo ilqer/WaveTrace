@@ -5,11 +5,12 @@ import pytest
 
 from wavetrace.synthetic import generate_paired_recording
 from wavetrace import CsiFrame, valid_subcarriers, select_subcarriers_nbvi
-from wavetrace.calibration import build_image_baseline, load_calibration, save_calibration
-from wavetrace.config import ModelConfig
-from wavetrace.frontend import iter_windows
-from wavetrace.groundtruth import build_dataset
-from wavetrace.groundtruth.camera_labeler import ScriptedLabeler
+from wavetrace.domain.calibration import build_image_baseline
+from wavetrace.adapters.store.calibration import load_calibration, save_calibration
+from wavetrace.domain.model_config import ModelConfig
+from wavetrace.domain.dsp.frontend import iter_windows
+from wavetrace.domain.groundtruth.dataset import build_dataset
+from wavetrace.domain.groundtruth.labeler import ScriptedLabeler
 from fixtures.synthetic_csi import calibrate_quiet_baseline, generate_quiet_baseline
 
 NUM_ANTENNAS, NUM_SUBCARRIERS, SAMPLE_RATE_HZ = 2, 32, 100.0

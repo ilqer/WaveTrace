@@ -1,5 +1,5 @@
 """Characterization tests: they pin the CURRENT behaviour of the full calibrate -> collect -> train
--> infer chain through public entry points only (wavetrace.application's calibrate_source /
+-> infer chain through public entry points only (wavetrace.pipeline's calibrate_source /
 collect_source / run_inference, wavetrace.recognition.train_presence / train_weapon) over the small
 committed fixture recordings in tests/golden/fixtures/.
 
@@ -24,11 +24,11 @@ from pathlib import Path
 
 import numpy as np
 
-from wavetrace.calibration import load_calibration
+from wavetrace.adapters.store.calibration import load_calibration
 from wavetrace.source import RecordingSource
-from wavetrace.application.calibrate import calibrate_source
-from wavetrace.application.collect import collect_source
-from wavetrace.application.serve import run_inference
+from wavetrace.pipeline import calibrate_source
+from wavetrace.pipeline import collect_source
+from wavetrace.pipeline import run_inference
 from wavetrace.output import JsonlPublisher
 from wavetrace.recognition import train_presence, train_weapon
 

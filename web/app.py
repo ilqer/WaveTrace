@@ -275,7 +275,7 @@ async def websocket_telemetry(websocket: WebSocket):
 @app.get("/api/model/weights")
 async def model_weights(model: str, mode: str = "weapon"):
     """Per-antenna learned CNN channel weights (L2 norms of first conv filters, normalized)."""
-    from wavetrace.recognition import open_session
+    from wavetrace.adapters.recognition.session import open_session
     from wavetrace.recognition.explain import cnn_channel_weights
     try:
         safe_model_path = _resolve_output_path(model)

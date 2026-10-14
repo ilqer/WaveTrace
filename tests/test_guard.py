@@ -3,13 +3,8 @@ import json
 import numpy as np
 import pytest
 
-from wavetrace.output.guard import (
-    AlertClearedEvent,
-    AlertGuard,
-    DriftMonitor,
-    RecalibrationAdvisoryEvent,
-    WeaponAlertEvent,
-)
+from wavetrace.domain.guard import (
+    AlertClearedEvent, AlertGuard, DriftMonitor, RecalibrationAdvisoryEvent, WeaponAlertEvent)
 
 
 def test_alert_guard_fires_after_n_on():

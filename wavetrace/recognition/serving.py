@@ -2,7 +2,7 @@ import json
 
 import numpy as np
 
-from wavetrace.frontend import iter_windows
+from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
 
 

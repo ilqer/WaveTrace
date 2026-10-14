@@ -23,8 +23,6 @@ measured from broadside (0° = straight ahead), +θ to one side. Steering a_m(θ
 """
 
 from dataclasses import dataclass
-import json
-from pathlib import Path
 
 import numpy as np
 
@@ -41,7 +39,7 @@ class Localization:
     ranges_m: np.ndarray         # (R,) range grid (empty if range disabled)
     range_profile: np.ndarray    # (R,) delay-domain power, normalized to [0, 1] (empty if disabled)
     heatmap: np.ndarray          # (R, G) when `aggregate` runs joint MUSIC; (1, G) azimuth spectrum otherwise
-    peak_angle_deg: float        # azimuth of the dominant arrival
+    peak_angle_deg: float
     peak_range_m: float          # range of the dominant delay bin (nan if range disabled)
     x_m: float                   # lateral position = peak_range·sin(peak_angle) (1·sin if no range)
     y_m: float                   # forward position = peak_range·cos(peak_angle) (1·cos if no range)
@@ -57,17 +55,10 @@ def _to_complex_grid(frame) -> np.ndarray:
 
 
 class Localizer:
-    """Per-frame AoA + range estimator over a ULA. Build once (precomputes the steering matrix),
-    then call `locate` per frame or `aggregate` over a stream.
-
-    num_antennas: array size A (>= 2 — a single antenna has no spatial baseline).
-    spacing:      element spacing in WAVELENGTHS (λ/2 = 0.5 is the standard, alias-free to ±90°).
-    method:       "music" (subspace, high-resolution; needs A > num_sources) | "bartlett" (robust,
-                  no source-count assumption).
-    num_sources:  expected simultaneous arrivals (MUSIC noise-subspace dim = A - num_sources).
-    num_angles:   azimuth grid resolution over [-90, 90].
-    subcarrier_spacing_hz / max_range_m / num_ranges: the delay-domain range axis of the joint 2-D
-                  room map (coarse at WiFi BW). range_enabled=False drops it (azimuth-only)."""
+    """Per-frame AoA + range estimator over a ULA. `spacing` is in wavelengths (0.5 is alias-free to
+    ±90°); the azimuth grid spans [-90, 90]. MUSIC needs num_antennas > num_sources (noise-subspace
+    dim = A - num_sources); bartlett needs no source count. The range axis is coarse at WiFi
+    bandwidth; range_enabled=False is azimuth-only."""
 
     def __init__(self, num_antennas, *, spacing=0.5, method="music", num_sources=1,
                  num_angles=181, subcarrier_spacing_hz=312.5e3, max_range_m=12.0, num_ranges=64,
@@ -236,7 +227,7 @@ class TrackState:
     out as an impossible jump (the track coasted on its motion model)."""
 
     timestamp: float
-    angle_deg: float      # filtered azimuth
+    angle_deg: float
     range_m: float        # filtered range (nan when range tracking is off)
     angular_rate: float   # deg/s
     radial_rate: float    # m/s (0 when range off)
@@ -247,21 +238,10 @@ class TrackState:
 
 
 class Tracker:
-    """Constant-velocity Kalman filter over the Localizer's (angle, range) measurements — an
-    "it can't teleport" model. State = [angle, range, d_angle, d_range].
-
-    PREDICT (calculation): a person moves continuously, so the next state = motion-extrapolated
-    previous state; the process noise (`*_acceleration_std`, a max-acceleration bound) limits how fast
-    the track may move. UPDATE (measurement): the MUSIC measurement is fused with a noise covariance
-    that SHRINKS WITH CONFIDENCE — high confidence -> high Kalman gain (trust the measurement), low
-    confidence -> low gain (trust the motion model). A χ² gate on the innovation rejects measurements
-    that imply a jump no real motion could produce (anti-teleport). O(1) per step (4×4 matrices).
-
-    angle_std / range_std: measurement std at FULL confidence (deg / m). angle_acceleration_std /
-    range_acceleration_std: process-noise acceleration std (deg/s² / m/s²) — the motion bound.
-    confidence_floor: min effective confidence (avoids divide-by-zero / infinite trust in noise).
-    gate: χ² innovation gate (9.0 ≈ 98.9% for 2 DOF). range_enabled=False tracks azimuth only
-    (range measurements ignored)."""
+    """Constant-velocity Kalman filter over (angle, range); state = [angle, range, d_angle, d_range].
+    Measurement noise shrinks with confidence (floored at confidence_floor to avoid infinite trust);
+    a χ² innovation gate (9.0 ≈ 98.9% at 2 DOF) rejects impossible jumps. angle_std / range_std are
+    in deg / m; the *_acceleration_std process-noise bounds are in deg/s² / m/s². O(1) per step (4×4)."""
 
     def __init__(self, *, angle_std=3.0, range_std=4.0, angle_acceleration_std=40.0,
                  range_acceleration_std=3.0, confidence_floor=0.05, gate=9.0, range_enabled=True):
@@ -312,7 +292,7 @@ class Tracker:
         S = H @ self._P @ H.T + R               # innovation covariance S = H·P·H^T + R
         S_inv = np.linalg.inv(S)
         mahalanobis_squared = float(y @ S_inv @ y)
-        measured = mahalanobis_squared <= self._gate          # gate: reject impossible jumps (anti-teleport)
+        measured = mahalanobis_squared <= self._gate
         if measured:
             K = self._P @ H.T @ S_inv            # Kalman gain K = P·H^T·S⁻¹ (the confidence-weighted blend)
             self._x = self._x + K @ y
@@ -350,22 +330,3 @@ class Tracker:
             x_m=radius * float(np.sin(angle_rad)), y_m=radius * float(np.cos(angle_rad)),
             measured=measured, confidence=confidence,
         )
-
-
-def save_localization(room_map: Localization, out_dir) -> Path:
-    """Persist the aggregate room map under out_dir: heatmap.npy (R×G joint pseudo-spectrum) +
-    angles.npy + ranges.npy (its grids) + meta.json (the peak fix). The PER-FRAME track is published
-    through the Publisher wire schema (RecognitionResult), not written here. O(R·G)."""
-    localization_dir = Path(out_dir)
-    localization_dir.mkdir(parents=True, exist_ok=True)
-    np.save(localization_dir / "angles.npy", room_map.angles_deg.astype(np.float32))
-    np.save(localization_dir / "ranges.npy", room_map.ranges_m.astype(np.float32))
-    np.save(localization_dir / "heatmap.npy", room_map.heatmap.astype(np.float32))
-    with open(localization_dir / "meta.json", "w") as meta_file:
-        json.dump({
-            "peak_angle_deg": room_map.peak_angle_deg,
-            "peak_range_m": (None if np.isnan(room_map.peak_range_m) else room_map.peak_range_m),
-            "x_m": room_map.x_m, "y_m": room_map.y_m, "confidence": room_map.confidence,
-            "num_angles": int(room_map.angles_deg.size), "num_ranges": int(room_map.ranges_m.size),
-        }, meta_file, indent=2)
-    return localization_dir

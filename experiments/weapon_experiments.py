@@ -22,9 +22,9 @@ import os
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
-from wavetrace.config import ModelConfig
-from wavetrace.groundtruth import load_dataset
 from wavetrace.adapters.recognition.heads import build_weapon_head
+from wavetrace.adapters.store.dataset import load_dataset
+from wavetrace.domain.model_config import ModelConfig
 from wavetrace.recognition import parse_link_tag
 from wavetrace.recognition.train import _logo_metrics, train_weapon
 

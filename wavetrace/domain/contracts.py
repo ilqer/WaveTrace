@@ -1,5 +1,7 @@
 from dataclasses import asdict, dataclass
 
+from wavetrace.domain.model_config import ModelConfig
+
 DEFAULT_TARGET_SAMPLE_RATE_HZ: float = 100.0
 DEFAULT_WINDOW_FRAMES: int = 128
 DEFAULT_HOP_FRAMES: int = 32
@@ -40,8 +42,9 @@ class PipelineContract:
         return cls(**data)
 
 
-def derive_pipeline_contract(config, target_sample_rate_hz: float = DEFAULT_TARGET_SAMPLE_RATE_HZ):
-    """`config` is a `wavetrace.config.ModelConfig` (duck-typed on `.window`/`.hop`)."""
+def derive_pipeline_contract(
+    config: ModelConfig, target_sample_rate_hz: float = DEFAULT_TARGET_SAMPLE_RATE_HZ
+) -> PipelineContract:
     return PipelineContract(
         target_sample_rate_hz=target_sample_rate_hz,
         window_frames=config.window,

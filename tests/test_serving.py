@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from wavetrace.frontend import iter_windows
+from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.recognition.serving import last_window_proba, required_subcarrier_width
 from wavetrace.domain.dsp.resample import resample_uniform
 from wavetrace.synthetic import generate_stream
