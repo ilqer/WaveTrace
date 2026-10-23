@@ -2,7 +2,8 @@
 
 from wavetrace.application.behaviours.drift import DriftMonitoredSource
 from wavetrace.application.behaviours.window import (
-    AlertGuardBehaviour, SegmentVoteBehaviour, WindowBehaviour,
+    AlertGuardBehaviour, SegmentVoteBehaviour, WindowBehaviour, build_alert_behaviours,
 )
 
-__all__ = ["AlertGuardBehaviour", "DriftMonitoredSource", "SegmentVoteBehaviour", "WindowBehaviour"]
+__all__ = ["AlertGuardBehaviour", "DriftMonitoredSource", "SegmentVoteBehaviour", "WindowBehaviour",
+           "build_alert_behaviours"]

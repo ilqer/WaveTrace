@@ -1,6 +1,5 @@
 """Live multi-link weapon-detection serving: discover the per-link/per-node weapon heads a training
-run wrote to disk, and the per-window/per-link math shared by every weapon-serving front end
-(`scripts/run_weapon.py`'s standalone all-pairs loop and the web dashboard's mesh path)."""
+run wrote to disk, and the per-link math `WeaponServeMode` scores them with."""
 
 import glob
 import os
@@ -13,22 +12,20 @@ from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
 from wavetrace.domain.recognition.input_plan import plan_input
 from wavetrace.recognition.link import accuracy_weights
-from wavetrace.recognition.serving import NodeServer, load_logo_accuracy, required_subcarrier_width
+from wavetrace.recognition.serving import (NodeServer, copy_window, discover_node_dirs, load_logo_accuracy,
+                                            required_subcarrier_width)
 
 
 def dwell_proba(frames, sample_rate_hz, entry):
-    """One link's serving math, shared by `run_weapon` and the web streamer. `entry` is a NodeServer
-    from `load_weapon_links` or a mesh node.
-
-    Returns the mean class probability over every window in the buffer (soft, so it composes with the
-    cross-link LinkVoter), the last window's (image, features, intercarrier_features) for the web
-    spectrogram, and the window count; (None, None, None, None, 0) when no full window fits."""
+    """(mean class probability over every window in the buffer, soft so it composes with the cross-link
+    LinkVoter; the last window's WindowView), or (None, None) when no full window fits. `entry` is a
+    NodeServer from `load_weapon_links`. O(windows) predictions and one O(K·W) copy."""
     resampled = resample_uniform(frames, sample_rate_hz)
     config = entry.config
     if len(resampled) < config.window:
-        return None, None, None, None, 0
+        return None, None
     window_probas = []
-    image = features = intercarrier_features = None
+    features = image = intercarrier_features = None
     for _window_timestamp_s, features, image, intercarrier_features in iter_windows(
         resampled, entry.calibration.subcarriers, entry.gain_lock,
         window=config.window, hop=config.hop, intercarrier=entry.should_use_intercarrier,
@@ -38,8 +35,8 @@ def dwell_proba(frames, sample_rate_hz, entry):
             entry.session.predict_window_proba(entry.pick_input(features, image, intercarrier_features))
         )
     if not window_probas:
-        return None, None, None, None, 0
-    return np.mean(window_probas, axis=0), image, features, intercarrier_features, len(window_probas)
+        return None, None
+    return np.mean(window_probas, axis=0), copy_window(features, image, intercarrier_features)
 
 
 def load_weapon_links(calibration_root, model_root):
@@ -54,14 +51,7 @@ def load_weapon_links(calibration_root, model_root):
     drops out without being explicitly removed) and the serving plan matching how it was trained."""
     entries = {}
     accuracy_by_key = {}
-    for model_dir in sorted(glob.glob(os.path.join(model_root, "node*"))):
-        base = os.path.basename(model_dir)
-        if not base[len("node"):].isdigit():
-            continue
-        node_id = int(base[len("node"):])
-        calibration_dir = os.path.join(calibration_root, base)
-        if not os.path.isdir(calibration_dir):
-            continue
+    for node_id, model_dir, calibration_dir in discover_node_dirs(calibration_root, model_root):
         link_models = sorted(glob.glob(os.path.join(model_dir, "link*", "model.joblib")))
         if link_models:
             found = [
@@ -75,7 +65,7 @@ def load_weapon_links(calibration_root, model_root):
         for link_tag, model_path in found:
             session = open_session("weapon", model_path)
             should_apply_lock, intercarrier, pick = plan_input("weapon", session.head)
-            classes = list(session.head.classes_)
+            classes = [int(class_id) for class_id in session.head.classes_]
             # rebuilt from the node's calibration, so serving subtracts the baseline training did
             intercarrier_baseline = (result.baseline_mag
                                      if getattr(session.head.config, "subtract_ic_baseline", False) else None)
@@ -84,7 +74,7 @@ def load_weapon_links(calibration_root, model_root):
                 calibration=result, gain_lock=gain_lock if should_apply_lock else None,
                 should_use_intercarrier=intercarrier, pick_input=pick, session=session,
                 config=session.head.config, min_num_subcarriers=required_subcarrier_width(result),
-                positive_class_index=classes.index(1) if 1 in classes else -1,
+                classes=classes, positive_class_index=classes.index(1) if 1 in classes else -1,
                 intercarrier_baseline=intercarrier_baseline,
             )
             accuracy_by_key[key] = load_logo_accuracy(
@@ -93,9 +83,7 @@ def load_weapon_links(calibration_root, model_root):
         {key: accuracy for key, accuracy in accuracy_by_key.items() if accuracy is not None})
     for key in entries:
         entries[key].weight = weights.get(key, 1.0)
-    orders = {
-        tuple(int(class_id) for class_id in entry.session.head.classes_) for entry in entries.values()
-    }
+    orders = {tuple(entry.classes) for entry in entries.values()}
     if len(orders) > 1:
         raise ValueError(f"weapon heads disagree on class ordering {orders}; retrain consistently")
     return entries

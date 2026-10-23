@@ -4,7 +4,7 @@ OccupancyGrid is a grid-wide Kalman predict/update: PREDICT (decay toward empty 
 the blur is the process noise, modelling motion uncertainty) then UPDATE (blend the new measurement
 weighted by confidence). _GridKalman smooths the peak cell so the indicator doesn't jump between frames.
 
-Not wavetrace.domain.localize.Tracker: that one tracks azimuth and range, while this tracks grid cells directly.
+Not wavetrace.domain.tracking.Tracker: that one tracks azimuth and range, while this tracks grid cells directly.
 O(G²) per OccupancyGrid step.
 """
 

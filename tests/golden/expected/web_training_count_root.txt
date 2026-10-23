@@ -1,0 +1,30 @@
+log Training count/mlp...
+training {"K": 12, "K_img": 28, "balance": 1.0, "class_counts": {"0": 48, "1": 48, "2": 48}, "distribution": {"0": 48, "1": 48, "2": 48}, "n_samples": 144, "num_nodes": 1, "sessions": ["sess0", "sess1"], "subjects": ["u0"], "sync_error": {"max_abs_dt": 0.0, "mean_dt": 0.0, "p95_abs_dt": 0.0}, "type": "train_init"}
+log training per-node count models...
+log    [OK]   node 1: samples=72 class_counts={'0': 24, '1': 24, '2': 24} train_acc=1.000  LOGO=0.944 (majority 0.333)
+log           per-class: {'0': '88%', '1': '96%', '2+': '100%'}
+log    [OK]   node 2: samples=72 class_counts={'0': 24, '1': 24, '2': 24} train_acc=1.000  LOGO=0.889 (majority 0.333)
+log           per-class: {'0': '100%', '1': '67%', '2+': '100%'}
+log count models saved for nodes [1, 2] -> <case>/root/model_count/node*/  (LOGO must clearly beat the majority baseline, or it's not real.)
+training {"metrics": {"backend": "mlp", "class_counts": {"0": 24, "1": 24, "2": 24}, "k": 12, "logo": {"session": {"accuracy": 0.8888888888888888, "confusion": [[24, 0, 0], [8, 16, 0], [0, 0, 24]], "majority_accuracy": 0.3333333333333333}}, "n_features": 108, "n_samples": 72, "sessions": ["sess0", "sess1"], "stage": "presence", "subjects": ["u0"], "train_accuracy": 1.0}, "type": "done"}
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+training: K
+training: K_img
+training: balance
+training: class_counts
+training: distribution
+training: metrics
+training: n_samples
+training: num_nodes
+training: sessions
+training: subjects
+training: sync_error
+training: type
+
+### tree
+839a8c1ba263be10a17f25560eed78173b72fb22563970d74787db74e8778431  root/model_count/node1/metrics.json
+d941af7c898c34f4e3cce4abe08714744533db85c4f87ff63de873782a75e619  root/model_count/node1/model.joblib
+0cbfaaeed9df3b0240373469caf00564029fd0081386cdd3138d402edae765c6  root/model_count/node2/metrics.json
+2ed911e6e8edbea9059b201f3a475b97053d74f840ccebae10bd1ffcfced076e  root/model_count/node2/model.joblib

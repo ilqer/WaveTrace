@@ -10,7 +10,8 @@ import json
 import numpy as np
 import pytest
 
-from wavetrace.domain.localize import Localizer, Localization, Tracker, SPEED_OF_LIGHT
+from wavetrace.domain.localize import Localizer, Localization, SPEED_OF_LIGHT
+from wavetrace.domain.tracking import Tracker
 from wavetrace.adapters.store.localization import save_localization
 
 

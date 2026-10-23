@@ -1,0 +1,28 @@
+log Training presence/svm...
+training {"K": 12, "K_img": 28, "balance": 0.667, "class_counts": {"0": 48, "1": 72}, "distribution": {"0": 48, "1": 72}, "n_samples": 120, "num_nodes": 1, "sessions": ["sess0", "sess1"], "subjects": ["u0"], "sync_error": {"max_abs_dt": 0.0, "mean_dt": 0.0, "p95_abs_dt": 0.0}, "type": "train_init"}
+log training per-node presence models...
+log    [OK]   node 1: samples=60 class_counts={'0': 24, '1': 36} train_acc=1.000  LOGO=0.900 (majority 0.600, TPR 1.000, FP 0.250)
+log    [OK]   node 2: samples=60 class_counts={'0': 24, '1': 36} train_acc=1.000  LOGO=0.750 (majority 0.600, TPR 1.000, FP 0.625)
+log models saved for nodes [1, 2] -> <case>/root/model/node*/  (LOGO is the honest number: it must clearly beat the majority baseline.)
+training {"metrics": {"backend": "svm", "class_counts": {"0": 24, "1": 36}, "k": 12, "logo": {"session": {"accuracy": 0.75, "confusion": [[9, 15], [0, 36]], "fp_rate": 0.625, "majority_accuracy": 0.6, "tpr": 1.0}}, "n_features": 108, "n_samples": 60, "sessions": ["sess0", "sess1"], "stage": "presence", "subjects": ["u0"], "train_accuracy": 1.0}, "type": "done"}
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+training: K
+training: K_img
+training: balance
+training: class_counts
+training: distribution
+training: metrics
+training: n_samples
+training: num_nodes
+training: sessions
+training: subjects
+training: sync_error
+training: type
+
+### tree
+a27fe7b43f8d5c9c255f0212e92d2f0e3b8cbc618d9fe52c523c8521c830ba42  root/model/node1/metrics.json
+f2adac14917f882d52b3096276643812bd48a305406eec7f36320282a4bc09d6  root/model/node1/model.joblib
+77ac02f69b68c3c64f3c4868d93169fce61b87a05840a39c3ecc6c0e5e959b2a  root/model/node2/metrics.json
+103c5e1c520bb2e55c8e6a400e1f894cd73b91c288447edf2e9f184a5809cbc2  root/model/node2/model.joblib

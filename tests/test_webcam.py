@@ -1,6 +1,6 @@
 import threading
 
-from wavetrace.groundtruth.camera_labeler import VisionLabeler, Detection, LabelerOptions
+from wavetrace.groundtruth.vision_labeler import VisionLabeler, Detection, LabelerOptions
 from wavetrace.domain.groundtruth.labeler import presence_label_function, weapon_label_function
 from wavetrace.groundtruth.webcam import (record_frames, record_labels_online, stream_labels,
                                           COCO_WEAPON_CLASSES)

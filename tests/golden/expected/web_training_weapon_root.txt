@@ -1,0 +1,28 @@
+log Training weapon/svm...
+training {"K": 12, "K_img": 28, "balance": 1.0, "class_counts": {"0": 48, "1": 48}, "distribution": {"0": 48, "1": 48}, "n_samples": 96, "num_nodes": 1, "sessions": ["p0_waist_s0", "p1_chest_s0"], "subjects": ["p0", "p1"], "sync_error": {"max_abs_dt": 0.0, "mean_dt": 0.0, "p95_abs_dt": 0.0}, "type": "train_init"}
+log training per-node weapon models (ic27) on the cumulative pool...
+log    [OK]   Node 1: samples=48 class_counts={'0': 24, '1': 24} train_acc=1.000  LOGO=0.792 (majority 0.500, TPR 0.625, FP 0.042)  carry-LOGO=0.792 (maj 0.500)
+log    [OK]   Node 2: samples=48 class_counts={'0': 24, '1': 24} train_acc=1.000  LOGO=0.833 (majority 0.500, TPR 0.792, FP 0.125)  carry-LOGO=0.833 (maj 0.500)
+log weapon models saved (2 per-node heads) -> <case>/root/model_weapon/node*/  (LOGO must clearly beat majority; expect this to need many subjects/positions/objects.)
+training {"metrics": {"backend": "svm", "class_counts": {"0": 24, "1": 24}, "feature_mode": "ic27", "image_shape": null, "k": 12, "logo": {"carry": {"accuracy": 0.8333333333333334, "confusion": [[21, 3], [5, 19]], "fp_rate": 0.125, "majority_accuracy": 0.5, "tpr": 0.7916666666666666}, "session": {"accuracy": 0.8333333333333334, "confusion": [[21, 3], [5, 19]], "fp_rate": 0.125, "majority_accuracy": 0.5, "tpr": 0.7916666666666666}, "subject": {"accuracy": 0.8333333333333334, "confusion": [[21, 3], [5, 19]], "fp_rate": 0.125, "majority_accuracy": 0.5, "tpr": 0.7916666666666666}}, "n_features": 27, "n_samples": 48, "sessions": ["p0_waist_s0", "p1_chest_s0"], "stage": "weapon", "subjects": ["p0", "p1"], "subtract_ic_baseline": true, "train_accuracy": 1.0}, "type": "done"}
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+training: K
+training: K_img
+training: balance
+training: class_counts
+training: distribution
+training: metrics
+training: n_samples
+training: num_nodes
+training: sessions
+training: subjects
+training: sync_error
+training: type
+
+### tree
+6c68e428ffa4a5f7aacf5dfe6ef16eb258193978920b28ca19c08af0577c603e  root/model_weapon/node1/metrics.json
+b3215a0dcd11964a83f94663c590b9191729bf3d9d7785c6cb8f4048b09ccf56  root/model_weapon/node1/model.joblib
+bcbef394c6b8e549e08f0477e5bd6f8ad20f115e4d3e8888c1d7f8ee12c094ff  root/model_weapon/node2/metrics.json
+6f06d5a66abc9970072aba193bac5010a029493e4d2edd553e803731f377b677  root/model_weapon/node2/model.joblib

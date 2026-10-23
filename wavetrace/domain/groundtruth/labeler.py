@@ -22,7 +22,7 @@ def weapon_label_function(raw: "FrameDetection", timestamp: float) -> tuple[int,
 @dataclass(frozen=True, slots=True)
 class FrameDetection:
     """One `Labeler._detect()` result — the input `Labeler.label()` turns into a core `Label`. Not
-    to be confused with `camera_labeler.Detection` (a single object-detector box)."""
+    to be confused with `vision_labeler.Detection` (a single object-detector box)."""
 
     present: bool = False
     weapon: bool = False

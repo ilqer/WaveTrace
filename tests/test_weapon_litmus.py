@@ -1,11 +1,9 @@
 import os
-import sys
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from wavetrace.diagnostics.weapon_separation import (  # noqa: E402
+from wavetrace.diagnostics.weapon_separation import (
     sigma2_per_frame, separation, gather_sigma2, _node_of, verdict,
 )
 

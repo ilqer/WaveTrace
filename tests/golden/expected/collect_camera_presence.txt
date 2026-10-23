@@ -1,0 +1,61 @@
+$ collect_camera --port 5599 --root <tmp>/root --duration 8
+nodes: [1, 2]. loading YOLO-seg (first run downloads weights)...
+
+>> capturing 8s — keep the subject in camera view and the mesh zone. Press Enter...
+   [CAPTURING] 8s of camera labels and mesh CSI...
+   live: 0/30 frames present
+   live: 30/60 frames present
+   live: 30/90 frames present
+   live: 30/120 frames present
+labeled 30/121 frames positive (present).
+   [OK]   link 4f:9c->1 -> <tmp>/root/cam_ds/presence/node1/link_4f9c/cam_cam_s0
+   [OK]   link 64:b8->1 -> <tmp>/root/cam_ds/presence/node1/link_64b8/cam_cam_s0
+   [OK]   link 4f:9c->2 -> <tmp>/root/cam_ds/presence/node2/link_4f9c/cam_cam_s0
+   [OK]   link 64:b8->2 -> <tmp>/root/cam_ds/presence/node2/link_64b8/cam_cam_s0
+   [OK]   heatmap: stacked 2 nodes -> <tmp>/root/cam_ds/heatmap/cam_cam_s0 (15 windows, 6 with masks)
+
+done. link datasets for nodes [1, 2]; heatmap built.
+
+### tree
+253610fa268367d1f037fc7ea9d8e2057b8ee681bbd8908f87579a1342e013c2  cal/node1/baseline_diff.npy
+ebb198ba83a49cb73ff9d6b90d31a7bf1e62a76960d240c9b16151ed1d8b6929  cal/node1/baseline_mag.npy
+909a50cd26d3578f497709c28dc56fcfb3c4cb796e07aa7885ea9816d0c6a3d6  cal/node1/meta.json
+a04fe1a3fbb7d8b4f72e9f04cc3b9f6896006906e5424a81f01d13612a262113  cal/node2/baseline_diff.npy
+4561ed60477f09596623053670d4cbd0e379d40c4677309c6a9c0a78fa9999d1  cal/node2/baseline_mag.npy
+7a84a9aba69cc220c72faa96429504c21dd6ec24d980c5d5dd129058ca031204  cal/node2/meta.json
+03fc0afe033629d7e328de6bd10f7e723bfcabb4c037cc88e61fc1fbd93894e6  cam_ds/heatmap/cam_cam_s0/features.npy
+b7f23c95c4cd623e30a4b43d0f60d35ce645bfede1b35e382283a25f8c800c57  cam_ds/heatmap/cam_cam_s0/images.npy
+76a6b2dc97c73a8d2b7dbf18953836bbbc50fc50882da152aad967b211472f36  cam_ds/heatmap/cam_cam_s0/manifest.jsonl
+d14822606e3e2e29dcc156cb6a4990ade960e888691f6cabd3963041686c4b1d  cam_ds/heatmap/cam_cam_s0/meta.json
+3eaa9cba2e1f66995eba039b398ed0a99d98e0cdfd0f4caeb235c2ee772507bb  cam_ds/presence/node1/link_4f9c/cam_cam_s0/features.npy
+71d9d8ff57b8169e69f142a3cd49bed186128144ec5eee00edefdaa7c99ab91f  cam_ds/presence/node1/link_4f9c/cam_cam_s0/images.npy
+76a6b2dc97c73a8d2b7dbf18953836bbbc50fc50882da152aad967b211472f36  cam_ds/presence/node1/link_4f9c/cam_cam_s0/manifest.jsonl
+5fada1b7aea184f4bdb3fcf2b1098399bfd119e2c9c9a6afc5d80be4fb11c23d  cam_ds/presence/node1/link_4f9c/cam_cam_s0/meta.json
+38d81f1232ae69ac49c0303d5df81f729736172c25f07a4ff14ec480599547d6  cam_ds/presence/node1/link_64b8/cam_cam_s0/features.npy
+ad921b9c687365073355eefe19a446232f75da42b980796927a743a2dbdbd5de  cam_ds/presence/node1/link_64b8/cam_cam_s0/images.npy
+76a6b2dc97c73a8d2b7dbf18953836bbbc50fc50882da152aad967b211472f36  cam_ds/presence/node1/link_64b8/cam_cam_s0/manifest.jsonl
+5fada1b7aea184f4bdb3fcf2b1098399bfd119e2c9c9a6afc5d80be4fb11c23d  cam_ds/presence/node1/link_64b8/cam_cam_s0/meta.json
+a58c3b066689347cf450ece56451721365fe2d7be1065abeaaa8cc25af8f8511  cam_ds/presence/node2/link_4f9c/cam_cam_s0/features.npy
+84a28cda6e2e76feb14da4a51d60dcbc992cbf581c0ee991c02a3b8e3a50e88f  cam_ds/presence/node2/link_4f9c/cam_cam_s0/images.npy
+76a6b2dc97c73a8d2b7dbf18953836bbbc50fc50882da152aad967b211472f36  cam_ds/presence/node2/link_4f9c/cam_cam_s0/manifest.jsonl
+fcaf87ec1a70ff03f70a103a0b448125831db21ac0cbd5111ff52f1c1672c810  cam_ds/presence/node2/link_4f9c/cam_cam_s0/meta.json
+ecc486848801cf9bd34f1bec1a24d84b1bff9dbe401ab52f1fc9bacfb746f8e8  cam_ds/presence/node2/link_64b8/cam_cam_s0/features.npy
+eefc176d300c570f67e0569613540660a9500d3081852a06b94b85481d026658  cam_ds/presence/node2/link_64b8/cam_cam_s0/images.npy
+76a6b2dc97c73a8d2b7dbf18953836bbbc50fc50882da152aad967b211472f36  cam_ds/presence/node2/link_64b8/cam_cam_s0/manifest.jsonl
+fcaf87ec1a70ff03f70a103a0b448125831db21ac0cbd5111ff52f1c1672c810  cam_ds/presence/node2/link_64b8/cam_cam_s0/meta.json
+438d81ec200e3b81945d6cfb4b784a7e0fdf93f82e5a75b36da5b35ed771219a  cam_rec/cam_cam_s0/node1/link_4f9c/grid.npy
+9fdc14c77293bb09513e432a671a32fa2c3338235de4b5353617d7fab7a0b1e8  cam_rec/cam_cam_s0/node1/link_4f9c/meta.json
+93162210842462afe364851524e2999542abe9f18937893aabdc0ebe8fdd2ed1  cam_rec/cam_cam_s0/node1/link_4f9c/node_id.npy
+8c13ca566c2740c4b87f6bdfddb91c1847f646f07a68c7d228019ee420a494ef  cam_rec/cam_cam_s0/node1/link_4f9c/t.npy
+5d5ca84959c66879e0c89d4cd36cb73c73724d4612abeb8af6a984ad634e9ec5  cam_rec/cam_cam_s0/node1/link_64b8/grid.npy
+9fdc14c77293bb09513e432a671a32fa2c3338235de4b5353617d7fab7a0b1e8  cam_rec/cam_cam_s0/node1/link_64b8/meta.json
+93162210842462afe364851524e2999542abe9f18937893aabdc0ebe8fdd2ed1  cam_rec/cam_cam_s0/node1/link_64b8/node_id.npy
+8c13ca566c2740c4b87f6bdfddb91c1847f646f07a68c7d228019ee420a494ef  cam_rec/cam_cam_s0/node1/link_64b8/t.npy
+172c8e07dbc1f8b7a62f3503c581c6c579e828755c47f967b35e7ed6db591204  cam_rec/cam_cam_s0/node2/link_4f9c/grid.npy
+9fdc14c77293bb09513e432a671a32fa2c3338235de4b5353617d7fab7a0b1e8  cam_rec/cam_cam_s0/node2/link_4f9c/meta.json
+7ab68a8c47562c93f1c67abb00f5233cf6ddad60c23ad38511161cb5cad56322  cam_rec/cam_cam_s0/node2/link_4f9c/node_id.npy
+8c13ca566c2740c4b87f6bdfddb91c1847f646f07a68c7d228019ee420a494ef  cam_rec/cam_cam_s0/node2/link_4f9c/t.npy
+f9c5569d92fec53c07ce3714ccd9a688d8af8fa332c49f0960dec8a3934ffb97  cam_rec/cam_cam_s0/node2/link_64b8/grid.npy
+9fdc14c77293bb09513e432a671a32fa2c3338235de4b5353617d7fab7a0b1e8  cam_rec/cam_cam_s0/node2/link_64b8/meta.json
+7ab68a8c47562c93f1c67abb00f5233cf6ddad60c23ad38511161cb5cad56322  cam_rec/cam_cam_s0/node2/link_64b8/node_id.npy
+8c13ca566c2740c4b87f6bdfddb91c1847f646f07a68c7d228019ee420a494ef  cam_rec/cam_cam_s0/node2/link_64b8/t.npy

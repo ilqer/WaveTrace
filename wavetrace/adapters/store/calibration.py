@@ -1,4 +1,6 @@
+import glob
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -44,3 +46,15 @@ def load_calibration(calibration_dir) -> tuple[CalibrationResult, GainLock | Non
         gain_lock = GainLock(result.num_baseline)
         gain_lock.lock_to(reference_scale)
     return result, gain_lock
+
+
+def discover_calibrated_node_ids(calibration_root) -> list[int]:
+    """Sorted ids of every `<calibration_root>/node<id>` entry, files included."""
+    names = (os.path.basename(path) for path in glob.glob(os.path.join(calibration_root, "node*")))
+    return sorted(int(name[len("node"):]) for name in names if name[len("node"):].isdigit())
+
+
+def find_node_calibration_dirs(calibration_root) -> dict[int, str]:
+    """{node_id: its `<calibration_root>/node<id>` dir} for every id `discover_calibrated_node_ids` finds."""
+    return {node_id: os.path.join(calibration_root, f"node{node_id}")
+            for node_id in discover_calibrated_node_ids(calibration_root)}

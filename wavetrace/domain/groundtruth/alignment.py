@@ -25,7 +25,7 @@ class AlignmentResult:
 
 def align(window_timestamps, labels, tolerance: float) -> AlignmentResult:
     """Nearest-label-within-tolerance match for each window timestamp. `labels` must be sorted by
-    `.timestamp` (CameraLabeler.label_stream does this); window_timestamps ascending. O(W+L)."""
+    `.timestamp` (Labeler.label_stream does this); window_timestamps ascending. O(W+L)."""
     label_timestamps = [label.timestamp for label in labels]
     num_labels = len(label_timestamps)
     matched: list[tuple[int, Label]] = []

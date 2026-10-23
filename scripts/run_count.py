@@ -5,73 +5,9 @@ class space before LinkVoter blends them, weighted by LOGO accuracy times live d
 """
 
 import argparse
-import collections
-import glob
-import os
-import socket
-import time
 
-import numpy as np
-
-from wavetrace.adapters.recognition.session import open_session
-from wavetrace.adapters.source import parse_batch_by_link, bind_udp_socket
-from wavetrace.adapters.store.calibration import load_calibration
-from wavetrace.domain.recognition.input_plan import plan_input
-from wavetrace.recognition import count_name
-from wavetrace.recognition.link import LinkVoter
-from wavetrace.recognition.serving import (NodeServer, last_window_proba, load_logo_accuracy,
-                                            required_subcarrier_width)
-
-
-CHUNK_S = 1.5          # fuse + print at this cadence
-LINK_TIMEOUT_S = 3.0   # drop a link from the vote if unheard this long
-BUFFER_S = 3.0         # per-link rolling history kept for resampling/windowing
-
-
-def _expand_proba(proba, global_class_columns, num_classes):
-    """Scatter a head's proba into the global num_classes vector; classes it never saw stay 0."""
-    expanded = np.zeros(num_classes, dtype=np.float64)
-    for j, column in enumerate(global_class_columns):
-        expanded[column] = proba[j]
-    return expanded
-
-
-def load_count_nodes(calibration_root, model_root):
-    """Per rx-node calibration and count head, plus the global class space, each head's column map
-    into it, and a static vote weight rescaled from LOGO accuracy against 1/k chance."""
-    nodes = {}
-    logo_accuracy_by_node = {}
-    for model_dir in sorted(glob.glob(os.path.join(model_root, "node*"))):
-        base = os.path.basename(model_dir)
-        if not base[len("node"):].isdigit():
-            continue
-        node_id = int(base[len("node"):])
-        calibration_dir = os.path.join(calibration_root, base)
-        model_path = os.path.join(model_dir, "model.joblib")
-        if not (os.path.isdir(calibration_dir) and os.path.exists(model_path)):
-            continue
-        result, gain_lock = load_calibration(calibration_dir)
-        session = open_session("presence", model_path)  # count head is a multi-class PresenceHead
-        should_apply_lock, intercarrier, pick = plan_input("presence", session.head)
-        nodes[node_id] = NodeServer(
-            calibration=result, gain_lock=gain_lock if should_apply_lock else None,
-            should_use_intercarrier=intercarrier, pick_input=pick, session=session,
-            config=session.head.config, min_num_subcarriers=required_subcarrier_width(result),
-            classes=[int(class_id) for class_id in session.head.classes_],
-        )
-        logo_accuracy_by_node[node_id] = load_logo_accuracy(os.path.join(model_dir, "metrics.json"))
-
-    classes = sorted(set().union(*[set(node.classes) for node in nodes.values()])) if nodes else []
-    class_count = len(classes)
-    column_by_class = {class_id: i for i, class_id in enumerate(classes)}
-    chance = 1.0 / class_count if class_count else 0.5
-    for node_id, node in nodes.items():
-        node.global_class_columns = [column_by_class[class_id] for class_id in node.classes]
-        logo_accuracy = logo_accuracy_by_node[node_id]
-        # rescale accuracy so chance maps to 0 and perfect to 1; no LOGO number means 1.0
-        node.weight = (max(logo_accuracy - chance, 0.0) / max(1.0 - chance, 1e-9)
-                       if logo_accuracy is not None else 1.0)
-    return nodes, classes
+from wavetrace.pipeline import serve_mesh
+from wavetrace.recognition.serve_modes import CountServeMode
 
 
 def main():
@@ -83,98 +19,15 @@ def main():
     parser.add_argument("--model", default=None, help="Count model root (default: <root>/model_count)")
     parser.add_argument("--max-count", type=int, default=3, help="Top count level for 'N+' formatting (default: 3)")
     args = parser.parse_args()
-    if args.cal is None:
-        args.cal = f"{args.root}/cal"
-    if args.model is None:
-        args.model = f"{args.root}/model_count"
+    calibration_root = f"{args.root}/cal" if args.cal is None else args.cal
+    model_root = f"{args.root}/model_count" if args.model is None else args.model
 
-    nodes, classes = load_count_nodes(args.cal, args.model)
-    if not nodes:
-        print(f"[ERROR] no count models under {args.model}/node*/model.joblib with a matching "
-              f"{args.cal}/node*/. Run collect_baseline.py then collect_count.py first.")
+    mode = CountServeMode.load(calibration_root, model_root, args.max_count)
+    if not mode.nodes:
+        print(f"[ERROR] no count models under {model_root}/node*/model.joblib with a matching "
+              f"{calibration_root}/node*/. Run collect_baseline.py then collect_count.py first.")
         return
-    class_count = len(classes)
-    labels = [count_name(class_id, args.max_count) for class_id in classes]
-    class_values = np.asarray(classes, dtype=np.float64)
-    # banner only: every head is trained at the same rate today (not enforced)
-    sample_rate_hz = next(iter(nodes.values())).session.head.contract.target_sample_rate_hz
-
-    buffers = collections.defaultdict(collections.deque)  # keyed by (tx_short, rx_node)
-    last_seen_time_s = {}
-    link_ids = {}
-
-    sock = bind_udp_socket(args.port, timeout_s=0.5)
-    weight_summary = "  ".join(f"N{node_id}:w={nodes[node_id].weight:.2f}" for node_id in sorted(nodes))
-    print(f"PEOPLE-COUNT on udp/{args.port} (fs={sample_rate_hz:g}Hz, "
-          f"classes={labels}, rx nodes={sorted(nodes)}; "
-          f"vote weights {weight_summary}). vary the headcount. Ctrl+C to stop.\n")
-
-    next_fuse_time_s = time.time() + CHUNK_S
-    try:
-        while True:
-            now = time.time()
-            try:
-                payload, _ = sock.recvfrom(65535)
-                for key, frames in parse_batch_by_link(payload).items():
-                    # key = (tx_short, rx_node); cal+head belong to the RX node
-                    node = nodes.get(key[1])
-                    if node is not None and frames[0].num_subcarriers >= node.min_num_subcarriers:
-                        buffers[key].extend(frames)
-                        last_seen_time_s[key] = now
-                        link_ids.setdefault(key, len(link_ids))
-            except socket.timeout:
-                pass
-
-            if now < next_fuse_time_s:
-                continue
-            next_fuse_time_s = now + CHUNK_S
-
-            for link_frames in buffers.values():
-                if link_frames:
-                    cutoff = link_frames[-1].timestamp - BUFFER_S
-                    while link_frames and link_frames[0].timestamp < cutoff:
-                        link_frames.popleft()
-
-            # LinkVoter multiplies static reliability by live margin; uniform when nothing is weighted
-            static_link_weights = {link_id: nodes[key[1]].weight for key, link_id in link_ids.items()}
-            static = (static_link_weights
-                      if any(weight > 0 for weight in static_link_weights.values()) else None)
-            voter = LinkVoter(static)
-            breakdown = []
-            for key in sorted(buffers):
-                if now - last_seen_time_s.get(key, 0) > LINK_TIMEOUT_S or len(buffers[key]) < 2:
-                    continue
-                node = nodes[key[1]]
-                proba = last_window_proba(
-                    list(buffers[key]), node.session.head.contract.target_sample_rate_hz,
-                    node.calibration, node.gain_lock, node.config, node.should_use_intercarrier,
-                    node.pick_input, node.session)
-                if proba is None:
-                    continue
-                expanded_proba = _expand_proba(proba, node.global_class_columns, class_count)
-                top = np.sort(proba)[::-1]
-                quality = float(top[0] - top[1]) if proba.size > 1 else float(top[0])  # decision margin
-                voter.add(link_ids[key], expanded_proba, quality=quality)
-                breakdown.append(f"{key[0]}->{key[1]}:{classes[int(np.argmax(expanded_proba))]}")
-
-            if not breakdown:
-                print("\r(no live links with a full window yet)            ", end="", flush=True)
-                continue
-            try:
-                _cls, blended = voter.finalize()
-            except ValueError:
-                print("\r(live links present, but all from chance-level nodes)   ", end="", flush=True)
-                continue
-            blended = np.asarray(blended, dtype=np.float64)
-            expected = float((class_values * blended).sum())  # soft estimate; the 'N+' class counts as N
-            rounded = int(round(expected))
-            label = count_name(min(rounded, max(classes)), args.max_count)
-            print(f"PEOPLE ~{expected:0.1f}  ({label})  "
-                  f"[{len(breakdown)} links] " + " ".join(breakdown))
-    except KeyboardInterrupt:
-        print("\nstopped")
-    finally:
-        sock.close()
+    serve_mesh(mode, args.port)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1144 @@
+{
+ "components": {
+  "schemas": {
+   "FlashRequest": {
+    "properties": {
+     "clean": {
+      "default": false,
+      "title": "Clean",
+      "type": "boolean"
+     },
+     "node_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Node Id"
+     },
+     "port": {
+      "title": "Port",
+      "type": "string"
+     },
+     "role": {
+      "default": "node",
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "port"
+    ],
+    "title": "FlashRequest",
+    "type": "object"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "title": "Detail",
+      "type": "array"
+     }
+    },
+    "title": "HTTPValidationError",
+    "type": "object"
+   },
+   "InputRequest": {
+    "properties": {
+     "input": {
+      "title": "Input",
+      "type": "string"
+     },
+     "proc_id": {
+      "title": "Proc Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "proc_id",
+     "input"
+    ],
+    "title": "InputRequest",
+    "type": "object"
+   },
+   "ModelUploadRequest": {
+    "properties": {
+     "dest": {
+      "default": "output/model.pkl/model.joblib",
+      "title": "Dest",
+      "type": "string"
+     },
+     "file_b64": {
+      "title": "File B64",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file_b64"
+    ],
+    "title": "ModelUploadRequest",
+    "type": "object"
+   },
+   "PiRequest": {
+    "properties": {
+     "command": {
+      "title": "Command",
+      "type": "string"
+     },
+     "host": {
+      "title": "Host",
+      "type": "string"
+     }
+    },
+    "required": [
+     "host",
+     "command"
+    ],
+    "title": "PiRequest",
+    "type": "object"
+   },
+   "ScriptRequest": {
+    "properties": {
+     "args": {
+      "default": "",
+      "title": "Args",
+      "type": "string"
+     },
+     "script": {
+      "title": "Script",
+      "type": "string"
+     }
+    },
+    "required": [
+     "script"
+    ],
+    "title": "ScriptRequest",
+    "type": "object"
+   },
+   "SerialMonitorRequest": {
+    "properties": {
+     "baud": {
+      "default": 115200,
+      "title": "Baud",
+      "type": "integer"
+     },
+     "port": {
+      "title": "Port",
+      "type": "string"
+     }
+    },
+    "required": [
+     "port"
+    ],
+    "title": "SerialMonitorRequest",
+    "type": "object"
+   },
+   "StartRequest": {
+    "properties": {
+     "action": {
+      "default": "run",
+      "title": "Action",
+      "type": "string"
+     },
+     "antennas": {
+      "default": 2,
+      "title": "Antennas",
+      "type": "integer"
+     },
+     "baseline_packets": {
+      "default": 300,
+      "title": "Baseline Packets",
+      "type": "integer"
+     },
+     "cal_out": {
+      "default": "data/2g4_ht40/ui/cal",
+      "title": "Cal Out",
+      "type": "string"
+     },
+     "calibration": {
+      "default": "data/2g4_ht40/ui/cal",
+      "title": "Calibration",
+      "type": "string"
+     },
+     "cam_index": {
+      "default": 0,
+      "title": "Cam Index",
+      "type": "integer"
+     },
+     "cam_url": {
+      "default": "/api/camera/stream",
+      "title": "Cam Url",
+      "type": "string"
+     },
+     "camera_collect": {
+      "default": false,
+      "title": "Camera Collect",
+      "type": "boolean"
+     },
+     "col_hop": {
+      "default": 32,
+      "title": "Col Hop",
+      "type": "integer"
+     },
+     "col_spans": {
+      "default": "0:5,10:15,20:25",
+      "title": "Col Spans",
+      "type": "string"
+     },
+     "col_stage": {
+      "default": "presence",
+      "title": "Col Stage",
+      "type": "string"
+     },
+     "col_window": {
+      "default": 128,
+      "title": "Col Window",
+      "type": "integer"
+     },
+     "duration": {
+      "default": 60.0,
+      "title": "Duration",
+      "type": "number"
+     },
+     "frame_average": {
+      "default": 1,
+      "title": "Frame Average",
+      "type": "integer"
+     },
+     "fs": {
+      "default": 100.0,
+      "title": "Fs",
+      "type": "number"
+     },
+     "gainLock": {
+      "default": true,
+      "title": "Gainlock",
+      "type": "boolean"
+     },
+     "mode": {
+      "default": "presence",
+      "title": "Mode",
+      "type": "string"
+     },
+     "model": {
+      "default": "data/2g4_ht40/ui/model/model.joblib",
+      "title": "Model",
+      "type": "string"
+     },
+     "per_link": {
+      "default": false,
+      "title": "Per Link",
+      "type": "boolean"
+     },
+     "seed": {
+      "default": 0,
+      "title": "Seed",
+      "type": "integer"
+     },
+     "subcarriers": {
+      "default": 64,
+      "title": "Subcarriers",
+      "type": "integer"
+     },
+     "subtract_ic_baseline": {
+      "default": true,
+      "title": "Subtract Ic Baseline",
+      "type": "boolean"
+     },
+     "synthetic": {
+      "default": false,
+      "title": "Synthetic",
+      "type": "boolean"
+     },
+     "train_backend": {
+      "default": "mlp",
+      "title": "Train Backend",
+      "type": "string"
+     },
+     "train_data": {
+      "default": "data/2g4_ht40/ui/ds",
+      "title": "Train Data",
+      "type": "string"
+     },
+     "train_out": {
+      "default": "data/2g4_ht40/ui/model",
+      "title": "Train Out",
+      "type": "string"
+     },
+     "udp_port": {
+      "default": 9876,
+      "title": "Udp Port",
+      "type": "integer"
+     },
+     "use_baseline": {
+      "default": false,
+      "title": "Use Baseline",
+      "type": "boolean"
+     },
+     "vote": {
+      "default": true,
+      "title": "Vote",
+      "type": "boolean"
+     },
+     "yolo_weights": {
+      "default": "yolov8n-seg.pt",
+      "title": "Yolo Weights",
+      "type": "string"
+     }
+    },
+    "title": "StartRequest",
+    "type": "object"
+   },
+   "StopMonitorRequest": {
+    "properties": {
+     "port": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Port"
+     }
+    },
+    "title": "StopMonitorRequest",
+    "type": "object"
+   },
+   "StopProcRequest": {
+    "properties": {
+     "proc_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Proc Id"
+     }
+    },
+    "title": "StopProcRequest",
+    "type": "object"
+   },
+   "ValidationError": {
+    "properties": {
+     "ctx": {
+      "title": "Context",
+      "type": "object"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "title": "Location",
+      "type": "array"
+     },
+     "msg": {
+      "title": "Message",
+      "type": "string"
+     },
+     "type": {
+      "title": "Error Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError",
+    "type": "object"
+   }
+  }
+ },
+ "info": {
+  "title": "WaveTrace Lab Dashboard",
+  "version": "0.1.0"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/api/action/start": {
+   "post": {
+    "operationId": "start_action_api_action_start_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StartRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Start Action"
+   }
+  },
+  "/api/action/stop": {
+   "post": {
+    "operationId": "stop_inference_api_action_stop_post",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Stop Inference"
+   }
+  },
+  "/api/calib/info": {
+   "get": {
+    "description": "K is max(image_subcarriers)+1: the highest subcarrier index the radio reported during\ncalibration. It pins the width the rest of the pipeline must use.",
+    "operationId": "calib_info_api_calib_info_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "path",
+      "required": false,
+      "schema": {
+       "default": "output/calib",
+       "title": "Path",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Calib Info"
+   }
+  },
+  "/api/camera/check": {
+   "get": {
+    "operationId": "camera_check_api_camera_check_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "cam_index",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "Cam Index",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Camera Check"
+   }
+  },
+  "/api/camera/stop": {
+   "post": {
+    "operationId": "stop_camera_api_camera_stop_post",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Stop Camera"
+   }
+  },
+  "/api/camera/stream": {
+   "get": {
+    "description": "ffmpeg's mjpeg output is one continuous byte stream, so frames are cut at the JPEG\nSOI/EOI markers and sent as multipart/x-mixed-replace chunks.",
+    "operationId": "camera_stream_api_camera_stream_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "index",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "Index",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "annotate",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Annotate",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "weights",
+      "required": false,
+      "schema": {
+       "default": "yolov8n-seg.pt",
+       "title": "Weights",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Camera Stream"
+   }
+  },
+  "/api/device/input": {
+   "post": {
+    "operationId": "device_input_api_device_input_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InputRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Device Input"
+   }
+  },
+  "/api/device/state": {
+   "get": {
+    "operationId": "device_state_api_device_state_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Device State"
+   }
+  },
+  "/api/device/stop": {
+   "post": {
+    "operationId": "device_stop_api_device_stop_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StopProcRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Device Stop"
+   }
+  },
+  "/api/flash": {
+   "post": {
+    "operationId": "flash_api_flash_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FlashRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Flash"
+   }
+  },
+  "/api/fusion/weights": {
+   "get": {
+    "description": "Softmax over the saved combiner's coefficients gives per-band trust.",
+    "operationId": "fusion_weights_api_fusion_weights_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "path",
+      "required": true,
+      "schema": {
+       "title": "Path",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Fusion Weights"
+   }
+  },
+  "/api/model/upload": {
+   "post": {
+    "operationId": "model_upload_api_model_upload_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ModelUploadRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Model Upload"
+   }
+  },
+  "/api/model/weights": {
+   "get": {
+    "description": "Per-antenna learned CNN channel weights (L2 norms of first conv filters, normalized).",
+    "operationId": "model_weights_api_model_weights_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "model",
+      "required": true,
+      "schema": {
+       "title": "Model",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "mode",
+      "required": false,
+      "schema": {
+       "default": "weapon",
+       "title": "Mode",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Model Weights"
+   }
+  },
+  "/api/paths/browse": {
+   "get": {
+    "description": "macOS only: the dialog comes from osascript.\nReturns {\"path\": \"/abs/path\"}, or {\"path\": null} when the user cancels.",
+    "operationId": "browse_path_api_paths_browse_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "type",
+      "required": false,
+      "schema": {
+       "default": "dir",
+       "title": "Type",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "prompt",
+      "required": false,
+      "schema": {
+       "default": "Select path",
+       "title": "Prompt",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "ext",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Ext",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Browse Path"
+   }
+  },
+  "/api/paths/scan": {
+   "get": {
+    "operationId": "scan_paths_api_paths_scan_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Scan Paths"
+   }
+  },
+  "/api/pi/run": {
+   "post": {
+    "operationId": "pi_run_api_pi_run_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PiRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Pi Run"
+   }
+  },
+  "/api/pipeline/state": {
+   "get": {
+    "operationId": "pipeline_state_api_pipeline_state_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Pipeline State"
+   }
+  },
+  "/api/script/run": {
+   "post": {
+    "operationId": "script_run_api_script_run_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ScriptRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Script Run"
+   }
+  },
+  "/api/serial/monitor/start": {
+   "post": {
+    "operationId": "serial_monitor_start_api_serial_monitor_start_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SerialMonitorRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Serial Monitor Start"
+   }
+  },
+  "/api/serial/monitor/stop": {
+   "post": {
+    "operationId": "serial_monitor_stop_api_serial_monitor_stop_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StopMonitorRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Serial Monitor Stop"
+   }
+  },
+  "/api/serial/ports": {
+   "get": {
+    "operationId": "serial_ports_api_serial_ports_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Serial Ports"
+   }
+  },
+  "/api/weapon/litmus": {
+   "get": {
+    "description": "Static \u03c3\u00b2[p] separation between clear and weapon captures, per node or per tx\u2192rx link.\nEach row's `hist` holds histogram bins for the client's PDF overlay.",
+    "operationId": "weapon_litmus_api_weapon_litmus_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "root",
+      "required": false,
+      "schema": {
+       "default": "data",
+       "title": "Root",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "node",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Node"
+      }
+     },
+     {
+      "in": "query",
+      "name": "per_link",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Per Link",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Weapon Litmus"
+   }
+  }
+ }
+}

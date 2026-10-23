@@ -10,9 +10,10 @@ import os
 import sys
 import time
 
-from wavetrace.adapters.source import RecordingSource, UdpSource, UdpSourceOptions, save_recording
+from wavetrace.adapters.source import (
+    RecordingSource, UdpSource, UdpSourceOptions, detect_node_ids, save_recording,
+)
 from wavetrace.pipeline import calibrate_source
-from link_capture import detect_nodes
 
 
 def capture_per_node(max_frames_per_node, port, node_ids, timeout_seconds=20.0, max_capture_s=60.0):
@@ -66,7 +67,7 @@ def main():
 
     os.makedirs(f"{args.root}/cal", exist_ok=True)
 
-    nodes = detect_nodes(args.port)
+    nodes = detect_node_ids(args.port)
     if not nodes:
         print(f"\n[ERROR] no active nodes on UDP port {args.port}. "
               "Check the mesh boards are powered and flooding, or run `scripts/mesh_verify.py`.", file=sys.stderr)

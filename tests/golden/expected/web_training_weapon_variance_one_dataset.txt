@@ -1,0 +1,7 @@
+log Training weapon/variance...
+log No weapon datasets under <case>/one_weapon_dataset: the dataset path must be a capture-profile root such as data/2g4_ht40 (run 'collect' first if it is one).
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+
+### tree

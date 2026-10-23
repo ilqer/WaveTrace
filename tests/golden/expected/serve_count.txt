@@ -1,0 +1,10 @@
+PEOPLE-COUNT on udp/5599 (fs=100Hz, classes=['0', '1', '2+'], rx nodes=[1, 2]; vote weights N1:w=0.35  N2:w=0.77). vary the headcount. Ctrl+C to stop.
+
+(no live links with a full window yet)            PEOPLE ~0.0  (0)  [4 links] 4f:9c->1:0 4f:9c->2:0 64:b8->1:0 64:b8->2:0
+PEOPLE ~1.0  (1)  [4 links] 4f:9c->1:1 4f:9c->2:1 64:b8->1:1 64:b8->2:1
+PEOPLE ~2.0  (2+)  [4 links] 4f:9c->1:2 4f:9c->2:2 64:b8->1:2 64:b8->2:2
+PEOPLE ~2.0  (2+)  [4 links] 4f:9c->1:2 4f:9c->2:2 64:b8->1:2 64:b8->2:2
+PEOPLE ~1.0  (1)  [4 links] 4f:9c->1:1 4f:9c->2:1 64:b8->1:1 64:b8->2:1
+PEOPLE ~0.0  (0)  [4 links] 4f:9c->1:0 4f:9c->2:0 64:b8->1:0 64:b8->2:0
+
+stopped

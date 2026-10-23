@@ -10,7 +10,6 @@ import sys
 import numpy as np
 
 from wavetrace.adapters.source import build_csi_source, parse_time_spans, save_recording
-from wavetrace.domain.model_config import ModelConfig
 from wavetrace.output import JsonlPublisher
 from wavetrace.pipeline import calibrate_source, collect_source, localize_source, run_inference
 from wavetrace.recognition import train_presence, train_weapon
@@ -119,14 +118,8 @@ def main(argv=None) -> int:
         if args.stage == "presence":
             _, metrics = train_presence(args.datasets, out_dir=args.out)  # k taken from dataset meta
         else:
-            config = None
-            if args.backend:
-                # config only needed to override the backend; k still comes from dataset meta
-                from wavetrace.adapters.store.dataset import load_dataset
-                nbvi_subcarrier_count = int(load_dataset(args.datasets[0]).meta["K"])
-                config = ModelConfig(stage="weapon", k=nbvi_subcarrier_count, backend=args.backend)
-            _, metrics = train_weapon(args.datasets, out_dir=args.out, config=config,
-                                      feature_mode=args.feature_mode)
+            _, metrics = train_weapon(args.datasets, out_dir=args.out, feature_mode=args.feature_mode,
+                                      backend=args.backend or None)
         print(f"model -> {args.out} ({metrics})", file=sys.stderr)
     elif args.mode == "localize":
         from pathlib import Path

@@ -2,7 +2,8 @@ import numpy as np
 
 from wavetrace import RecognitionResult
 from wavetrace.application.ports import CsiSource
-from wavetrace.domain.localize import Localization, Localizer, Tracker
+from wavetrace.domain.localize import Localization, Localizer
+from wavetrace.domain.tracking import Tracker
 
 
 def _spatial_result(timestamp_s, x_m, y_m, angle_deg, range_m, confidence, is_located):

@@ -9,12 +9,13 @@ from wavetrace.application.calibrate import calibrate
 from wavetrace.application.collect import collect_dataset
 from wavetrace.application.localize import localize
 from wavetrace.application.behaviours import AlertGuardBehaviour, SegmentVoteBehaviour
-from wavetrace.application.serve import infer_windows
+from wavetrace.application.serve import infer_windows, iter_window_verdicts
 from wavetrace.domain.calibration import Calibration
 from wavetrace.domain.guard import AlertGuard, WeaponAlertEvent
-from wavetrace.domain.localize import Localizer, Tracker
+from wavetrace.domain.localize import Localizer
 from wavetrace.domain.model_config import ModelConfig
 from wavetrace.domain.recognition.vote import SegmentVoter
+from wavetrace.domain.tracking import Tracker
 from wavetrace.synthetic import generate_paired_recording, generate_stream
 
 NUM_ANTENNAS, NUM_SUBCARRIERS, SAMPLE_RATE_HZ = 2, 32, 100.0
@@ -104,6 +105,23 @@ def test_collect_dataset_weapon_stage_ignores_the_gain_lock():
                                **_collect_options(stage="weapon"))
     assert locked.X_intercarrier.shape[1] == 27
     assert np.array_equal(locked.X_intercarrier, unlocked.X_intercarrier)
+
+
+def test_iter_window_verdicts_yields_each_window_with_its_front_end_output():
+    calibration_result, gain_lock = _calibrated()
+    signal_options = dict(presence_spans=[PRESENCE_SPAN_S], presence_turbulence_std=0.20)
+    dataset = collect_dataset(SyntheticSource(_recording(**signal_options)), calibration_result, gain_lock, [],
+                              **_collect_options())
+    verdicts = [(verdict.timestamp_s, verdict.class_id, verdict.confidence, list(verdict.proba),
+                 verdict.window_view.features.copy(), verdict.window_view.image.copy())
+                for verdict in iter_window_verdicts(SyntheticSource(_recording(**signal_options)),
+                                                    calibration_result, gain_lock, _FixedVerdictSession(),
+                                                    "presence")]
+    assert [verdict[0] for verdict in verdicts] == list(dataset.t)
+    assert {(class_id, confidence, tuple(proba)) for _, class_id, confidence, proba, _, _ in verdicts} == {
+        (1, 0.75, (0.25, 0.75))}
+    np.testing.assert_array_equal(np.stack([verdict[4] for verdict in verdicts]), dataset.X_features)
+    np.testing.assert_array_equal(np.stack([verdict[5] for verdict in verdicts]), dataset.X_image)
 
 
 @pytest.mark.parametrize("vote, extra_rows", [(False, 0), (True, 1)])

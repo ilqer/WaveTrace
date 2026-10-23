@@ -27,6 +27,7 @@ cmake.build-type = "Release"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 # Matches the project's existing line-wrap style (see CLAUDE.md).

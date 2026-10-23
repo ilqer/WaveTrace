@@ -1,0 +1,10 @@
+ALL-PAIRS presence on udp/5599 (fs=100Hz, rx nodes=[1, 2]; vote weights N1:w=0.92  N2:w=0.36). move in and out of the links. Ctrl+C to stop.
+
+(no live links with a full window yet)            absent   P 0.00                        [4 links] 4f:9c->1:0.01 4f:9c->2:0.00 64:b8->1:0.00 64:b8->2:0.00
+absent   P 0.01                        [4 links] 4f:9c->1:0.01 4f:9c->2:0.02 64:b8->1:0.02 64:b8->2:0.01
+PRESENT  P 1.00  ###################   [4 links] 4f:9c->1:1.00 4f:9c->2:1.00 64:b8->1:1.00 64:b8->2:1.00
+PRESENT  P 0.98  ###################   [4 links] 4f:9c->1:0.98 4f:9c->2:0.99 64:b8->1:0.98 64:b8->2:1.00
+absent   P 0.00                        [4 links] 4f:9c->1:0.00 4f:9c->2:0.00 64:b8->1:0.00 64:b8->2:0.00
+absent   P 0.01                        [4 links] 4f:9c->1:0.01 4f:9c->2:0.00 64:b8->1:0.00 64:b8->2:0.00
+
+stopped

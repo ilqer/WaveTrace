@@ -1,0 +1,29 @@
+log Training presence/cnn...
+log Presence only supports mlp/svm backends; ignoring 'cnn', using mlp.
+training {"K": 12, "K_img": 28, "balance": 0.667, "class_counts": {"0": 48, "1": 72}, "distribution": {"0": 48, "1": 72}, "n_samples": 120, "num_nodes": 1, "sessions": ["sess0", "sess1"], "subjects": ["u0"], "sync_error": {"max_abs_dt": 0.0, "mean_dt": 0.0, "p95_abs_dt": 0.0}, "type": "train_init"}
+log training per-node presence models...
+log    [OK]   node 1: samples=60 class_counts={'0': 24, '1': 36} train_acc=1.000  LOGO=0.983 (majority 0.600, TPR 0.972, FP 0.000)
+log    [OK]   node 2: samples=60 class_counts={'0': 24, '1': 36} train_acc=1.000  LOGO=0.983 (majority 0.600, TPR 0.972, FP 0.000)
+log models saved for nodes [1, 2] -> <case>/root/model/node*/  (LOGO is the honest number: it must clearly beat the majority baseline.)
+training {"metrics": {"backend": "mlp", "class_counts": {"0": 24, "1": 36}, "k": 12, "logo": {"session": {"accuracy": 0.9833333333333333, "confusion": [[24, 0], [1, 35]], "fp_rate": 0.0, "majority_accuracy": 0.6, "tpr": 0.9722222222222222}}, "n_features": 108, "n_samples": 60, "sessions": ["sess0", "sess1"], "stage": "presence", "subjects": ["u0"], "train_accuracy": 1.0}, "type": "done"}
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+training: K
+training: K_img
+training: balance
+training: class_counts
+training: distribution
+training: metrics
+training: n_samples
+training: num_nodes
+training: sessions
+training: subjects
+training: sync_error
+training: type
+
+### tree
+1b025b548c8de1144949f90e49a1418cd22d1eda21f06a4f911f39a077d3d249  root/model/node1/metrics.json
+f2254972234763127c098cb8b817782780c2f1fcb106ea3429f8c6be8a3c8b87  root/model/node1/model.joblib
+1b025b548c8de1144949f90e49a1418cd22d1eda21f06a4f911f39a077d3d249  root/model/node2/metrics.json
+7d2fe95411d89549c2f9814a3512ac54f1ca2313738e73d33f7a46659d7c816c  root/model/node2/model.joblib

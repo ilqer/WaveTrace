@@ -1,0 +1,77 @@
+$ collect_camera --port 5599 --root <tmp>/root --duration 8 --stage weapon --train
+nodes: [1, 2]. loading YOLO-seg (first run downloads weights)...
+
+>> capturing 8s — keep the subject in camera view and the mesh zone. Press Enter...
+   [CAPTURING] 8s of camera labels and mesh CSI...
+   live: 0/30 frames weapon
+   live: 15/60 frames weapon
+   live: 15/90 frames weapon
+   live: 15/120 frames weapon
+labeled 15/121 frames positive (weapon).
+   [OK]   link 4f:9c->1 -> <tmp>/root/weapon_ds/node1/cam_cam_s0_link4f9c
+   [OK]   link 64:b8->1 -> <tmp>/root/weapon_ds/node1/cam_cam_s0_link64b8
+   [OK]   link 4f:9c->2 -> <tmp>/root/weapon_ds/node2/cam_cam_s0_link4f9c
+   [OK]   link 64:b8->2 -> <tmp>/root/weapon_ds/node2/cam_cam_s0_link64b8
+   [OK]   heatmap: stacked 2 nodes -> <tmp>/root/cam_ds/heatmap/cam_cam_s0 (15 windows, 6 with masks)
+
+training per-node weapon models (ic27) on the cumulative pool...
+   [OK]   Node 1: samples=30 class_counts={'0': 24, '1': 6} train_acc=0.533
+   [OK]   Node 2: samples=30 class_counts={'0': 24, '1': 6} train_acc=0.467
+
+weapon models saved (2 per-node heads) -> <tmp>/root/model_weapon/node*/  (LOGO must clearly beat majority; expect this to need many subjects/positions/objects.)
+   [OK]   heatmap (16x16, 6 masks) -> <tmp>/root/model_weapon/heatmap.joblib
+
+done. link datasets for nodes [1, 2]; heatmap built.
+
+### tree
+253610fa268367d1f037fc7ea9d8e2057b8ee681bbd8908f87579a1342e013c2  cal/node1/baseline_diff.npy
+ebb198ba83a49cb73ff9d6b90d31a7bf1e62a76960d240c9b16151ed1d8b6929  cal/node1/baseline_mag.npy
+909a50cd26d3578f497709c28dc56fcfb3c4cb796e07aa7885ea9816d0c6a3d6  cal/node1/meta.json
+a04fe1a3fbb7d8b4f72e9f04cc3b9f6896006906e5424a81f01d13612a262113  cal/node2/baseline_diff.npy
+4561ed60477f09596623053670d4cbd0e379d40c4677309c6a9c0a78fa9999d1  cal/node2/baseline_mag.npy
+7a84a9aba69cc220c72faa96429504c21dd6ec24d980c5d5dd129058ca031204  cal/node2/meta.json
+4513002cd128b4c6749fde1448fe0edc7dac893b9dd5c0ada03c3442046110da  cam_ds/heatmap/cam_cam_s0/features.npy
+736679944e62fcfb9494e798e3220fead07fd8e7a31246d38d9d6b8dabd087a2  cam_ds/heatmap/cam_cam_s0/images.npy
+59d9f002ab747671882e36ba443164a3a3c1b2e1b828d4266269860ea833bf39  cam_ds/heatmap/cam_cam_s0/manifest.jsonl
+d14822606e3e2e29dcc156cb6a4990ade960e888691f6cabd3963041686c4b1d  cam_ds/heatmap/cam_cam_s0/meta.json
+a62dc2cd104afcd33c8f794f5e214217442a673e92166a194e8a86e238feeb84  cam_rec/cam_cam_s0/node1/link_4f9c/grid.npy
+9fdc14c77293bb09513e432a671a32fa2c3338235de4b5353617d7fab7a0b1e8  cam_rec/cam_cam_s0/node1/link_4f9c/meta.json
+93162210842462afe364851524e2999542abe9f18937893aabdc0ebe8fdd2ed1  cam_rec/cam_cam_s0/node1/link_4f9c/node_id.npy
+8c13ca566c2740c4b87f6bdfddb91c1847f646f07a68c7d228019ee420a494ef  cam_rec/cam_cam_s0/node1/link_4f9c/t.npy
+1fcce029718b7acca1cb23aad447304a142dd36258f814927b3a2198bf292eca  cam_rec/cam_cam_s0/node1/link_64b8/grid.npy
+9fdc14c77293bb09513e432a671a32fa2c3338235de4b5353617d7fab7a0b1e8  cam_rec/cam_cam_s0/node1/link_64b8/meta.json
+93162210842462afe364851524e2999542abe9f18937893aabdc0ebe8fdd2ed1  cam_rec/cam_cam_s0/node1/link_64b8/node_id.npy
+8c13ca566c2740c4b87f6bdfddb91c1847f646f07a68c7d228019ee420a494ef  cam_rec/cam_cam_s0/node1/link_64b8/t.npy
+fd49d043ff37a0641c7ff4c148c83632b52cc6c03dfb43da18d63ecda8ee6d82  cam_rec/cam_cam_s0/node2/link_4f9c/grid.npy
+9fdc14c77293bb09513e432a671a32fa2c3338235de4b5353617d7fab7a0b1e8  cam_rec/cam_cam_s0/node2/link_4f9c/meta.json
+7ab68a8c47562c93f1c67abb00f5233cf6ddad60c23ad38511161cb5cad56322  cam_rec/cam_cam_s0/node2/link_4f9c/node_id.npy
+8c13ca566c2740c4b87f6bdfddb91c1847f646f07a68c7d228019ee420a494ef  cam_rec/cam_cam_s0/node2/link_4f9c/t.npy
+e7e5ac1149c145a21ebd654255830cc2f60d1030c4fbca9fb952e024e9321008  cam_rec/cam_cam_s0/node2/link_64b8/grid.npy
+9fdc14c77293bb09513e432a671a32fa2c3338235de4b5353617d7fab7a0b1e8  cam_rec/cam_cam_s0/node2/link_64b8/meta.json
+7ab68a8c47562c93f1c67abb00f5233cf6ddad60c23ad38511161cb5cad56322  cam_rec/cam_cam_s0/node2/link_64b8/node_id.npy
+8c13ca566c2740c4b87f6bdfddb91c1847f646f07a68c7d228019ee420a494ef  cam_rec/cam_cam_s0/node2/link_64b8/t.npy
+60089d29bb926e15d30dd4be2030be2d42287b9e8957802b855c001246603ae4  model_weapon/heatmap.joblib
+6a62424f56ae442df44813c561b810a1c6c4aa9194258cfd5ba70fc91195ba79  model_weapon/node1/metrics.json
+3497e82b118fa0b010d75dfc84f14b7458c534c1f91daa10aa531dd0bdfe8db6  model_weapon/node1/model.joblib
+47de1c6143dc6446bfd3d61b92f2c57ae94bceae133fd81454c114787e100aa4  model_weapon/node2/metrics.json
+dae9185a8ce0ff08e181eeea6587c4bef3ab936d5ae81e9add217d2d3129a729  model_weapon/node2/model.joblib
+5f8fa3847f2752481dd5a02d5d08a2b25b84aa28415ceb67d97f9936fa704bcc  weapon_ds/node1/cam_cam_s0_link4f9c/features.npy
+4c5925731e2ae1f900a24c6ed99e58a96f4c026488b13a3f0f2a3ff50f7d4cbf  weapon_ds/node1/cam_cam_s0_link4f9c/features_ic.npy
+1251318529132a8f767dd84ed774c971e621912e964b9e19ee4ca9f51fc85a52  weapon_ds/node1/cam_cam_s0_link4f9c/images.npy
+59d9f002ab747671882e36ba443164a3a3c1b2e1b828d4266269860ea833bf39  weapon_ds/node1/cam_cam_s0_link4f9c/manifest.jsonl
+8933b13589b131ccff3e344bb48843f6b45b6692861dd59a3b301f7484d5a038  weapon_ds/node1/cam_cam_s0_link4f9c/meta.json
+f40d37a51691a63699cf74f8d7e8feecf35fa4666ae66a0fecfc7083b59ae0b3  weapon_ds/node1/cam_cam_s0_link64b8/features.npy
+7fffa2fa5f037c0b287e62c90b79e439f0a4e4999d0bb6f5f2ba5d694fdbf712  weapon_ds/node1/cam_cam_s0_link64b8/features_ic.npy
+05e18da96dfdfc306df9eb43e7a80cd4722304467d4391546db2a19149cb05ee  weapon_ds/node1/cam_cam_s0_link64b8/images.npy
+59d9f002ab747671882e36ba443164a3a3c1b2e1b828d4266269860ea833bf39  weapon_ds/node1/cam_cam_s0_link64b8/manifest.jsonl
+8933b13589b131ccff3e344bb48843f6b45b6692861dd59a3b301f7484d5a038  weapon_ds/node1/cam_cam_s0_link64b8/meta.json
+715461b6b63db240284d9993f3f6adc5dcc14dd695a1a0a03773657abcac4b57  weapon_ds/node2/cam_cam_s0_link4f9c/features.npy
+23365d93dd24911f93ade988d5cbe3b6d982f917fc9d0531de5700b3e4d9c946  weapon_ds/node2/cam_cam_s0_link4f9c/features_ic.npy
+8ddb5622ac856093baeceb8dacc431d01f90d58dbaf8ca2ee702047760eef79e  weapon_ds/node2/cam_cam_s0_link4f9c/images.npy
+59d9f002ab747671882e36ba443164a3a3c1b2e1b828d4266269860ea833bf39  weapon_ds/node2/cam_cam_s0_link4f9c/manifest.jsonl
+95ecf4001f04a82ba7a6b5acf8cca7872df4b92c1e307ccbf8e39b8d982820f7  weapon_ds/node2/cam_cam_s0_link4f9c/meta.json
+25f3b44c46d91c0af75e0e965a7d2c07bcb8049cd5bbec22923314d813eb2695  weapon_ds/node2/cam_cam_s0_link64b8/features.npy
+69da3ffecafd5c8fd75028449369c5f9691117d3eb7cadc8dfcc76c4ab898b20  weapon_ds/node2/cam_cam_s0_link64b8/features_ic.npy
+98c5805fc4932a030cb6daa423754c72eccbf9ad344352fe02ff0f4006d0b87c  weapon_ds/node2/cam_cam_s0_link64b8/images.npy
+59d9f002ab747671882e36ba443164a3a3c1b2e1b828d4266269860ea833bf39  weapon_ds/node2/cam_cam_s0_link64b8/manifest.jsonl
+95ecf4001f04a82ba7a6b5acf8cca7872df4b92c1e307ccbf8e39b8d982820f7  weapon_ds/node2/cam_cam_s0_link64b8/meta.json

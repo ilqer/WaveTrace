@@ -76,21 +76,22 @@ def concat_arrays(datasets, field_name: str) -> np.ndarray:
 def train_presence(
     dataset_dirs,
     out_dir="models/presence",
-    config: ModelConfig | None = None,
+    backend: str | None = None,
 ) -> tuple[PresenceHead, dict]:
-    """Writes `model.joblib` and `metrics.json` into out_dir."""
+    """Writes `model.joblib` and `metrics.json` into out_dir. backend None trains `ModelConfig`'s default."""
     if isinstance(dataset_dirs, (str, Path)):
         dataset_dirs = [dataset_dirs]
     loaded: list[Dataset] = [load_dataset(dataset_dir) for dataset_dir in dataset_dirs]
     X, y, session_ids, subject_ids = concat_datasets(loaded)
     metadata = loaded[0].meta
 
-    if config is None:
-        # window/hop come from the dataset, so serving frames windows exactly as training did
-        config = ModelConfig(stage="presence", k=int(metadata["K"]),
-                             window=int(metadata["window"]), hop=int(metadata["hop"]),
-                             frame_average=int(metadata.get("frame_average", 1)),
-                             subtract_baseline=bool(metadata.get("subtract_baseline", False)))
+    # window/hop come from the dataset, so serving frames windows exactly as training did
+    config = ModelConfig(stage="presence", k=int(metadata["K"]),
+                         window=int(metadata["window"]), hop=int(metadata["hop"]),
+                         frame_average=int(metadata.get("frame_average", 1)),
+                         subtract_baseline=bool(metadata.get("subtract_baseline", False)))
+    if backend is not None:
+        config = replace(config, backend=backend)
 
     fit_start_s = time.perf_counter()
     head = build_presence_head(config).fit(X, y)
@@ -129,8 +130,10 @@ def train_weapon(
     config: ModelConfig | None = None,
     feature_mode: str = "ic27",
     report=None,
+    backend: str | None = None,
 ) -> tuple[WeaponHead, dict]:
-    """Writes `model.joblib` and `metrics.json` into out_dir.
+    """Writes `model.joblib` and `metrics.json` into out_dir. backend: used only without a config; None
+    trains the feature mode's default backend.
 
     feature_mode:
     - 'ic27': inter-carrier block (variance/mlp/svm).
@@ -157,7 +160,7 @@ def train_weapon(
     num_feature_subcarriers = int(metadata["K"])
     if config is None:
         config = ModelConfig(stage="weapon", k=num_feature_subcarriers,
-                             backend=DEFAULT_BACKEND_BY_FEATURE_MODE[feature_mode],
+                             backend=DEFAULT_BACKEND_BY_FEATURE_MODE[feature_mode] if backend is None else backend,
                              window=int(metadata["window"]), hop=int(metadata["hop"]),
                              frame_average=int(metadata.get("frame_average", 1)),
                              subtract_baseline=bool(metadata.get("subtract_baseline", False)),

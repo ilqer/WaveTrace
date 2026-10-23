@@ -149,18 +149,22 @@ def baseline_drift(calibration_result, recent_frames) -> dict:
             "recalibrate": abs(mean_ratio - 1.0) > 0.2}
 
 
-def dataset_report(dataset) -> dict:
-    y = np.asarray(dataset.y)
+def dataset_report(datasets) -> dict:
+    """The class balance, sessions and subjects of every dataset together; sync_error, num_nodes, K and K_img
+    are the first dataset's. Each needs only y, session_ids, subject_ids and meta. O(total windows)."""
+    datasets = list(datasets)
+    y = np.concatenate([np.asarray(dataset.y) for dataset in datasets])
     classes, counts = np.unique(y, return_counts=True)
+    first_meta = datasets[0].meta
     return {
         "n_samples": int(y.size),
         "distribution": {str(int(class_id)): int(count) for class_id, count in zip(classes, counts)},
         "class_counts": {str(int(class_id)): int(count) for class_id, count in zip(classes, counts)},
         "balance": round(float(counts.min() / counts.max()), 3) if counts.size > 1 else 0.0,
-        "sessions": sorted({str(group_id) for group_id in dataset.session_ids}),
-        "subjects": sorted({str(group_id) for group_id in dataset.subject_ids}),
-        "sync_error": dataset.meta.get("sync_error", {}),
-        "num_nodes": dataset.meta.get("num_nodes", 1),
-        "K": dataset.meta.get("K"),
-        "K_img": dataset.meta.get("K_img"),
+        "sessions": sorted({str(group_id) for dataset in datasets for group_id in dataset.session_ids}),
+        "subjects": sorted({str(group_id) for dataset in datasets for group_id in dataset.subject_ids}),
+        "sync_error": first_meta.get("sync_error", {}),
+        "num_nodes": first_meta.get("num_nodes", 1),
+        "K": first_meta.get("K"),
+        "K_img": first_meta.get("K_img"),
     }

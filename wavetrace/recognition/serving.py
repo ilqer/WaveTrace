@@ -1,15 +1,20 @@
+import glob
 import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from wavetrace import GainLock
-from wavetrace.adapters.recognition.session import InferenceSession
+from wavetrace.adapters.recognition.session import InferenceSession, open_session
+from wavetrace.adapters.store.calibration import load_calibration
+from wavetrace.application.serve import WindowView
 from wavetrace.domain.calibration import CalibrationResult
 from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
 from wavetrace.domain.model_config import ModelConfig
+from wavetrace.domain.recognition.input_plan import plan_input
 
 
 @dataclass(slots=True)
@@ -37,6 +42,42 @@ def required_subcarrier_width(result):
     return 1 + max(subcarrier_indices)
 
 
+def discover_node_dirs(calibration_root, model_root):
+    """Yield (node_id, model_dir, calibration_dir) for each `<model_root>/node<id>` that has a
+    `<calibration_root>/node<id>` directory, in sorted directory-name order."""
+    for model_dir in sorted(glob.glob(os.path.join(model_root, "node*"))):
+        base = os.path.basename(model_dir)
+        if not base[len("node"):].isdigit():
+            continue
+        calibration_dir = os.path.join(calibration_root, base)
+        if os.path.isdir(calibration_dir):
+            yield int(base[len("node"):]), model_dir, calibration_dir
+
+
+def load_presence_node_servers(calibration_root, model_root):
+    """({rx node_id: NodeServer}, {rx node_id: LOGO accuracy or None}) for every node with a calibration
+    and a `model.joblib` presence head (a count head is a multi-class presence head). `weight` stays
+    1.0 for the caller to set."""
+    nodes = {}
+    logo_accuracy_by_node = {}
+    for node_id, model_dir, calibration_dir in discover_node_dirs(calibration_root, model_root):
+        model_path = os.path.join(model_dir, "model.joblib")
+        if not os.path.exists(model_path):
+            continue
+        calibration, gain_lock = load_calibration(calibration_dir)
+        session = open_session("presence", model_path)
+        should_apply_lock, intercarrier, pick = plan_input("presence", session.head)
+        classes = [int(class_id) for class_id in session.head.classes_]
+        nodes[node_id] = NodeServer(
+            calibration=calibration, gain_lock=gain_lock if should_apply_lock else None,
+            should_use_intercarrier=intercarrier, pick_input=pick, session=session,
+            config=session.head.config, min_num_subcarriers=required_subcarrier_width(calibration),
+            classes=classes, positive_class_index=classes.index(1) if 1 in classes else -1,
+        )
+        logo_accuracy_by_node[node_id] = load_logo_accuracy(os.path.join(model_dir, "metrics.json"))
+    return nodes, logo_accuracy_by_node
+
+
 def load_logo_accuracy(metrics_path):
     """Session-axis LOGO accuracy preferred, subject fallback; None if absent."""
     try:
@@ -51,22 +92,29 @@ def load_logo_accuracy(metrics_path):
     return None
 
 
+def copy_window(features, image, intercarrier_features):
+    """The last window an exhausted `iter_windows` yielded, as a WindowView owning its arrays. Its views
+    still hold that window: the extractors rewrite their outputs only when they emit, so the frames pushed
+    after the last yield leave them alone. O(K·W)."""
+    return WindowView(features.copy(), image.copy(),
+                      None if intercarrier_features is None else intercarrier_features.copy())
+
+
 def last_window_proba(frames, sample_rate_hz, result, gain_lock, config, intercarrier, pick, session):
-    """Last window's class probabilities, or None when there are too few frames to fill a window.
-    O(n) front-end over the frames, but a single prediction."""
+    """(last window's class probabilities, its WindowView), or (None, None) when there are too few frames
+    to fill a window. O(n) front-end over the frames, one O(K·W) copy and a single prediction."""
     resampled_frames = resample_uniform(frames, sample_rate_hz)
     if len(resampled_frames) < config.window:
-        return None
-    # iter_windows yields its reused buffers and keeps pushing frames after the last yield, so each
-    # window's input is copied into one buffer; only the last one is ever predicted
-    last_input = None
+        return None, None
+    features = image = intercarrier_features = None
     for _timestamp, features, image, intercarrier_features in iter_windows(
         resampled_frames, result.subcarriers, gain_lock,
         window=config.window, hop=config.hop, intercarrier=intercarrier,
         image_subcarriers=result.image_subcarriers,
     ):
-        window_input = pick(features, image, intercarrier_features)
-        if last_input is None:
-            last_input = np.empty_like(window_input)
-        np.copyto(last_input, window_input)
-    return None if last_input is None else session.predict_window_proba(last_input)
+        pass
+    if features is None:
+        return None, None
+    window_view = copy_window(features, image, intercarrier_features)
+    window_input = pick(window_view.features, window_view.image, window_view.intercarrier_features)
+    return session.predict_window_proba(window_input), window_view

@@ -1,0 +1,34 @@
+log Training weapon/variance...
+training {"K": 12, "K_img": 28, "balance": 1.0, "class_counts": {"0": 48, "1": 48}, "distribution": {"0": 48, "1": 48}, "n_samples": 96, "num_nodes": 1, "sessions": ["p0_waist_s0", "p1_chest_s0"], "subjects": ["p0", "p1"], "sync_error": {"max_abs_dt": 0.0, "mean_dt": 0.0, "p95_abs_dt": 0.0}, "type": "train_init"}
+log training per-link (tx->rx) weapon models (ic27) on the cumulative pool...
+log    [OK]   Node 1 link4f9c: samples=24 class_counts={'0': 12, '1': 12} train_acc=1.000  LOGO=0.958 (majority 0.500, TPR 0.917, FP 0.000)  carry-LOGO=0.958 (maj 0.500)
+log    [OK]   Node 1 link64b8: samples=24 class_counts={'0': 12, '1': 12} train_acc=0.833  LOGO=0.625 (majority 0.500, TPR 0.500, FP 0.250)  carry-LOGO=0.625 (maj 0.500)
+log    [OK]   Node 2 link4f9c: samples=24 class_counts={'0': 12, '1': 12} train_acc=1.000  LOGO=0.833 (majority 0.500, TPR 0.833, FP 0.167)  carry-LOGO=0.833 (maj 0.500)
+log    [OK]   Node 2 link64b8: samples=24 class_counts={'0': 12, '1': 12} train_acc=1.000  LOGO=0.750 (majority 0.500, TPR 0.667, FP 0.167)  carry-LOGO=0.750 (maj 0.500)
+log weapon models saved (4 per-link (tx->rx) heads) -> <case>/root/model_weapon/node*/link*/  (LOGO must clearly beat majority; expect this to need many subjects/positions/objects.)
+training {"metrics": {"backend": "variance", "class_counts": {"0": 12, "1": 12}, "feature_mode": "ic27", "image_shape": null, "k": 12, "logo": {"carry": {"accuracy": 0.75, "confusion": [[10, 2], [4, 8]], "fp_rate": 0.16666666666666666, "majority_accuracy": 0.5, "tpr": 0.6666666666666666}, "session": {"accuracy": 0.75, "confusion": [[10, 2], [4, 8]], "fp_rate": 0.16666666666666666, "majority_accuracy": 0.5, "tpr": 0.6666666666666666}, "subject": {"accuracy": 0.75, "confusion": [[10, 2], [4, 8]], "fp_rate": 0.16666666666666666, "majority_accuracy": 0.5, "tpr": 0.6666666666666666}}, "n_features": 27, "n_samples": 24, "sessions": ["p0_waist_s0", "p1_chest_s0"], "stage": "weapon", "subjects": ["p0", "p1"], "subtract_ic_baseline": true, "train_accuracy": 1.0}, "type": "done"}
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+training: K
+training: K_img
+training: balance
+training: class_counts
+training: distribution
+training: metrics
+training: n_samples
+training: num_nodes
+training: sessions
+training: subjects
+training: sync_error
+training: type
+
+### tree
+0f9b274a83e245eac2832621367b5ea0c0f2653c83fc8b76d22f50a8ec6f42a3  root/model_weapon/node1/link4f9c/metrics.json
+3f96c4b76500ea484049a6045d4fb7f0f236ea2be2b59184e1449878dd4aa78b  root/model_weapon/node1/link4f9c/model.joblib
+1631571ebaae1eb06159ef941f8fc01ace354f599a2193de9f30e8e4921cc492  root/model_weapon/node1/link64b8/metrics.json
+c4d9c385bac14d82aeab9cd18212e2e2d9d7b3fdac07f77abdb528a3c1362312  root/model_weapon/node1/link64b8/model.joblib
+f4818656115e8be54cbf30db87d95ff0c62b92ff59b13f18f80a435c8cb53297  root/model_weapon/node2/link4f9c/metrics.json
+5a0f38afc626ea494334f10417498a3226c3e6526d8fb65a87341949fd2cb8f9  root/model_weapon/node2/link4f9c/model.joblib
+b561bd23cc467ae20490fc768e281161dd396340d1796ad7365f3ad5ed75fa9e  root/model_weapon/node2/link64b8/metrics.json
+d8f05d0453f3f5cd38240fcd4db6c259805951a93e0bc5ddbdb5aec83913c1a7  root/model_weapon/node2/link64b8/model.joblib

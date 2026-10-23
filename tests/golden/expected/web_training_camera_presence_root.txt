@@ -1,0 +1,28 @@
+log Training presence/mlp...
+training {"K": 12, "K_img": 28, "balance": 0.75, "class_counts": {"0": 16, "1": 12}, "distribution": {"0": 16, "1": 12}, "n_samples": 28, "num_nodes": 1, "sessions": ["cam_cam_s0"], "subjects": ["cam"], "sync_error": {"max_abs_dt": 0.049999999999954525, "mean_dt": -0.0014285714285863702, "p95_abs_dt": 0.04399999999999407}, "type": "train_init"}
+log training per-node presence models...
+log    [OK]   node 1: samples=14 class_counts={'0': 8, '1': 6} train_acc=1.000
+log    [OK]   node 2: samples=14 class_counts={'0': 8, '1': 6} train_acc=1.000
+log models saved for nodes [1, 2] -> <case>/root/model_camera/node*/  (LOGO is the honest number: it must clearly beat the majority baseline.)
+training {"metrics": {"backend": "mlp", "class_counts": {"0": 8, "1": 6}, "k": 12, "logo": {}, "n_features": 108, "n_samples": 14, "sessions": ["cam_cam_s0"], "stage": "presence", "subjects": ["cam"], "train_accuracy": 1.0}, "type": "done"}
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+training: K
+training: K_img
+training: balance
+training: class_counts
+training: distribution
+training: metrics
+training: n_samples
+training: num_nodes
+training: sessions
+training: subjects
+training: sync_error
+training: type
+
+### tree
+0a59c76dcaaae5972d8d45c9edd2b7d4b6c1f56c6657904d4b8f4f602e1dd0c3  root/model_camera/node1/metrics.json
+6b639a4796063eb6f0800f6cf96ba54ba48571671203079c0d6b9563d9d82052  root/model_camera/node1/model.joblib
+0a59c76dcaaae5972d8d45c9edd2b7d4b6c1f56c6657904d4b8f4f602e1dd0c3  root/model_camera/node2/metrics.json
+efd158c6669b9edd58a43c3847ce7b71d5c4630742be0290d28b5a6c1bd3cfd0  root/model_camera/node2/model.joblib

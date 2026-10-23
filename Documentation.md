@@ -201,23 +201,24 @@ native/             C++ signal processing (compiled into the wavetrace package v
 wavetrace/          the Python library
 ├── cli.py          `wavetrace` CLI: capture / calibrate / collect-data / train / localize / run
 ├── synthetic.py    synthetic CSI + paired labels for `--synthetic` mode
-├── domain/         pure pipeline descriptions, no I/O: PipelineContract, ModelConfig, LinkKey, Calibration (gain-lock scale, NBVI mask, quiet baseline), presence/weapon heads, `recognition/input_plan.py` (`plan_input`), `groundtruth/` (`alignment.py`: timestamp alignment; `labeler.py`: `Labeler`, `ScriptedLabeler`, label functions; `dataset.py`: `Dataset`, `build_dataset`, `build_stacked_dataset`), SegmentVoter, AlertGuard/DriftMonitor (guard.py), `localize.py` (AoA/delay MUSIC `Localizer`, Kalman `Tracker`), dsp/ (resampling and frontend.py, the shared pipeline loop: source → preprocess → features → emit windows)
-├── application/    use-cases (calibrate, collect, localize, serve) on loaded values, no I/O + ports (the Protocols adapters implement) + behaviours/ (the serving guard and vote, composed by `pipeline.run_inference` from `--guard` / `--vote`)
-├── pipeline.py     directory-based entry points (calibrate_source, collect_source, run_inference, localize_source): load → use-case → save
+├── domain/         pure pipeline descriptions, no I/O: PipelineContract, ModelConfig, LinkKey, Calibration (gain-lock scale, NBVI mask, quiet baseline), presence/weapon heads, `recognition/input_plan.py` (`plan_input`), `groundtruth/` (`alignment.py`: timestamp alignment; `labeler.py`: `Labeler`, `ScriptedLabeler`, label functions; `dataset.py`: `Dataset`, `build_dataset`, `build_stacked_dataset`), SegmentVoter, AlertGuard/DriftMonitor (guard.py), `localize.py` (AoA/delay MUSIC `Localizer`), `tracking.py` (Kalman `Tracker`), dsp/ (resampling and frontend.py, the shared pipeline loop: source → preprocess → features → emit windows)
+├── application/    use-cases (calibrate, collect, localize, serve, plus the live mesh loops serve_mesh, collect_mesh and collect_camera behind per-mode strategies in recognition/) on loaded values, no concrete I/O (console output through print, or collect_camera's injected log) + ports (the Protocols adapters implement) + behaviours/ (the serving guard and vote, composed by `pipeline.run_inference` from `--guard` / `--vote`)
+├── pipeline.py     directory-based entry points (calibrate_source, collect_source, run_inference, localize_source, serve_mesh, collect_mesh, collect_camera): load → use-case → save
 ├── adapters/       behind the ports: source/ (CSI frame sources: live UDP, serial, Pi, recorded file, synthetic;
 │                   wire-format parsers), store/ (save/load the calibration dir; `dataset.py`: `save_dataset`, `load_dataset`; `localization.py`: `save_localization`; `scripted_spans.py`: `load_scripted_spans`) and recognition/ (MLP, SVM, CNN, variance backends; head construction; `session.py`: `InferenceSession`, `open_session`)
 ├── source.py       compatibility path for the old `wavetrace.source` imports (the golden test uses it)
 ├── recognition/    heads (presence, people-count, occupancy heatmap, weapon) + training, multi-node fusion, evaluation, CIR; `infer.py` holds only `measure_latency`
-├── groundtruth/    concrete camera labelers (`camera_labeler.py`); `webcam.py`, `weapon_separation.py`
+├── groundtruth/    concrete labelers, one per file: `vision_labeler.py`, `segmentation_labeler.py`, `yolo_labeler.py`
+│                   (Ultralytics), `replay_labeler.py`, `location_chip_labeler.py`, `thermal_labeler.py`; `webcam.py`
 ├── output/         result publisher (JSONL default; WebSocket seam for the dashboard)
-└── diagnostics/    per-node health telemetry
+└── diagnostics/    per-node health telemetry; `weapon_separation.py` (σ²[p] go/no-go check)
 
 scripts/              terminal scripts you run at the command line (always from the project root)
 ├── collect_baseline.py   record quiet empty room → saves calibration under data/<profile>/cal/
 ├── collect_presence.py   record presence sessions → trains per-node presence models
-├── collect_weapon.py     record weapon sessions (open/wrapped/concealed) → trains weapon model
+├── collect_weapon.py     record weapon sessions (no-weapon/weapon, per node or --per-link) → trains weapon model
 ├── collect_count.py      record people-count sessions → trains count model
-├── collect_camera.py     simultaneous CSI + webcam capture with live YOLO-seg labeling
+├── collect_camera.py     simultaneous CSI + webcam capture with live YOLO-seg labeling → one dataset per link (+ heatmap)
 ├── run_live_mesh.py      live presence detection (all nodes voted)
 ├── run_weapon.py         live weapon detection
 ├── run_count.py          live people count
@@ -230,12 +231,14 @@ experiments/          offline analysis scripts — run after you have data, not 
 └── weapon_experiments.py model bake-off (per-node vs per-link vs combined CNN) with LOGO evaluation
 
 web/
-├── app.py            FastAPI routes and WebSocket endpoints (port 8000)
+├── app.py            FastAPI app: lifespan, CORS, the routers, the static UI (port 8000)
+├── dashboard_state.py  DashboardState (channels, DeviceHub, runner) and BroadcastChannel
+├── routers/          HTTP and WebSocket routes: pipeline, model, paths, device, camera
 ├── streamer.py       WaveTraceRunner — drives the pipeline in a worker thread
 ├── device_ctl.py     DeviceHub — serial monitor, firmware flash, Pi SSH, script runner
 └── ui/               React + Vite + TypeScript dashboard
 
-tests/                pytest suite (378 tests; all offline on synthetic data — no hardware needed)
+tests/                pytest suite (609 tests; all offline on synthetic data — no hardware needed)
 data/                 git-ignored; created by the collect scripts
 ```
 
@@ -383,7 +386,13 @@ npm install             # once
 npm run dev             # Vite dev server at http://localhost:5173
 ```
 
-Note: the Train button in the dashboard currently returns placeholder metrics. Real training runs from the terminal with the `collect_*.py` scripts.
+
+Dashboard behaviour to know:
+- The Alert tile fires only in weapon mode. Presence (and count) runs never raise a weapon alert.
+- The run panel's `frame_average`, `use_baseline` and `gainLock` knobs are ignored for inference: the model's saved contract decides frame averaging, the baseline and the gain lock.
+- Camera collection is `scripts/collect_camera.py` without training (see §11); a port that cannot be bound is logged as that error and ends the run.
+- Calib and Collect always end with `pipeline_done` (the Running state clears), also after Stop or an error; an error is logged as `ERROR Calibration failed: ...` or `ERROR Collection failed: ...` with its traceback.
+- Train trains what the matching collect script trains: Dataset Path is a capture-profile root (e.g. `data/2g4_ht40`), and the stage picks the script's pool under it: presence `ds_*`, count `count_ds_*` (classes up to the highest `c<k>` on disk), weapon the cumulative `weapon_ds` pool (Per-link: one head per tx->rx link), and with the camera toggle on, presence trains the camera pool `cam_ds/presence` (count has no camera pool: it logs an error and trains nothing). Heads go where the scripts put them (`<root>/model`, `model_count`, `model_weapon[/node<id>/link<tag>]`, `model_camera`), one per node, so mesh serving finds them; Output Model Dir (`train_out`) is ignored. The chosen backend is used (presence and count accept only mlp/svm and fall back to mlp). The `heatmap` backend trains `heatmap.joblib` on one camera session dir (`<root>/cam_ds/heatmap/<session>`) next to the camera heads; a dataset without masks is skipped. The panel gets one `train_init` for the whole pool, epochs from cnn and heatmap fits (Stop ends them at the next epoch), one `done` after every head, and the run always ends with `pipeline_done`, also after an error or when nothing trained (see `web/README.md`). Stop during an mlp/svm run ends it before the next head, so the model root is left mixed: the heads the log names as trained are new and every other node or link keeps its previous head.
 
 ---
 
@@ -515,15 +524,15 @@ Do not report accuracy from a random within-session split.
 - Full Python presence pipeline: calibration, dataset builder, MLP/SVM training, LOGO evaluation, live inference, per-node voting, multi-node fusion, result publishing.
 - People-count pipeline: a standalone path (`collect_count.py` + `run_count.py`) with a four-class head per node and live voting across all links. On real hardware it reaches 53–61% accuracy against a 25% random baseline (see projectProgress.md §9.10). It runs today; more sessions raise the score.
 - Occupancy-heatmap pipeline: a camera-supervised CNN (`HeatmapHead`, trained with BCE plus soft-Dice), a `SegmentationLabeler` that turns YOLO masks into a 16×16 occupancy grid, temporal smoothing in `occupancy.py` (a per-cell Bayesian grid plus a 2D Kalman tracker that follows the hottest cell without jumping), `collect_camera.py --train`, live serving in `web/streamer.py`, and the `OccupancyHeatmap` and `OccupancyGrid3D` panels in the dashboard. All parts are built and covered by unit tests across the vision-labeler, segmentation, webcam, and ground-truth (alignment and dataset) suites. The one thing left is a full webcam-to-model run on real hardware; until a model is trained the live path uses an energy-based estimate (see projectProgress.md §9.11).
-- Automatic camera labeling: `collect_camera.py` captures every node's CSI and the MacBook webcam at the same time, runs a YOLO segmentation model live on each frame, and time-aligns the labels to every node's CSI windows. This produces a labeled presence and heatmap dataset in one pass, with no hand-labeling. The camera is used only for collection; the deployed detector needs no camera.
+- Automatic camera labeling: `collect_camera.py` captures every link's CSI and the MacBook webcam at the same time, runs a YOLO segmentation model live on each frame, and time-aligns the labels to each link's CSI windows. This produces labeled per-link datasets and a heatmap dataset in one pass, with no hand-labeling. The camera is used only for collection; the deployed detector needs no camera. The script and the dashboard's camera collection run the same use-case (`CollectCameraUseCase`, through `pipeline.collect_camera`) and print the same messages; the dashboard labels at 5 Hz, uses subject `cam`, writes under its `train_data` path and never trains. Each run is the next free session, `<subject>_cam_s<n>`, so runs accumulate. Every (tx->rx) link is resampled and written on its own, like every other collect path: presence datasets go to `<root>/cam_ds/presence/node<rx>/link_<tag>/<session>`, and `--train` trains one presence head per node on that node's whole camera pool into `<root>/model_camera/node<id>` (never `<root>/model`, so camera heads cannot overwrite the live presence heads). With `--stage weapon` the datasets join `collect_weapon.py`'s cumulative pool as `<root>/weapon_ds/node<rx>/<session>_link<tag>` (the session's `cam` is the pool's carry position), and `--train` trains the ic27 heads exactly as `collect_weapon.py` does, into `<root>/model_weapon`. The heatmap dataset (`<root>/cam_ds/heatmap/<session>`) is the one deliberate exception: like calibration it merges each node's links into one stream before resampling, because the heatmap head takes one channel per node; its head (`heatmap.joblib`) is trained next to the stage's heads. The dashboard loads `heatmap.joblib` from beside the model it serves, so a camera-trained heatmap is used only when it serves `<root>/model_camera` (presence) or `<root>/model_weapon` (weapon); serving `<root>/model` falls back to the variance-based occupancy estimate.
 - Weapon pipeline: σ²[p] variance baseline, sklearn head, CNN head, `SegmentVoter`, `tier_verdict` gate.
 - Extra recognition tools built and tested, used by the dashboard and the fusion path: model explainability (`explain.py` — CNN channel-ablation importance, permutation importance for MLP/SVM, confusion matrices), per-link decision fusion with automatic blockage recovery (`link.py` — a link that loses sight of the target drops its own weight so the others take over), learned late fusion across radio bands (`stack.py`), and label-free in-room adaptation (`adapt.py` — refresh input statistics and recalibrate without retraining weights).
-- Spatial localization (`localize.py`): a joint 2D delay-and-angle MUSIC estimator (SpotFi-style) plus a MUSIC/Bartlett angle spectrum and a Kalman position tracker. It is fully implemented but **parked**, because it needs at least two phase-coherent receive antennas on one radio and the current boards have one receive chain (see §13).
-- Ground-truth tools: camera labeler (YOLO/SAM), segmentation labeler, scripted labeler, timestamp alignment, dataset serializer.
+- Spatial localization (`localize.py`, `tracking.py`): a joint 2D delay-and-angle MUSIC estimator (SpotFi-style) plus a MUSIC/Bartlett angle spectrum and a Kalman position tracker. It is fully implemented but **parked**, because it needs at least two phase-coherent receive antennas on one radio and the current boards have one receive chain (see §13).
+- Ground-truth tools: YOLO vision and segmentation labelers, scripted labeler, timestamp alignment, dataset serializer.
 - CLI: `wavetrace capture / calibrate / collect-data / train / localize / run`.
-- Web dashboard: spectrograms, node health, live predictions. (Train button returns placeholder metrics — real training runs from the terminal.)
+- Web dashboard: spectrograms, node health, live predictions, and Train, which trains the same pools into the same model dirs as the `collect_*.py` scripts.
 - Pi 5 GHz node: `firmware/pi/` is implemented and tested against `wavetrace/adapters/source/wire_format.py` via `test_pi_publisher.py`. Not yet validated on real Pi hardware.
-- All 371 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
+- All 573 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
 
 ### What to Verify on Real Hardware Before Trusting Results
 
@@ -623,7 +632,9 @@ source .venv/bin/activate
 pytest tests/ -q
 ```
 
-All tests run on synthetic data. No hardware needed. Expected: 378 passed. If a test fails after a code change, fix the test and the code in the same commit.
+All tests run on synthetic data. No hardware needed. Expected: 609 passed. If a test fails after a code change, fix the test and the code in the same commit.
+
+Tests import `fixtures.synthetic_csi` and the operator scripts as `scripts.<name>`; `pythonpath = ["."]` in `pyproject.toml` puts the repo root on the test path for both `pytest` and `python -m pytest`.
 
 ### Rebuilding the C++ extension after a change in `native/`
 

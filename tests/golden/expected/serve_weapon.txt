@@ -1,0 +1,10 @@
+WEAPON detection on udp/5599 (fs=100Hz, per-link heads; vote weights 4f9c->1:w=1.00  4f9c->2:w=1.00  64b8->2:w=1.00). Ctrl+C to stop.
+
+(no live links with a full window yet)            clear   P 0.27  #####                 [3 links] 4f:9c->1:0.29@100Hz 4f:9c->2:0.24@100Hz 64:b8->2:0.29@100Hz
+clear   P 0.36  #######               [3 links] 4f:9c->1:0.37@100Hz 4f:9c->2:0.33@100Hz 64:b8->2:0.37@100Hz
+WEAPON  P 0.56  ###########           [3 links] 4f:9c->1:0.57@100Hz 4f:9c->2:0.50@100Hz 64:b8->2:0.57@100Hz
+WEAPON  P 0.66  #############         [3 links] 4f:9c->1:0.67@100Hz 4f:9c->2:0.57@100Hz 64:b8->2:0.68@100Hz
+WEAPON  P 0.50  ##########            [3 links] 4f:9c->1:0.53@100Hz 4f:9c->2:0.46@100Hz 64:b8->2:0.53@100Hz
+clear   P 0.34  ######                [3 links] 4f:9c->1:0.36@100Hz 4f:9c->2:0.32@100Hz 64:b8->2:0.36@100Hz
+
+stopped

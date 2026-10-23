@@ -28,6 +28,11 @@ class AlertGuardBehaviour:
         return None
 
 
+def build_alert_behaviours(mode: str) -> list[WindowBehaviour]:
+    """The debounced weapon alert belongs to weapon mode only; a presence or count positive is no threat."""
+    return [AlertGuardBehaviour(AlertGuard())] if mode == "weapon" else []
+
+
 class SegmentVoteBehaviour:
     """One soft-vote verdict over the whole stream, stamped with the last window's timestamp.
     O(1)/window, O(windows) memory and finish."""

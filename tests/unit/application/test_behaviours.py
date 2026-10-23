@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from wavetrace.application.behaviours import (
-    AlertGuardBehaviour, DriftMonitoredSource, SegmentVoteBehaviour,
+    AlertGuardBehaviour, DriftMonitoredSource, SegmentVoteBehaviour, build_alert_behaviours,
 )
 from wavetrace.domain.guard import (
     AlertClearedEvent, AlertGuard, DriftMonitor, RecalibrationAdvisoryEvent, WeaponAlertEvent,
@@ -29,6 +29,17 @@ def test_alert_guard_alerts_on_the_fourth_positive_window_and_clears_on_the_sixt
     assert events[:3] == [None] * 3 and events[3] == WeaponAlertEvent(t=3.0)
     assert events[4:9] == [None] * 5 and events[9] == AlertClearedEvent(t=9.0)
     assert behaviour.finish() is None
+
+
+def _events_after_four_positive_windows(behaviours):
+    return [event for i in range(4) for behaviour in behaviours
+            if (event := behaviour.observe_window(float(i), 1, UNUSED_PROBA)) is not None]
+
+
+def test_only_weapon_mode_gets_the_alert_guard():
+    assert _events_after_four_positive_windows(build_alert_behaviours("weapon")) == [WeaponAlertEvent(t=3.0)]
+    assert build_alert_behaviours("presence") == []
+    assert build_alert_behaviours("count") == []
 
 
 def test_segment_vote_adds_one_row_with_the_mean_argmax_at_the_last_window():

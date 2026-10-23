@@ -1,0 +1,159 @@
+inference t=0.3100 class=1 conf=0.9994 mode='presence'
+stream t=0.3100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=0.4700 class=1 conf=0.9993 mode='presence'
+stream t=0.4700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=0.6300 class=1 conf=0.9982 mode='presence'
+stream t=0.6300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=0.7900 class=1 conf=0.9993 mode='presence'
+stream t=0.7900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=0.9500 class=1 conf=0.9993 mode='presence'
+stream t=0.9500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=1.1100 class=1 conf=0.9983 mode='presence'
+stream t=1.1100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=112 nodes[0].mean_amp=1.1565 nodes[0].snr_db=0.9000 nodes[0].cv=0.2940 nodes[0].gain_drift=1.1430 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=1.1100 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=1.1100 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(6,) contribution.empty=0.0020 contribution.present=0.9980
+inference t=1.2700 class=1 conf=0.9978 mode='presence'
+stream t=1.2700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=1.4300 class=1 conf=0.9995 mode='presence'
+stream t=1.4300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=1.5900 class=1 conf=0.9994 mode='presence'
+stream t=1.5900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=1.7500 class=1 conf=0.9990 mode='presence'
+stream t=1.7500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=1.9100 class=1 conf=0.9992 mode='presence'
+stream t=1.9100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=2.0700 class=1 conf=0.9991 mode='presence'
+stream t=2.0700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=2.2300 class=1 conf=0.8903 mode='presence'
+stream t=2.2300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=224 nodes[0].mean_amp=1.0777 nodes[0].snr_db=2.6000 nodes[0].cv=0.2771 nodes[0].gain_drift=1.0650 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=2.2300 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=2.2300 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(13,) contribution.empty=0.1100 contribution.present=0.8900
+inference t=2.3900 class=1 conf=0.6217 mode='presence'
+stream t=2.3900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=2.5500 class=1 conf=0.8967 mode='presence'
+stream t=2.5500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=2.7100 class=1 conf=0.9083 mode='presence'
+stream t=2.7100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=2.8700 class=1 conf=0.7577 mode='presence'
+stream t=2.8700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=3.0300 class=1 conf=0.9265 mode='presence'
+stream t=3.0300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=3.1900 class=1 conf=0.9684 mode='presence'
+stream t=3.1900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=3.3500 class=1 conf=0.9401 mode='presence'
+stream t=3.3500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=336 nodes[0].mean_amp=0.8712 nodes[0].snr_db=1.4000 nodes[0].cv=0.2001 nodes[0].gain_drift=0.8610 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=3.3500 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=3.3500 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(20,) contribution.empty=0.0600 contribution.present=0.9400
+inference t=3.5100 class=1 conf=0.7759 mode='presence'
+stream t=3.5100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=3.6700 class=1 conf=0.5557 mode='presence'
+stream t=3.6700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=3.8300 class=1 conf=0.5500 mode='presence'
+stream t=3.8300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=3.9900 class=1 conf=0.6808 mode='presence'
+stream t=3.9900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=4.1500 class=1 conf=0.9529 mode='presence'
+stream t=4.1500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=4.3100 class=1 conf=0.8966 mode='presence'
+stream t=4.3100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=4.4700 class=1 conf=0.6350 mode='presence'
+stream t=4.4700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=448 nodes[0].mean_amp=0.9635 nodes[0].snr_db=2.1000 nodes[0].cv=0.1506 nodes[0].gain_drift=0.9520 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=4.4700 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=4.4700 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(27,) contribution.empty=0.3650 contribution.present=0.6350
+inference t=4.6300 class=1 conf=0.8387 mode='presence'
+stream t=4.6300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=4.7900 class=1 conf=0.8929 mode='presence'
+stream t=4.7900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=4.9500 class=1 conf=0.8602 mode='presence'
+stream t=4.9500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=5.1100 class=1 conf=0.6722 mode='presence'
+stream t=5.1100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=5.2700 class=1 conf=0.7683 mode='presence'
+stream t=5.2700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=5.4300 class=0 conf=0.9962 mode='presence'
+stream t=5.4300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=5.5900 class=0 conf=0.9866 mode='presence'
+stream t=5.5900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=560 nodes[0].mean_amp=1.0233 nodes[0].snr_db=1.6000 nodes[0].cv=0.1901 nodes[0].gain_drift=1.0110 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=5.5900 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=5.5900 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(34,) contribution.empty=0.9870 contribution.present=0.0130
+inference t=5.7500 class=0 conf=0.9249 mode='presence'
+stream t=5.7500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=5.9100 class=0 conf=0.9230 mode='presence'
+stream t=5.9100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=6.0700 class=0 conf=0.9441 mode='presence'
+stream t=6.0700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=6.2300 class=0 conf=0.9800 mode='presence'
+stream t=6.2300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=6.3900 class=0 conf=0.9876 mode='presence'
+stream t=6.3900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=6.5500 class=0 conf=0.9545 mode='presence'
+stream t=6.5500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=6.7100 class=0 conf=0.9689 mode='presence'
+stream t=6.7100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=672 nodes[0].mean_amp=0.9023 nodes[0].snr_db=0.9000 nodes[0].cv=0.2708 nodes[0].gain_drift=0.8920 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=6.7100 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=6.7100 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(41,) contribution.empty=0.9690 contribution.present=0.0310
+inference t=6.8700 class=0 conf=0.9952 mode='presence'
+stream t=6.8700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=7.0300 class=0 conf=0.9984 mode='presence'
+stream t=7.0300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=7.1900 class=0 conf=0.9939 mode='presence'
+stream t=7.1900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=7.3500 class=0 conf=0.9947 mode='presence'
+stream t=7.3500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=7.5100 class=0 conf=0.9982 mode='presence'
+stream t=7.5100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=7.6700 class=0 conf=0.9982 mode='presence'
+stream t=7.6700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=7.8300 class=0 conf=0.9963 mode='presence'
+stream t=7.8300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=784 nodes[0].mean_amp=1.0434 nodes[0].snr_db=2.1000 nodes[0].cv=0.2832 nodes[0].gain_drift=1.0310 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=7.8300 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=7.8300 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(48,) contribution.empty=0.9960 contribution.present=0.0040
+inference t=7.9900 class=0 conf=0.9911 mode='presence'
+stream t=7.9900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=8.1500 class=0 conf=0.9904 mode='presence'
+stream t=8.1500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=8.3100 class=0 conf=0.9973 mode='presence'
+stream t=8.3100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=8.4700 class=0 conf=0.9966 mode='presence'
+stream t=8.4700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=8.6300 class=0 conf=0.9906 mode='presence'
+stream t=8.6300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=8.7900 class=0 conf=0.9921 mode='presence'
+stream t=8.7900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=8.9500 class=0 conf=0.9542 mode='presence'
+stream t=8.9500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=896 nodes[0].mean_amp=1.0781 nodes[0].snr_db=2.1000 nodes[0].cv=0.2811 nodes[0].gain_drift=1.0650 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=8.9500 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=8.9500 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(55,) contribution.empty=0.9540 contribution.present=0.0460
+inference t=9.1100 class=0 conf=0.9723 mode='presence'
+stream t=9.1100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=9.2700 class=0 conf=0.9885 mode='presence'
+stream t=9.2700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=9.4300 class=0 conf=0.9728 mode='presence'
+stream t=9.4300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=9.5900 class=0 conf=0.9593 mode='presence'
+stream t=9.5900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=9.7500 class=0 conf=0.9579 mode='presence'
+stream t=9.7500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=9.9100 class=0 conf=0.9827 mode='presence'
+stream t=9.9100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=10.0700 class=0 conf=0.9742 mode='presence'
+stream t=10.0700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=1008 nodes[0].mean_amp=0.9127 nodes[0].snr_db=1.0000 nodes[0].cv=0.2899 nodes[0].gain_drift=0.9020 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=10.0700 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=10.0700 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(60,) contribution.empty=0.9740 contribution.present=0.0260
+inference t=10.2300 class=1 conf=0.9853 mode='presence'
+stream t=10.2300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=10.3900 class=1 conf=0.9995 mode='presence'
+stream t=10.3900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=10.5500 class=1 conf=0.9996 mode='presence'
+stream t=10.5500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=10.7100 class=1 conf=0.9977 mode='presence'
+stream t=10.7100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=10.8700 class=1 conf=0.9933 mode='presence'
+stream t=10.8700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=11.0300 class=1 conf=0.9989 mode='presence'
+stream t=11.0300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=11.1900 class=1 conf=0.9992 mode='presence'
+stream t=11.1900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+telemetry nodes[0].node_id=-1 nodes[0].band='2.4GHz' nodes[0].hz=0.0000 nodes[0].hz_ok=False nodes[0].frames=1120 nodes[0].mean_amp=1.0483 nodes[0].snr_db=2.2000 nodes[0].cv=0.2929 nodes[0].gain_drift=1.0360 nodes[0].loss_pct=100.0000 nodes[0].subcarriers=shape(12,) nodes[0].last_ts=11.1900 sync.spread_s=0.0000 sync.ok=True sync.per_node_last.-1=11.1900 heatmap=shape(256,) grid=16 antenna_weights=None alert_active=False drift_ratio=0.0000 voter_trace=shape(60,) contribution.empty=0.0010 contribution.present=0.9990
+inference t=11.3500 class=1 conf=0.9972 mode='presence'
+stream t=11.3500 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=11.5100 class=1 conf=0.9978 mode='presence'
+stream t=11.5100 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=11.6700 class=1 conf=0.9995 mode='presence'
+stream t=11.6700 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=11.8300 class=1 conf=0.9997 mode='presence'
+stream t=11.8300 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+inference t=11.9900 class=1 conf=0.9998 mode='presence'
+stream t=11.9900 image=shape(28, 32) features=shape(108,) ic=None antennas=shape(1,) node_ids=shape(1,) heatmap_grid=shape(256,) grid_size=16
+end event='pipeline_done'

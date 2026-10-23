@@ -14,8 +14,8 @@ from wavetrace.recognition.fusion import fuse
 from wavetrace.recognition.link import LinkVoter, accuracy_weights, evaluate_link_fusion
 from wavetrace.recognition.infer import measure_latency
 from wavetrace.recognition.train import concat_arrays, concat_datasets, train_presence, train_weapon
-from wavetrace.recognition.weapon_serving import (dwell_proba, find_weapon_entry, link_health, load_weapon_links,
-                                                  make_link_tag, parse_link_tag)
+from wavetrace.recognition.weapon_serving import (find_weapon_entry, link_health, load_weapon_links, make_link_tag,
+                                                  parse_link_tag)
 
 __all__ = [
     "count_name",
@@ -35,7 +35,6 @@ __all__ = [
     "LinkVoter",
     "accuracy_weights",
     "evaluate_link_fusion",
-    "dwell_proba",
     "load_weapon_links",
     "find_weapon_entry",
     "make_link_tag",

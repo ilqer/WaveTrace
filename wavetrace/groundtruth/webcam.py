@@ -7,11 +7,16 @@ keeps the capture loop real-time (no per-frame model latency).
 
   Input:  webcam index (or an injected grab fn) + a Labeler.
   Output: list[Label] timestamped on the CSI wall clock → pass as collect_source(labeler=...).
+
+`WebcamLabelCapture` is the camera-collect adapter: YOLO-seg labels each webcam frame live.
 """
 
 import time
 from dataclasses import dataclass
 
+from wavetrace.application.ports import CameraLabelCapture
+from wavetrace.domain.groundtruth.labeler import presence_label_function, weapon_label_function
+from wavetrace.groundtruth.yolo_labeler import YoloLabelerOptions, YoloSegLabeler
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +161,7 @@ def record_labels_online(grab, labeler, duration_s: float, *, frame_rate_hz: flo
 
 
 def stream_labels(labeler, frames, *, max_frames=None) -> list:
-    """Run `labeler` (a CameraLabeler — YoloLabeler / YoloSegLabeler / VisionLabeler) over an
+    """Run `labeler` (a stream labeler — YoloLabeler / YoloSegLabeler / VisionLabeler) over an
     iterable of (timestamp, image) → list[Label] sorted by time, the stream `collect_source(...,
     labeler=...)` / `build_dataset` aligns to CSI window timestamps. O(frames · model)."""
     labels = []
@@ -171,3 +176,24 @@ def stream_labels(labeler, frames, *, max_frames=None) -> list:
 # COCO classes a stock YOLO can flag as a *visible* weapon (open-carry tier only — COCO has NO
 # firearm class; a real concealed gun needs a custom-trained model and/or scripted labels).
 COCO_WEAPON_CLASSES = (43,)  # 43 = knife (add 76=scissors / 34=baseball bat if you want them)
+
+
+class WebcamLabelCapture(CameraLabelCapture):
+    """Labels webcam frames live with YOLO-seg at ~`frame_rate_hz`: class 1 is a person for the presence
+    stage, a visible `weapon_classes` object held by the person for the weapon stage; every label carries
+    the `grid`x`grid` occupancy mask. Building one loads the net, so a missing ultralytics or weights file
+    raises here."""
+
+    def __init__(self, *, stage, camera_index, weights_path, weapon_classes, confidence_threshold, grid,
+                 frame_rate_hz):
+        label_function = weapon_label_function if stage == "weapon" else presence_label_function
+        self._labeler = YoloSegLabeler(
+            options=YoloLabelerOptions(weights_path=weights_path, weapon_classes=weapon_classes),
+            confidence_threshold=confidence_threshold, grid=grid, label_function=label_function)
+        self._camera_index = camera_index
+        self._frame_rate_hz = frame_rate_hz
+
+    def record_labels(self, duration_s, *, stop, on_label):
+        with WebcamCapture(WebcamOptions(index=self._camera_index)) as webcam:
+            return record_labels_online(webcam.read, self._labeler, duration_s, frame_rate_hz=self._frame_rate_hz,
+                                        stop=stop, on_label=on_label)

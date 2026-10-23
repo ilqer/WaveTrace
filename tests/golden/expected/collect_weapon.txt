@@ -1,0 +1,263 @@
+$ collect_weapon --port 5599 --root <tmp>/all --frames 256 --sessions 2 --subject p0 --carry waist
+training nodes: [1, 2]  (subject=p0, carry=waist)
+
+>> session 1/2 — stand still, no weapon on you.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady (stand STILL)...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+>> session 1/2 — stand still, weapon concealed on you.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady (stand STILL)...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+>> session 2/2 — stand still, no weapon on you.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady (stand STILL)...
+   links/node {1: 2, 2: 2}  min 100/256...
+
+>> session 2/2 — stand still, weapon concealed on you.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady (stand STILL)...
+   links/node {1: 2, 2: 2}  min 100/256...
+   [SKIP] node 2 session 1: no link had >= 128 frames/class.
+
+training per-node weapon models (ic27) on the cumulative pool...
+   [OK]   Node 1: samples=34 class_counts={'0': 18, '1': 16} train_acc=0.853  LOGO=0.853 (majority 0.529, TPR 1.000, FP 0.278)
+   [OK]   Node 2: samples=18 class_counts={'0': 10, '1': 8} train_acc=0.722
+
+weapon models saved (2 per-node heads) -> <tmp>/all/model_weapon/node*/  (LOGO must clearly beat majority; expect this to need many subjects/positions/objects.)
+$ collect_weapon --port 5599 --root <tmp>/all --frames 256 --sessions 1 --subject p1 --carry chest --per-link --no-bg-subtract
+training nodes: [1, 2]  (subject=p1, carry=chest)
+
+>> session 1/1 — stand still, no weapon on you.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady (stand STILL)...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+>> session 1/1 — stand still, weapon concealed on you.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady (stand STILL)...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+training per-link (tx->rx) weapon models (ic27) on the cumulative pool...
+   [OK]   Node 1 link4f9c: samples=26 class_counts={'0': 13, '1': 13} train_acc=0.731  LOGO=0.308 (majority 0.462, TPR 0.615, FP 1.000)  carry-LOGO=0.154 (maj 0.462)
+   [OK]   Node 1 link64b8: samples=26 class_counts={'0': 13, '1': 13} train_acc=0.846  LOGO=0.538 (majority 0.462, TPR 0.385, FP 0.308)  carry-LOGO=0.538 (maj 0.462)
+   [OK]   Node 2 link4f9c: samples=18 class_counts={'0': 9, '1': 9} train_acc=0.778  LOGO=0.000 (majority 0.444, TPR 0.000, FP 1.000)  carry-LOGO=0.000 (maj 0.444)
+   [OK]   Node 2 link64b8: samples=18 class_counts={'0': 9, '1': 9} train_acc=0.778  LOGO=0.556 (majority 0.444, TPR 0.556, FP 0.444)  carry-LOGO=0.556 (maj 0.444)
+
+weapon models saved (4 per-link (tx->rx) heads) -> <tmp>/all/model_weapon/node*/link*/  (LOGO must clearly beat majority; expect this to need many subjects/positions/objects.)
+$ collect_weapon --port 5599 --root <tmp>/all --frames 256 --node 9
+[stderr]
+
+[ERROR] node 9 has no calibration in <tmp>/all/cal.
+$ collect_weapon --port 5599 --root <tmp>/missing --frames 256
+[stderr]
+
+[ERROR] no per-node calibrations in <tmp>/missing/cal/node*. Run collect_baseline.py first.
+
+### tree all
+253610fa268367d1f037fc7ea9d8e2057b8ee681bbd8908f87579a1342e013c2  cal/node1/baseline_diff.npy
+ebb198ba83a49cb73ff9d6b90d31a7bf1e62a76960d240c9b16151ed1d8b6929  cal/node1/baseline_mag.npy
+909a50cd26d3578f497709c28dc56fcfb3c4cb796e07aa7885ea9816d0c6a3d6  cal/node1/meta.json
+a04fe1a3fbb7d8b4f72e9f04cc3b9f6896006906e5424a81f01d13612a262113  cal/node2/baseline_diff.npy
+4561ed60477f09596623053670d4cbd0e379d40c4677309c6a9c0a78fa9999d1  cal/node2/baseline_mag.npy
+7a84a9aba69cc220c72faa96429504c21dd6ec24d980c5d5dd129058ca031204  cal/node2/meta.json
+d1940a518fa27de35d873f057e89dfcc992654d321362733443202e6d37c4d7d  model_weapon/node1/link4f9c/metrics.json
+a8c70dc6b2ac4e8ee9eb6113f3acc8f77612d2cfcbf2eba0160e9e16378a6960  model_weapon/node1/link4f9c/model.joblib
+bec5c58f1a56b09caa41c7946f93c3bc8cf13aa4c8100bde07005c3af54e515c  model_weapon/node1/link64b8/metrics.json
+5b52dc8af02291f16160325fc03cc14c140a9c915150a985c2fb5a5122900c17  model_weapon/node1/link64b8/model.joblib
+fa8254cb6eb456798ba3a0536ea78544a535208588cc97a294a0a588f68c5e75  model_weapon/node1/metrics.json
+b07715e2495534c41336ff1c465aa10d5361d9548be91c7107917c70a52bb1ed  model_weapon/node1/model.joblib
+3d4b0e206e8fb8a0297e1f04406b17f36cf1ad188809eab9c0e81a7a16696b82  model_weapon/node2/link4f9c/metrics.json
+1e7c9ba5332313689ec74cd669b6e8be925f5dc750426e04911359a83b2d5a6b  model_weapon/node2/link4f9c/model.joblib
+9c4443821a26e06e0776560b4603bc20f2c273f6344651c89503e5a8b5d74449  model_weapon/node2/link64b8/metrics.json
+41219acc1eb6e2ea677506da309ff5a4c5808af6608accb99fd3b7f4da6801f3  model_weapon/node2/link64b8/model.joblib
+fc31a71924aadbc7fbfde374eab3a2bd780585a20926fdb6163e92c46e4177a0  model_weapon/node2/metrics.json
+528f5d4d3561804f8ea095f72cb4fee78324c98a8938a26062a32ffdcf79c234  model_weapon/node2/model.joblib
+0764bc0b06341c84e930f45a2c6af7ffa286848ec524244ab23f5673f2984c36  weapon_ds/node1/p0_waist_s0_clear_link4f9c/features.npy
+ad081cf6830a5a1a4a7b9c875fc3a77741ea3594804cde30ed7639cfd51deb2c  weapon_ds/node1/p0_waist_s0_clear_link4f9c/features_ic.npy
+c1f0df39bc6775824e9803906ec8441efa8b1a579413713320adc0700b0c3754  weapon_ds/node1/p0_waist_s0_clear_link4f9c/images.npy
+f94592992f861cd057694457cec8d98723fea04d221160480dcac7b296ac6c21  weapon_ds/node1/p0_waist_s0_clear_link4f9c/manifest.jsonl
+e62212459e5b1a403e0bc41d1d88f8869254cbedde641bcd2cd4d594313a9d22  weapon_ds/node1/p0_waist_s0_clear_link4f9c/meta.json
+e716feed8f14b2d1a432cccf1c4fcc74b002a4d16cf6a24858493aa12fe68e7f  weapon_ds/node1/p0_waist_s0_clear_link64b8/features.npy
+c31afa28527634359527e8f931724dea9496e28048d4c7b2940c1af5302b18df  weapon_ds/node1/p0_waist_s0_clear_link64b8/features_ic.npy
+60649c54dec921efdbb2381874994e967ce1694c3100e3a54e6f803ac3cc68d4  weapon_ds/node1/p0_waist_s0_clear_link64b8/images.npy
+f94592992f861cd057694457cec8d98723fea04d221160480dcac7b296ac6c21  weapon_ds/node1/p0_waist_s0_clear_link64b8/manifest.jsonl
+e62212459e5b1a403e0bc41d1d88f8869254cbedde641bcd2cd4d594313a9d22  weapon_ds/node1/p0_waist_s0_clear_link64b8/meta.json
+b1e6b0cfa53f5927e877461da732f272dde44d3dc32081d98d81de53af3dbf20  weapon_ds/node1/p0_waist_s0_weapon_link4f9c/features.npy
+2f4d85228f9d1db8e5e169e9a5b283f2c32d2af7842c24397d9c1a8f9221f9a1  weapon_ds/node1/p0_waist_s0_weapon_link4f9c/features_ic.npy
+0f39e74e582ab68e4c215a91b7a22f322d8caf7f68654b43a91d74d08e8f86fe  weapon_ds/node1/p0_waist_s0_weapon_link4f9c/images.npy
+9e173dc7f0a2cd6b09a7923219ae28886e2cf68cffdd980d57c84a5168697f87  weapon_ds/node1/p0_waist_s0_weapon_link4f9c/manifest.jsonl
+b5c27c9a50c8928599cf1edd7a6be208b1880316452f73664608f0f2d22696c2  weapon_ds/node1/p0_waist_s0_weapon_link4f9c/meta.json
+35db905867d56a496e4423de4683d1160b70a2cc7b62a52a014bba785c01ec04  weapon_ds/node1/p0_waist_s0_weapon_link64b8/features.npy
+910de175641c78bd26410721fa2cc1f460590355658c71095e61e99f55d7c0a9  weapon_ds/node1/p0_waist_s0_weapon_link64b8/features_ic.npy
+a249392f79340b59167a34da91dabadc13e6b4d0c747841ca046a7e929377b7a  weapon_ds/node1/p0_waist_s0_weapon_link64b8/images.npy
+9e173dc7f0a2cd6b09a7923219ae28886e2cf68cffdd980d57c84a5168697f87  weapon_ds/node1/p0_waist_s0_weapon_link64b8/manifest.jsonl
+b5c27c9a50c8928599cf1edd7a6be208b1880316452f73664608f0f2d22696c2  weapon_ds/node1/p0_waist_s0_weapon_link64b8/meta.json
+ba70d24e8ff9655963c794d2e6a5c87f4f5884cb91e516e5051d45f16e7aeff0  weapon_ds/node1/p0_waist_s1_clear_link4f9c/features.npy
+e534719246edf47d967aad83da9235d7af5687f64fe714640f90b82988afc40e  weapon_ds/node1/p0_waist_s1_clear_link4f9c/features_ic.npy
+350314d9c4b6bd86a761d59bf980e4e088444b54543c70e2f9516757103378e0  weapon_ds/node1/p0_waist_s1_clear_link4f9c/images.npy
+4bd9695b2b6fdb00f1db5ae64633fc856cabf304269fcc9fd23d35b4be5be460  weapon_ds/node1/p0_waist_s1_clear_link4f9c/manifest.jsonl
+b5c27c9a50c8928599cf1edd7a6be208b1880316452f73664608f0f2d22696c2  weapon_ds/node1/p0_waist_s1_clear_link4f9c/meta.json
+61f93d65a5ef6d1bc71d4e618b8095b9c2d2f7c87e25ad7a58626074b4eb497b  weapon_ds/node1/p0_waist_s1_clear_link64b8/features.npy
+8058c76ff0c6c91b49dc5f511c5823780070ff33bd3c4040f6554195ec46619e  weapon_ds/node1/p0_waist_s1_clear_link64b8/features_ic.npy
+230deab9a5823abd00046f7f541f068990e0ddae6e759a9883f4f5c44bb95c6d  weapon_ds/node1/p0_waist_s1_clear_link64b8/images.npy
+4bd9695b2b6fdb00f1db5ae64633fc856cabf304269fcc9fd23d35b4be5be460  weapon_ds/node1/p0_waist_s1_clear_link64b8/manifest.jsonl
+b5c27c9a50c8928599cf1edd7a6be208b1880316452f73664608f0f2d22696c2  weapon_ds/node1/p0_waist_s1_clear_link64b8/meta.json
+ac21dc10f984d00373cfc9d3134532a2529f8bb4145f5a42b21921df2830e80e  weapon_ds/node1/p0_waist_s1_weapon_link4f9c/features.npy
+e4a460923e9aa7a05cd6ffdcf8032e8cb1f3e14e4df57cf52a9a187d06bd7285  weapon_ds/node1/p0_waist_s1_weapon_link4f9c/features_ic.npy
+9554d372b2d52f9a83f6f801b2723e1fc839d88d490eab91b1816eb9f181d330  weapon_ds/node1/p0_waist_s1_weapon_link4f9c/images.npy
+f87dce664c7564687b925b8da9b42cdd9e02f20fd84026544e53666d600a32d5  weapon_ds/node1/p0_waist_s1_weapon_link4f9c/manifest.jsonl
+b5c27c9a50c8928599cf1edd7a6be208b1880316452f73664608f0f2d22696c2  weapon_ds/node1/p0_waist_s1_weapon_link4f9c/meta.json
+6ecdd01ebffd59db25df452def4bb65e0ad6a7631a2f54bcee1d7c1a305e6535  weapon_ds/node1/p0_waist_s1_weapon_link64b8/features.npy
+cec7a7abb2eae8eab3bc86fccb83337f5a3aaf481fa1dd69cbc0bfc843271a50  weapon_ds/node1/p0_waist_s1_weapon_link64b8/features_ic.npy
+6cb08e1762a78b2f6ddd75e9e0a12c7a3c6a947d7a31a307e4b95015dc31f025  weapon_ds/node1/p0_waist_s1_weapon_link64b8/images.npy
+f87dce664c7564687b925b8da9b42cdd9e02f20fd84026544e53666d600a32d5  weapon_ds/node1/p0_waist_s1_weapon_link64b8/manifest.jsonl
+b5c27c9a50c8928599cf1edd7a6be208b1880316452f73664608f0f2d22696c2  weapon_ds/node1/p0_waist_s1_weapon_link64b8/meta.json
+66cf6a8a8c3a42dea9561de218ce11381566fcd9de3e140502e530b6b4f20a76  weapon_ds/node1/p1_chest_s0_clear_link4f9c/features.npy
+4c75a97bf4c51c0241c8f6e01e8c3732f6aa9422243dec2327e2e8135e5dce6b  weapon_ds/node1/p1_chest_s0_clear_link4f9c/features_ic.npy
+74ffbc7a805231cea5f63b652e4ab18e4c024a7eaae5308c550610a0c3d8b982  weapon_ds/node1/p1_chest_s0_clear_link4f9c/images.npy
+a96482f030392318f5d6ae500e283233da3569858ae6f12e34f6d84f1c838e11  weapon_ds/node1/p1_chest_s0_clear_link4f9c/manifest.jsonl
+6e156edf60a9bd7c8fbcc7319d7265645a23c63f5d4fb7382396329adf13bc67  weapon_ds/node1/p1_chest_s0_clear_link4f9c/meta.json
+82e51beb1c3f3a1930d51eba5a04f90d466694c721a2642b404db95a57972c4b  weapon_ds/node1/p1_chest_s0_clear_link64b8/features.npy
+07a5f85c97cbcba245a2ff63b8216e2c30d3ddf13d811674ddb87316afa9417e  weapon_ds/node1/p1_chest_s0_clear_link64b8/features_ic.npy
+87b0b754ee0202fa6e00108f630501518634f579b37148187f8d683b4293329d  weapon_ds/node1/p1_chest_s0_clear_link64b8/images.npy
+a96482f030392318f5d6ae500e283233da3569858ae6f12e34f6d84f1c838e11  weapon_ds/node1/p1_chest_s0_clear_link64b8/manifest.jsonl
+6e156edf60a9bd7c8fbcc7319d7265645a23c63f5d4fb7382396329adf13bc67  weapon_ds/node1/p1_chest_s0_clear_link64b8/meta.json
+8fbc35c04584339ebefdb679b92252b3f6eb972de727409cc6647b374020537c  weapon_ds/node1/p1_chest_s0_weapon_link4f9c/features.npy
+9782fa6e7a3f18b10567049084c2ac21e471cd66b34f6fb5d7d98265a03b6315  weapon_ds/node1/p1_chest_s0_weapon_link4f9c/features_ic.npy
+a2f91de1047f664867c0bdeb255af3278fb6423b21a28559247abfe19df83e64  weapon_ds/node1/p1_chest_s0_weapon_link4f9c/images.npy
+9122682926513780e3d23f00f5251363cb2156d432b89834f21217d16343bc9b  weapon_ds/node1/p1_chest_s0_weapon_link4f9c/manifest.jsonl
+8259b7b95a8c003e769f75bd827c0e1e852ba243c4cf07809b0f95e05210a710  weapon_ds/node1/p1_chest_s0_weapon_link4f9c/meta.json
+7eab1df52556bac8ff1862e5de2402809b70a3eed859573e01917a50afc2b14e  weapon_ds/node1/p1_chest_s0_weapon_link64b8/features.npy
+34e20b1f4ddd57a6765845fb70d4581e976adaf819c8b429f847086e5aa130d0  weapon_ds/node1/p1_chest_s0_weapon_link64b8/features_ic.npy
+64f965db993659bc4ee84c008d7f97065949296eff24232c094d15e5ead51d0c  weapon_ds/node1/p1_chest_s0_weapon_link64b8/images.npy
+9122682926513780e3d23f00f5251363cb2156d432b89834f21217d16343bc9b  weapon_ds/node1/p1_chest_s0_weapon_link64b8/manifest.jsonl
+8259b7b95a8c003e769f75bd827c0e1e852ba243c4cf07809b0f95e05210a710  weapon_ds/node1/p1_chest_s0_weapon_link64b8/meta.json
+5d5b85f70e044b7644e50aaa438f83c62d8afd8c832078fa57480b4df0c59467  weapon_ds/node2/p0_waist_s0_clear_link4f9c/features.npy
+b6395d552d71e8c9e89c358e197af7a5be5b905a287b28d7901c79c64bb2fd5c  weapon_ds/node2/p0_waist_s0_clear_link4f9c/features_ic.npy
+3685857acb9f3a0491c282d6bcfab1b8fbd7d0fd85fccb827340973c55ed4cd2  weapon_ds/node2/p0_waist_s0_clear_link4f9c/images.npy
+f94592992f861cd057694457cec8d98723fea04d221160480dcac7b296ac6c21  weapon_ds/node2/p0_waist_s0_clear_link4f9c/manifest.jsonl
+920fc6bd79c08ac515adc3a35672fb4a3a31322188d6384cbe28b25c1d6f901a  weapon_ds/node2/p0_waist_s0_clear_link4f9c/meta.json
+dea6d9614689466ea10ac4aae66cbf4f7437f2133d7d7225eaa15e609be87d84  weapon_ds/node2/p0_waist_s0_clear_link64b8/features.npy
+072979a2add76ca55c23abeb6cc684e3d593d1921d1f03924ca19f24a76a42c1  weapon_ds/node2/p0_waist_s0_clear_link64b8/features_ic.npy
+f9436c4699d34c3cb3bdcdf89c016e26068cf11da63126e4709b5ba48cf13b64  weapon_ds/node2/p0_waist_s0_clear_link64b8/images.npy
+f94592992f861cd057694457cec8d98723fea04d221160480dcac7b296ac6c21  weapon_ds/node2/p0_waist_s0_clear_link64b8/manifest.jsonl
+920fc6bd79c08ac515adc3a35672fb4a3a31322188d6384cbe28b25c1d6f901a  weapon_ds/node2/p0_waist_s0_clear_link64b8/meta.json
+7663fce1d17d16051f300b5f21cffdcbf64d7b2efa8c686b180454477722cfa7  weapon_ds/node2/p0_waist_s0_weapon_link4f9c/features.npy
+7b97d7c96515d06024588668c27bb469416e870401f0f2ffc22e21fbf7e35da2  weapon_ds/node2/p0_waist_s0_weapon_link4f9c/features_ic.npy
+4208dbfe33edd68f029ff828bfa8830e6495b2071832133474c7d3d39464cacd  weapon_ds/node2/p0_waist_s0_weapon_link4f9c/images.npy
+9e173dc7f0a2cd6b09a7923219ae28886e2cf68cffdd980d57c84a5168697f87  weapon_ds/node2/p0_waist_s0_weapon_link4f9c/manifest.jsonl
+180652e53503f6c36f0ecd6a6b47f22baade2fa6a903a61a908c39a488c26706  weapon_ds/node2/p0_waist_s0_weapon_link4f9c/meta.json
+dd004baedeee6b43dcd7b76ffc4cc132470375ff566f6e163572679b9c6b9ff2  weapon_ds/node2/p0_waist_s0_weapon_link64b8/features.npy
+2926599ce9d77693722b369e0c1f325c3b9bac6567b2164c4a272dc395573ca1  weapon_ds/node2/p0_waist_s0_weapon_link64b8/features_ic.npy
+99f523c5fc4d8d34577ba5b24c2d9c6e76b9d248ab5387178baa0055d389c21f  weapon_ds/node2/p0_waist_s0_weapon_link64b8/images.npy
+9e173dc7f0a2cd6b09a7923219ae28886e2cf68cffdd980d57c84a5168697f87  weapon_ds/node2/p0_waist_s0_weapon_link64b8/manifest.jsonl
+180652e53503f6c36f0ecd6a6b47f22baade2fa6a903a61a908c39a488c26706  weapon_ds/node2/p0_waist_s0_weapon_link64b8/meta.json
+e2350c9af2cbba099db914137130636ec03964a5c4eab49749b0955476dbd23d  weapon_ds/node2/p1_chest_s0_clear_link4f9c/features.npy
+0855d6ad23dc38fcdb1436421282420ccff14a4db88c2d63aaaa485af39bf8eb  weapon_ds/node2/p1_chest_s0_clear_link4f9c/features_ic.npy
+7c6a1f2bdfb74b345a217a4554ed70a65dd390f6ac2012fe664d449a6abda851  weapon_ds/node2/p1_chest_s0_clear_link4f9c/images.npy
+a96482f030392318f5d6ae500e283233da3569858ae6f12e34f6d84f1c838e11  weapon_ds/node2/p1_chest_s0_clear_link4f9c/manifest.jsonl
+d45e347d435a5affa1023467a212a0880aaaf27c9bfac1f5809917a3eb6fbfce  weapon_ds/node2/p1_chest_s0_clear_link4f9c/meta.json
+00de1fd6bfe32fc74bb930bd5a0ff275b14fa5e077e12951d843e3d1eef6c651  weapon_ds/node2/p1_chest_s0_clear_link64b8/features.npy
+13e12408636e920545881d06357e3b2a037f09890dc04cf8ca6d9dd3475d9771  weapon_ds/node2/p1_chest_s0_clear_link64b8/features_ic.npy
+b4e7e0f50c689ff6c6c4bf13e6e7dfca3430a5aef5aab5a0245ebf5b3d63c830  weapon_ds/node2/p1_chest_s0_clear_link64b8/images.npy
+a96482f030392318f5d6ae500e283233da3569858ae6f12e34f6d84f1c838e11  weapon_ds/node2/p1_chest_s0_clear_link64b8/manifest.jsonl
+d45e347d435a5affa1023467a212a0880aaaf27c9bfac1f5809917a3eb6fbfce  weapon_ds/node2/p1_chest_s0_clear_link64b8/meta.json
+bf2cf11b959e161a03716a625c3d76a373c0fcd3d42220adf7ba67e4181e655e  weapon_ds/node2/p1_chest_s0_weapon_link4f9c/features.npy
+cfca558d571b87ed9486c659ffad25e628a6e9e78e060ea373b95989ac2a27cc  weapon_ds/node2/p1_chest_s0_weapon_link4f9c/features_ic.npy
+3505952e8e8f3843ccf7c3293f1b4595299ba1b47e3fcf47c44c262e2e03c921  weapon_ds/node2/p1_chest_s0_weapon_link4f9c/images.npy
+9122682926513780e3d23f00f5251363cb2156d432b89834f21217d16343bc9b  weapon_ds/node2/p1_chest_s0_weapon_link4f9c/manifest.jsonl
+4b1b5550a251ebbee9b135e7a261d14e1dea3d1f97e25d06202a7865666b2270  weapon_ds/node2/p1_chest_s0_weapon_link4f9c/meta.json
+03e8258ca08d245c1f9ff0cd9d1978d7d0bc80d97ab28f8fd5676756d6e415e4  weapon_ds/node2/p1_chest_s0_weapon_link64b8/features.npy
+dcc37d0a163f8748670c873caf47fab1fc0b343e489174a85f164cd437fe182e  weapon_ds/node2/p1_chest_s0_weapon_link64b8/features_ic.npy
+25266da76c4676d0b4acafd3f90f57fc4b866693db932b65bd5ab76f37e23899  weapon_ds/node2/p1_chest_s0_weapon_link64b8/images.npy
+9122682926513780e3d23f00f5251363cb2156d432b89834f21217d16343bc9b  weapon_ds/node2/p1_chest_s0_weapon_link64b8/manifest.jsonl
+4b1b5550a251ebbee9b135e7a261d14e1dea3d1f97e25d06202a7865666b2270  weapon_ds/node2/p1_chest_s0_weapon_link64b8/meta.json
+35c6746dffd91e4ef3053313adea5429a327a57a6ac4a6e2ad76fb0ad3a3ddaa  weapon_rec/p0_waist_s0/clear/node1/link_4f9c/grid.npy
+e9cb08a771599a6f927e5975aa24111ab9ffa83bb7c7a1aa96d9fa57bcf9d666  weapon_rec/p0_waist_s0/clear/node1/link_4f9c/meta.json
+23e005d151cd89e77d9137ecdb7881365b997c1139b9e6301f0e51b6aa48188b  weapon_rec/p0_waist_s0/clear/node1/link_4f9c/node_id.npy
+d2991e27f05b1f627e5b0b8fba509c4f8a02ca46d6c205f0a5210ab905970a0c  weapon_rec/p0_waist_s0/clear/node1/link_4f9c/t.npy
+038b5b883391542403b2c4233f33511acd1e9ec50bb7fabeaa96b3a20dcd5720  weapon_rec/p0_waist_s0/clear/node1/link_64b8/grid.npy
+e9cb08a771599a6f927e5975aa24111ab9ffa83bb7c7a1aa96d9fa57bcf9d666  weapon_rec/p0_waist_s0/clear/node1/link_64b8/meta.json
+23e005d151cd89e77d9137ecdb7881365b997c1139b9e6301f0e51b6aa48188b  weapon_rec/p0_waist_s0/clear/node1/link_64b8/node_id.npy
+d2991e27f05b1f627e5b0b8fba509c4f8a02ca46d6c205f0a5210ab905970a0c  weapon_rec/p0_waist_s0/clear/node1/link_64b8/t.npy
+648b5c56f81cbb4368ccad10660dac903172ac036c93d0097b1b58056737eb2d  weapon_rec/p0_waist_s0/clear/node2/link_4f9c/grid.npy
+e9cb08a771599a6f927e5975aa24111ab9ffa83bb7c7a1aa96d9fa57bcf9d666  weapon_rec/p0_waist_s0/clear/node2/link_4f9c/meta.json
+8e1147d8e9f672a57a9f954ca27b851c2db80bc198289c79da7606fb90799ad3  weapon_rec/p0_waist_s0/clear/node2/link_4f9c/node_id.npy
+d2991e27f05b1f627e5b0b8fba509c4f8a02ca46d6c205f0a5210ab905970a0c  weapon_rec/p0_waist_s0/clear/node2/link_4f9c/t.npy
+d6863f91b40c0dbf28ce1d2be5af1c50214ce0313611d07a7f330588a6aad97a  weapon_rec/p0_waist_s0/clear/node2/link_64b8/grid.npy
+e9cb08a771599a6f927e5975aa24111ab9ffa83bb7c7a1aa96d9fa57bcf9d666  weapon_rec/p0_waist_s0/clear/node2/link_64b8/meta.json
+8e1147d8e9f672a57a9f954ca27b851c2db80bc198289c79da7606fb90799ad3  weapon_rec/p0_waist_s0/clear/node2/link_64b8/node_id.npy
+d2991e27f05b1f627e5b0b8fba509c4f8a02ca46d6c205f0a5210ab905970a0c  weapon_rec/p0_waist_s0/clear/node2/link_64b8/t.npy
+915f7a89bef6bd8df874bc1cfd3194f5992725fc4673b269a562a1fb3058bcdf  weapon_rec/p0_waist_s0/weapon/node1/link_4f9c/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p0_waist_s0/weapon/node1/link_4f9c/meta.json
+4c251aee690cf5b8c07928a5acc8b83990aa6e68d722759c595223e620297d57  weapon_rec/p0_waist_s0/weapon/node1/link_4f9c/node_id.npy
+cb0664261241231686c0d643a2a11579150f602aad19560cac65b4519f95578e  weapon_rec/p0_waist_s0/weapon/node1/link_4f9c/t.npy
+4f94559af94d6ffb319a6101c45aca8bf9b1b688ec659aec1d016054751e8846  weapon_rec/p0_waist_s0/weapon/node1/link_64b8/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p0_waist_s0/weapon/node1/link_64b8/meta.json
+4c251aee690cf5b8c07928a5acc8b83990aa6e68d722759c595223e620297d57  weapon_rec/p0_waist_s0/weapon/node1/link_64b8/node_id.npy
+cb0664261241231686c0d643a2a11579150f602aad19560cac65b4519f95578e  weapon_rec/p0_waist_s0/weapon/node1/link_64b8/t.npy
+05282f9ae33e14a73982c901f3e75a2521200dc872d493d5c2060726a616140d  weapon_rec/p0_waist_s0/weapon/node2/link_4f9c/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p0_waist_s0/weapon/node2/link_4f9c/meta.json
+63fb743997f92d1a1c578b77f096e8abda2b1ff4830bc311732d5e080b3cadfe  weapon_rec/p0_waist_s0/weapon/node2/link_4f9c/node_id.npy
+cb0664261241231686c0d643a2a11579150f602aad19560cac65b4519f95578e  weapon_rec/p0_waist_s0/weapon/node2/link_4f9c/t.npy
+2713d9957988b40d18b42395c998945909f1b6e57d6f9c5e9d3ecf1a42faa5c9  weapon_rec/p0_waist_s0/weapon/node2/link_64b8/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p0_waist_s0/weapon/node2/link_64b8/meta.json
+63fb743997f92d1a1c578b77f096e8abda2b1ff4830bc311732d5e080b3cadfe  weapon_rec/p0_waist_s0/weapon/node2/link_64b8/node_id.npy
+cb0664261241231686c0d643a2a11579150f602aad19560cac65b4519f95578e  weapon_rec/p0_waist_s0/weapon/node2/link_64b8/t.npy
+ba0b2abf7f7e13e735df2cadc3c3950ee93236ec497631006981ab21d895d986  weapon_rec/p0_waist_s1/clear/node1/link_4f9c/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p0_waist_s1/clear/node1/link_4f9c/meta.json
+4c251aee690cf5b8c07928a5acc8b83990aa6e68d722759c595223e620297d57  weapon_rec/p0_waist_s1/clear/node1/link_4f9c/node_id.npy
+2c0b70ab6b55396eed91f775a2cb40b6cd1b57d07f532bbc85f0b863f76a0149  weapon_rec/p0_waist_s1/clear/node1/link_4f9c/t.npy
+6f135d85e96673b1ba9311a13360229a23738ad4273a3ec03dd0b75e300e071f  weapon_rec/p0_waist_s1/clear/node1/link_64b8/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p0_waist_s1/clear/node1/link_64b8/meta.json
+4c251aee690cf5b8c07928a5acc8b83990aa6e68d722759c595223e620297d57  weapon_rec/p0_waist_s1/clear/node1/link_64b8/node_id.npy
+2c0b70ab6b55396eed91f775a2cb40b6cd1b57d07f532bbc85f0b863f76a0149  weapon_rec/p0_waist_s1/clear/node1/link_64b8/t.npy
+6937aca587f1c7ccf462404b7d0519e196b88bed38960facefe177d19b7e6e4d  weapon_rec/p0_waist_s1/weapon/node1/link_4f9c/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p0_waist_s1/weapon/node1/link_4f9c/meta.json
+4c251aee690cf5b8c07928a5acc8b83990aa6e68d722759c595223e620297d57  weapon_rec/p0_waist_s1/weapon/node1/link_4f9c/node_id.npy
+cc7928d5c739d7e72437f3ee35414387722a5f6cc09655fb91b5e5875df1612e  weapon_rec/p0_waist_s1/weapon/node1/link_4f9c/t.npy
+fb0572abd0620b69179877cd318b7393f724d4207555c1105d80183b2a54af26  weapon_rec/p0_waist_s1/weapon/node1/link_64b8/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p0_waist_s1/weapon/node1/link_64b8/meta.json
+4c251aee690cf5b8c07928a5acc8b83990aa6e68d722759c595223e620297d57  weapon_rec/p0_waist_s1/weapon/node1/link_64b8/node_id.npy
+cc7928d5c739d7e72437f3ee35414387722a5f6cc09655fb91b5e5875df1612e  weapon_rec/p0_waist_s1/weapon/node1/link_64b8/t.npy
+7cac7ef242229a8aadf10ae4196953257325c28dc9d2d050296a30356e73ef0d  weapon_rec/p1_chest_s0/clear/node1/link_4f9c/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p1_chest_s0/clear/node1/link_4f9c/meta.json
+4c251aee690cf5b8c07928a5acc8b83990aa6e68d722759c595223e620297d57  weapon_rec/p1_chest_s0/clear/node1/link_4f9c/node_id.npy
+7ae9d5467e0e6d5aaa3b96a804536e32380d30bdd44924221a5bbbf907f7ffe2  weapon_rec/p1_chest_s0/clear/node1/link_4f9c/t.npy
+9da6a1a49838848a78acc0e9f60a73478e74e5c71070c50ca9a4b5a84bfa168b  weapon_rec/p1_chest_s0/clear/node1/link_64b8/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p1_chest_s0/clear/node1/link_64b8/meta.json
+4c251aee690cf5b8c07928a5acc8b83990aa6e68d722759c595223e620297d57  weapon_rec/p1_chest_s0/clear/node1/link_64b8/node_id.npy
+7ae9d5467e0e6d5aaa3b96a804536e32380d30bdd44924221a5bbbf907f7ffe2  weapon_rec/p1_chest_s0/clear/node1/link_64b8/t.npy
+031414e7ee4d8ff90761f085fbb964958fac829301d38939a693bb9bee3fd9f5  weapon_rec/p1_chest_s0/clear/node2/link_4f9c/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p1_chest_s0/clear/node2/link_4f9c/meta.json
+63fb743997f92d1a1c578b77f096e8abda2b1ff4830bc311732d5e080b3cadfe  weapon_rec/p1_chest_s0/clear/node2/link_4f9c/node_id.npy
+7ae9d5467e0e6d5aaa3b96a804536e32380d30bdd44924221a5bbbf907f7ffe2  weapon_rec/p1_chest_s0/clear/node2/link_4f9c/t.npy
+644723cfad419b702eedcfb8b4d4ec3abc71402c75b6abd1eafce931364ecf13  weapon_rec/p1_chest_s0/clear/node2/link_64b8/grid.npy
+4dae11d9ad74b0e006bb76066dc57f8c2181e98f2ea5630585b4644fcb1d0b88  weapon_rec/p1_chest_s0/clear/node2/link_64b8/meta.json
+63fb743997f92d1a1c578b77f096e8abda2b1ff4830bc311732d5e080b3cadfe  weapon_rec/p1_chest_s0/clear/node2/link_64b8/node_id.npy
+7ae9d5467e0e6d5aaa3b96a804536e32380d30bdd44924221a5bbbf907f7ffe2  weapon_rec/p1_chest_s0/clear/node2/link_64b8/t.npy
+2426614cba105cafe8ebe2f69f0c9bf653e92063693476a5d21a6b6d5a9f9a97  weapon_rec/p1_chest_s0/weapon/node1/link_4f9c/grid.npy
+e9cb08a771599a6f927e5975aa24111ab9ffa83bb7c7a1aa96d9fa57bcf9d666  weapon_rec/p1_chest_s0/weapon/node1/link_4f9c/meta.json
+23e005d151cd89e77d9137ecdb7881365b997c1139b9e6301f0e51b6aa48188b  weapon_rec/p1_chest_s0/weapon/node1/link_4f9c/node_id.npy
+3707ef70341f8f57618d5bbc7f45899cea37a8c04b4b4da3550f58d83e013d1f  weapon_rec/p1_chest_s0/weapon/node1/link_4f9c/t.npy
+7293f6aaff3ed0c727160959d16eb631d6ed0ba7e0451409ddf77754450cf319  weapon_rec/p1_chest_s0/weapon/node1/link_64b8/grid.npy
+e9cb08a771599a6f927e5975aa24111ab9ffa83bb7c7a1aa96d9fa57bcf9d666  weapon_rec/p1_chest_s0/weapon/node1/link_64b8/meta.json
+23e005d151cd89e77d9137ecdb7881365b997c1139b9e6301f0e51b6aa48188b  weapon_rec/p1_chest_s0/weapon/node1/link_64b8/node_id.npy
+3707ef70341f8f57618d5bbc7f45899cea37a8c04b4b4da3550f58d83e013d1f  weapon_rec/p1_chest_s0/weapon/node1/link_64b8/t.npy
+1a494024e7fc70f843ae7ae66d7e0ff0d3e212f58549d328f20e6fb4b562eb34  weapon_rec/p1_chest_s0/weapon/node2/link_4f9c/grid.npy
+e9cb08a771599a6f927e5975aa24111ab9ffa83bb7c7a1aa96d9fa57bcf9d666  weapon_rec/p1_chest_s0/weapon/node2/link_4f9c/meta.json
+8e1147d8e9f672a57a9f954ca27b851c2db80bc198289c79da7606fb90799ad3  weapon_rec/p1_chest_s0/weapon/node2/link_4f9c/node_id.npy
+3707ef70341f8f57618d5bbc7f45899cea37a8c04b4b4da3550f58d83e013d1f  weapon_rec/p1_chest_s0/weapon/node2/link_4f9c/t.npy
+a6acd9e47b196de7a3d47976355707286e5ee59595c1679787e8260dc022134e  weapon_rec/p1_chest_s0/weapon/node2/link_64b8/grid.npy
+e9cb08a771599a6f927e5975aa24111ab9ffa83bb7c7a1aa96d9fa57bcf9d666  weapon_rec/p1_chest_s0/weapon/node2/link_64b8/meta.json
+8e1147d8e9f672a57a9f954ca27b851c2db80bc198289c79da7606fb90799ad3  weapon_rec/p1_chest_s0/weapon/node2/link_64b8/node_id.npy
+3707ef70341f8f57618d5bbc7f45899cea37a8c04b4b4da3550f58d83e013d1f  weapon_rec/p1_chest_s0/weapon/node2/link_64b8/t.npy

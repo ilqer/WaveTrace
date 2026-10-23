@@ -57,7 +57,10 @@ def test_weapon_inside_person_passes_gate():
     label = labeler.label(IMAGE, 2.0)
     assert label.class_id == 1 and label.name == "weapon"
     # Supervised on weapon mask, not person mask. Grid mass is localized.
-    assert 0.0 < np.asarray(label.mask).sum() < np.asarray(_grid_sum(PERSON, labeler))
+    person_label = SegmentationLabeler(_segmenter(Segment(0, 0.9, PERSON)),
+                                       label_function=presence_label_function).label(IMAGE, 2.0)
+    assert person_label.mask_grid == label.mask_grid
+    assert 0.0 < np.asarray(label.mask).sum() < np.asarray(person_label.mask).sum()
 
 
 def test_weapon_outside_person_rejected_by_gate():
@@ -92,9 +95,3 @@ def test_best_person_chosen_by_confidence():
 def test_non_callable_segmenter_rejected():
     with pytest.raises(ValueError):
         SegmentationLabeler(segmenter=object())
-
-
-def _grid_sum(mask, labeler):
-    """Occupancy-grid mass of a mask at the labeler's grid resolution."""
-    from wavetrace.groundtruth.camera_labeler import _mask_to_grid
-    return sum(_mask_to_grid(mask, labeler._grid))

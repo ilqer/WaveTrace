@@ -1,0 +1,106 @@
+log Training weapon/heatmap...
+training {"K": 12, "K_img": 28, "balance": 0.75, "class_counts": {"0": 4, "1": 3}, "distribution": {"0": 4, "1": 3}, "n_samples": 7, "num_nodes": 2, "sessions": ["cam_cam_s0"], "subjects": ["cam"], "sync_error": {"max_abs_dt": 0.049999999999954525, "mean_dt": -0.0014285714285863702, "p95_abs_dt": 0.04399999999999407}, "type": "train_init"}
+training {"accuracy": 0.0, "epoch": 1, "loss": 1.6664254665374756, "loss_std": 0.0, "type": "epoch"}
+log Epoch 1: loss=1.6664
+training {"accuracy": 0.0, "epoch": 2, "loss": 1.6361877918243408, "loss_std": 0.0, "type": "epoch"}
+log Epoch 2: loss=1.6362
+training {"accuracy": 0.0, "epoch": 3, "loss": 1.6109426021575928, "loss_std": 0.0, "type": "epoch"}
+log Epoch 3: loss=1.6109
+training {"accuracy": 0.0, "epoch": 4, "loss": 1.5863901376724243, "loss_std": 0.0, "type": "epoch"}
+log Epoch 4: loss=1.5864
+training {"accuracy": 0.0, "epoch": 5, "loss": 1.5575257539749146, "loss_std": 0.0, "type": "epoch"}
+log Epoch 5: loss=1.5575
+training {"accuracy": 0.0, "epoch": 6, "loss": 1.5216134786605835, "loss_std": 0.0, "type": "epoch"}
+log Epoch 6: loss=1.5216
+training {"accuracy": 0.0, "epoch": 7, "loss": 1.4789773225784302, "loss_std": 0.0, "type": "epoch"}
+log Epoch 7: loss=1.4790
+training {"accuracy": 0.0, "epoch": 8, "loss": 1.4318630695343018, "loss_std": 0.0, "type": "epoch"}
+log Epoch 8: loss=1.4319
+training {"accuracy": 0.0, "epoch": 9, "loss": 1.3826221227645874, "loss_std": 0.0, "type": "epoch"}
+log Epoch 9: loss=1.3826
+training {"accuracy": 0.0, "epoch": 10, "loss": 1.3349231481552124, "loss_std": 0.0, "type": "epoch"}
+log Epoch 10: loss=1.3349
+training {"accuracy": 0.0, "epoch": 11, "loss": 1.293046236038208, "loss_std": 0.0, "type": "epoch"}
+log Epoch 11: loss=1.2930
+training {"accuracy": 0.0, "epoch": 12, "loss": 1.2612006664276123, "loss_std": 0.0, "type": "epoch"}
+log Epoch 12: loss=1.2612
+training {"accuracy": 0.0, "epoch": 13, "loss": 1.242321491241455, "loss_std": 0.0, "type": "epoch"}
+log Epoch 13: loss=1.2423
+training {"accuracy": 0.0, "epoch": 14, "loss": 1.2364914417266846, "loss_std": 0.0, "type": "epoch"}
+log Epoch 14: loss=1.2365
+training {"accuracy": 0.0, "epoch": 15, "loss": 1.2402011156082153, "loss_std": 0.0, "type": "epoch"}
+log Epoch 15: loss=1.2402
+training {"accuracy": 0.0, "epoch": 16, "loss": 1.248167634010315, "loss_std": 0.0, "type": "epoch"}
+log Epoch 16: loss=1.2482
+training {"accuracy": 0.0, "epoch": 17, "loss": 1.255852222442627, "loss_std": 0.0, "type": "epoch"}
+log Epoch 17: loss=1.2559
+training {"accuracy": 0.0, "epoch": 18, "loss": 1.2606821060180664, "loss_std": 0.0, "type": "epoch"}
+log Epoch 18: loss=1.2607
+training {"accuracy": 0.0, "epoch": 19, "loss": 1.2617050409317017, "loss_std": 0.0, "type": "epoch"}
+log Epoch 19: loss=1.2617
+training {"accuracy": 0.0, "epoch": 20, "loss": 1.258962631225586, "loss_std": 0.0, "type": "epoch"}
+log Epoch 20: loss=1.2590
+training {"accuracy": 0.0, "epoch": 21, "loss": 1.2529759407043457, "loss_std": 0.0, "type": "epoch"}
+log Epoch 21: loss=1.2530
+training {"accuracy": 0.0, "epoch": 22, "loss": 1.2446024417877197, "loss_std": 0.0, "type": "epoch"}
+log Epoch 22: loss=1.2446
+training {"accuracy": 0.0, "epoch": 23, "loss": 1.2347112894058228, "loss_std": 0.0, "type": "epoch"}
+log Epoch 23: loss=1.2347
+training {"accuracy": 0.0, "epoch": 24, "loss": 1.224184513092041, "loss_std": 0.0, "type": "epoch"}
+log Epoch 24: loss=1.2242
+training {"accuracy": 0.0, "epoch": 25, "loss": 1.213830590248108, "loss_std": 0.0, "type": "epoch"}
+log Epoch 25: loss=1.2138
+training {"accuracy": 0.0, "epoch": 26, "loss": 1.204329490661621, "loss_std": 0.0, "type": "epoch"}
+log Epoch 26: loss=1.2043
+training {"accuracy": 0.0, "epoch": 27, "loss": 1.1961815357208252, "loss_std": 0.0, "type": "epoch"}
+log Epoch 27: loss=1.1962
+training {"accuracy": 0.0, "epoch": 28, "loss": 1.1896603107452393, "loss_std": 0.0, "type": "epoch"}
+log Epoch 28: loss=1.1897
+training {"accuracy": 0.0, "epoch": 29, "loss": 1.1847198009490967, "loss_std": 0.0, "type": "epoch"}
+log Epoch 29: loss=1.1847
+training {"accuracy": 0.0, "epoch": 30, "loss": 1.181069016456604, "loss_std": 0.0, "type": "epoch"}
+log Epoch 30: loss=1.1811
+training {"accuracy": 0.0, "epoch": 31, "loss": 1.1782000064849854, "loss_std": 0.0, "type": "epoch"}
+log Epoch 31: loss=1.1782
+training {"accuracy": 0.0, "epoch": 32, "loss": 1.1755763292312622, "loss_std": 0.0, "type": "epoch"}
+log Epoch 32: loss=1.1756
+training {"accuracy": 0.0, "epoch": 33, "loss": 1.1727099418640137, "loss_std": 0.0, "type": "epoch"}
+log Epoch 33: loss=1.1727
+training {"accuracy": 0.0, "epoch": 34, "loss": 1.16921865940094, "loss_std": 0.0, "type": "epoch"}
+log Epoch 34: loss=1.1692
+training {"accuracy": 0.0, "epoch": 35, "loss": 1.1649528741836548, "loss_std": 0.0, "type": "epoch"}
+log Epoch 35: loss=1.1650
+training {"accuracy": 0.0, "epoch": 36, "loss": 1.1600075960159302, "loss_std": 0.0, "type": "epoch"}
+log Epoch 36: loss=1.1600
+training {"accuracy": 0.0, "epoch": 37, "loss": 1.1546434164047241, "loss_std": 0.0, "type": "epoch"}
+log Epoch 37: loss=1.1546
+training {"accuracy": 0.0, "epoch": 38, "loss": 1.1491578817367554, "loss_std": 0.0, "type": "epoch"}
+log Epoch 38: loss=1.1492
+training {"accuracy": 0.0, "epoch": 39, "loss": 1.1439268589019775, "loss_std": 0.0, "type": "epoch"}
+log Epoch 39: loss=1.1439
+training {"accuracy": 0.0, "epoch": 40, "loss": 1.1392579078674316, "loss_std": 0.0, "type": "epoch"}
+log Epoch 40: loss=1.1393
+log    [OK]   heatmap (16x16, 3 masks) -> <case>/root/model_weapon/heatmap.joblib
+training {"metrics": {"grid": 16, "n": 3}, "type": "done"}
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+training: K
+training: K_img
+training: accuracy
+training: balance
+training: class_counts
+training: distribution
+training: epoch
+training: loss
+training: loss_std
+training: metrics
+training: n_samples
+training: num_nodes
+training: sessions
+training: subjects
+training: sync_error
+training: type
+
+### tree
+e2e0210537fd2db392afc29c6bb308ed165061d396d51f91d1b5b4dfa941de82  root/model_weapon/heatmap.joblib

@@ -1,0 +1,7 @@
+log Training count/mlp...
+log No count datasets under <case>/root/count_ds_0/c1/node1/link_4f9c: the dataset path must be a capture-profile root such as data/2g4_ht40 (run 'collect' first if it is one).
+inference {"event": "pipeline_done"}
+### keys
+inference: event
+
+### tree

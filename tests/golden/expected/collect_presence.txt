@@ -1,0 +1,143 @@
+$ collect_presence --port 5599 --root <tmp>/all --frames 256 --sessions 2
+training nodes: [1, 2] (calibrated)
+
+>> session 1/2 — part A: keep the zone empty and still.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+>> session 1/2 — part B: stand and move in the zone.
+   press Enter to start...
+   [CAPTURING] hold the condition steady...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+>> session 2/2 — part A: keep the zone empty and still.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+>> session 2/2 — part B: stand and move in the zone.
+   press Enter to start...
+   [CAPTURING] hold the condition steady...
+   links/node {1: 2, 2: 2}  min 100/256...
+   [SKIP] node 2 session 1: no link had >= 128 frames/class.
+
+training per-node presence models...
+   [OK]   node 1: samples=48 class_counts={'0': 18, '1': 30} train_acc=1.000  LOGO=0.958 (majority 0.625, TPR 0.933, FP 0.000)
+   [OK]   node 2: samples=24 class_counts={'0': 10, '1': 14} train_acc=1.000
+
+models saved for nodes [1, 2] -> <tmp>/all/model/node*/  (LOGO is the honest number: it must clearly beat the majority baseline.)
+$ collect_presence --port 5599 --root <tmp>/node --frames 256 --sessions 1 --node 2
+training nodes: [2] (calibrated)
+
+>> session 1/1 — part A: keep the zone empty and still.
+   press Enter to start...
+   starting in 5s...   starting in 4s...   starting in 3s...   starting in 2s...   starting in 1s...
+   [CAPTURING] hold the condition steady...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+>> session 1/1 — part B: stand and move in the zone.
+   press Enter to start...
+   [CAPTURING] hold the condition steady...
+   links/node {1: 2, 2: 2}  min 100/256...   links/node {1: 2, 2: 2}  min 205/256...
+
+training per-node presence models...
+   [OK]   node 2: samples=24 class_counts={'0': 8, '1': 16} train_acc=1.000
+
+models saved for nodes [2] -> <tmp>/node/model/node*/  (LOGO is the honest number: it must clearly beat the majority baseline.)
+$ collect_presence --port 5599 --root <tmp>/node --frames 256 --node 9
+[stderr]
+
+[ERROR] node 9 has no calibration in <tmp>/node/cal.
+$ collect_presence --port 5599 --root <tmp>/missing --frames 256
+[stderr]
+
+[ERROR] no per-node calibrations in <tmp>/missing/cal/node*. Run collect_baseline.py first.
+
+### tree all
+253610fa268367d1f037fc7ea9d8e2057b8ee681bbd8908f87579a1342e013c2  cal/node1/baseline_diff.npy
+ebb198ba83a49cb73ff9d6b90d31a7bf1e62a76960d240c9b16151ed1d8b6929  cal/node1/baseline_mag.npy
+909a50cd26d3578f497709c28dc56fcfb3c4cb796e07aa7885ea9816d0c6a3d6  cal/node1/meta.json
+a04fe1a3fbb7d8b4f72e9f04cc3b9f6896006906e5424a81f01d13612a262113  cal/node2/baseline_diff.npy
+4561ed60477f09596623053670d4cbd0e379d40c4677309c6a9c0a78fa9999d1  cal/node2/baseline_mag.npy
+7a84a9aba69cc220c72faa96429504c21dd6ec24d980c5d5dd129058ca031204  cal/node2/meta.json
+9ec8bf25d9ec81fda5e8cfab9229c3194aaa52725b1853d9a255fcd53f733cde  ds_0/node1/link_4f9c/features.npy
+39e9c3047e78af80f82338cfb91c534f59ee12585efe154ec1b2d3a762a5d1a2  ds_0/node1/link_4f9c/images.npy
+e4487503b843c774267a51205609c09d7a076a662cecf863941c0746d06803bd  ds_0/node1/link_4f9c/manifest.jsonl
+91ec01581e16efe60a66f6f9e3d0b42ba4a16f3cf4e44a788e6dd19db1c1354a  ds_0/node1/link_4f9c/meta.json
+9f3441fac260ec7d1f34ee5b93ff9816d0b2a34a2eff9d30c89b7a546ac51fbb  ds_0/node1/link_64b8/features.npy
+41b3c6fa1f1aaf07fd16e44eb77a3e0dd547b5c811efd7dcbd682e8f453e1760  ds_0/node1/link_64b8/images.npy
+e4487503b843c774267a51205609c09d7a076a662cecf863941c0746d06803bd  ds_0/node1/link_64b8/manifest.jsonl
+91ec01581e16efe60a66f6f9e3d0b42ba4a16f3cf4e44a788e6dd19db1c1354a  ds_0/node1/link_64b8/meta.json
+0d5f21918cb812819eafc61ba1d19cd2bdcf2c28c86a618fe5c3397c6125c131  ds_0/node2/link_4f9c/features.npy
+20c34744bd70d71375a8479799b9162f31749f51bf266d03d53078729ec004dd  ds_0/node2/link_4f9c/images.npy
+e4487503b843c774267a51205609c09d7a076a662cecf863941c0746d06803bd  ds_0/node2/link_4f9c/manifest.jsonl
+019c80385361834a1ae807273ff158fe978294430ee97d961423ac06eb74f0ec  ds_0/node2/link_4f9c/meta.json
+ddeebafa06795dfcbefefa44cd2c645b3be93f28ea54ebb5d912c98755b83581  ds_0/node2/link_64b8/features.npy
+238b838638f737039b1b9bec64607bf15428489a987f7d9bbb6b560a1d521197  ds_0/node2/link_64b8/images.npy
+e4487503b843c774267a51205609c09d7a076a662cecf863941c0746d06803bd  ds_0/node2/link_64b8/manifest.jsonl
+019c80385361834a1ae807273ff158fe978294430ee97d961423ac06eb74f0ec  ds_0/node2/link_64b8/meta.json
+a4eea346a7d128f7d05f3fa52c828e75838fddef2f1788bcb758a310cf688250  ds_1/node1/link_4f9c/features.npy
+0047ea3f92e11c96887757def6ef9a3c79c7e522c8f8f44d92219bd705aa73c2  ds_1/node1/link_4f9c/images.npy
+d3f7cf7806ddbeb054467630430d17af4964866e68383f2360129ec8c19c726f  ds_1/node1/link_4f9c/manifest.jsonl
+ccbc2f64bab1c2022010ddec2d5f2ea3048bf0d1b1051e66e0ed0cf4995445fc  ds_1/node1/link_4f9c/meta.json
+49987e69d508be9a98be574d17eecfc4459e571fe92430f5be981c56ed89f27c  ds_1/node1/link_64b8/features.npy
+31903ca163ebb5da13579f32290fbf87c89096d2667cdbc846b28aa21ce001b9  ds_1/node1/link_64b8/images.npy
+d3f7cf7806ddbeb054467630430d17af4964866e68383f2360129ec8c19c726f  ds_1/node1/link_64b8/manifest.jsonl
+ccbc2f64bab1c2022010ddec2d5f2ea3048bf0d1b1051e66e0ed0cf4995445fc  ds_1/node1/link_64b8/meta.json
+373b4880948e9740eb248b6f136e3f2a2711350378c09da13657aaebf5c775fa  model/node1/metrics.json
+ee262a9e0544e1d343cfb3b2ac047b127270b97be0d62de52cf467f70f05b86c  model/node1/model.joblib
+6ba88ad59a3edd23d1a0494266559566f2c75e9b1cfe6331b95c3c83519abc21  model/node2/metrics.json
+44f7b3a8448dacce95337b53321c975a527f869f30991e233f51e1b85591b8a9  model/node2/model.joblib
+3d7d7e0f66c19d13b45ffe6635cb7ef4d3ca3cdf1d390064525dff7607a4f641  sess_0/node1/link_4f9c/grid.npy
+60a8f1e718e54c976358e01d6ad82c44cf519943208e6b0aeab0cdb82418919d  sess_0/node1/link_4f9c/meta.json
+804603ddc947df0f51eb353ffe448eb7fbbe50625ecdd1ea3035d6f4b56c3eeb  sess_0/node1/link_4f9c/node_id.npy
+cce8b9ac235fe5298cc309ae32f60860b8180cdcb239dfd346c75b515eeb9910  sess_0/node1/link_4f9c/t.npy
+61cea3e7256ba02f268876bf343b10ee9145c89abc72cd83570ecf8d9dba98db  sess_0/node1/link_64b8/grid.npy
+60a8f1e718e54c976358e01d6ad82c44cf519943208e6b0aeab0cdb82418919d  sess_0/node1/link_64b8/meta.json
+804603ddc947df0f51eb353ffe448eb7fbbe50625ecdd1ea3035d6f4b56c3eeb  sess_0/node1/link_64b8/node_id.npy
+cce8b9ac235fe5298cc309ae32f60860b8180cdcb239dfd346c75b515eeb9910  sess_0/node1/link_64b8/t.npy
+6c40cbfefcbddb8a137c840db47dbca286871cf70d396c56e4c738cf0f6f8f59  sess_0/node2/link_4f9c/grid.npy
+60a8f1e718e54c976358e01d6ad82c44cf519943208e6b0aeab0cdb82418919d  sess_0/node2/link_4f9c/meta.json
+20d4e3aa7f88e2fd063bff08f8f09ba06710edfb163690b40314089da929d76d  sess_0/node2/link_4f9c/node_id.npy
+cce8b9ac235fe5298cc309ae32f60860b8180cdcb239dfd346c75b515eeb9910  sess_0/node2/link_4f9c/t.npy
+d0c64628d4bc467c0297185607673d7b37a64ce8988fa7e5f086110f43d76c25  sess_0/node2/link_64b8/grid.npy
+60a8f1e718e54c976358e01d6ad82c44cf519943208e6b0aeab0cdb82418919d  sess_0/node2/link_64b8/meta.json
+20d4e3aa7f88e2fd063bff08f8f09ba06710edfb163690b40314089da929d76d  sess_0/node2/link_64b8/node_id.npy
+cce8b9ac235fe5298cc309ae32f60860b8180cdcb239dfd346c75b515eeb9910  sess_0/node2/link_64b8/t.npy
+0ef74f476605b45c28a06fc5b48f95df6e1d6d596c2cc7102d808d94799a244f  sess_1/node1/link_4f9c/grid.npy
+313dc63f2f7d933be3746a70149d265af635bbd768e8b52bfc38d8d4a92056ff  sess_1/node1/link_4f9c/meta.json
+60e6d43f8131957c64c162c1ac7ce2151530e46197202a44974d154bf8807eb7  sess_1/node1/link_4f9c/node_id.npy
+ae8c93bcbfdbd9b99a4397fd91eaeaf2903c8449a299a66f7965de1f45f30a1f  sess_1/node1/link_4f9c/t.npy
+97b6eca0779de2ac1c1c22265f8956b4bbcb2778115a034d6be3006d55bb9ce8  sess_1/node1/link_64b8/grid.npy
+313dc63f2f7d933be3746a70149d265af635bbd768e8b52bfc38d8d4a92056ff  sess_1/node1/link_64b8/meta.json
+60e6d43f8131957c64c162c1ac7ce2151530e46197202a44974d154bf8807eb7  sess_1/node1/link_64b8/node_id.npy
+ae8c93bcbfdbd9b99a4397fd91eaeaf2903c8449a299a66f7965de1f45f30a1f  sess_1/node1/link_64b8/t.npy
+
+### tree node
+253610fa268367d1f037fc7ea9d8e2057b8ee681bbd8908f87579a1342e013c2  cal/node1/baseline_diff.npy
+ebb198ba83a49cb73ff9d6b90d31a7bf1e62a76960d240c9b16151ed1d8b6929  cal/node1/baseline_mag.npy
+909a50cd26d3578f497709c28dc56fcfb3c4cb796e07aa7885ea9816d0c6a3d6  cal/node1/meta.json
+a04fe1a3fbb7d8b4f72e9f04cc3b9f6896006906e5424a81f01d13612a262113  cal/node2/baseline_diff.npy
+4561ed60477f09596623053670d4cbd0e379d40c4677309c6a9c0a78fa9999d1  cal/node2/baseline_mag.npy
+7a84a9aba69cc220c72faa96429504c21dd6ec24d980c5d5dd129058ca031204  cal/node2/meta.json
+43378ace1c338538f886aa50d5fddcf13af936f85c70f357fdd58fd7405507cd  ds_0/node2/link_4f9c/features.npy
+f67e75a49d044ab36098c455ed590a1d91cb6b08a633b9fb6c39e727e429fd5b  ds_0/node2/link_4f9c/images.npy
+59a5d19112b626371137be0ffd92608c1b6ca5b6e2326e8b8e7dc468d57a9db7  ds_0/node2/link_4f9c/manifest.jsonl
+756cf97e485967a5a5768baaca0148680539c6e680c857433ce878c5c892eb16  ds_0/node2/link_4f9c/meta.json
+04ea56b8153e68eabb608a57afe8519a3c0001ba2c31d36e43defd6b93ba0755  ds_0/node2/link_64b8/features.npy
+4f7d7e50b98b52a23d20dacef7e7c95fb847adf2ab011c8750d9655cf76cf6b4  ds_0/node2/link_64b8/images.npy
+59a5d19112b626371137be0ffd92608c1b6ca5b6e2326e8b8e7dc468d57a9db7  ds_0/node2/link_64b8/manifest.jsonl
+756cf97e485967a5a5768baaca0148680539c6e680c857433ce878c5c892eb16  ds_0/node2/link_64b8/meta.json
+57f0d78a7702060943809be0a04f7863093399a92c58fcc3dc2bdded80a5d7ed  model/node2/metrics.json
+ef10938aa244d762bbf805aee55d6a1dd2bacacd08ef4760044063529e81ad98  model/node2/model.joblib
+d70656f65553ac44bb55e2cc0e7d8b4ee8ec8bb52372dc74cdcee1c38c1b1adb  sess_0/node2/link_4f9c/grid.npy
+60a8f1e718e54c976358e01d6ad82c44cf519943208e6b0aeab0cdb82418919d  sess_0/node2/link_4f9c/meta.json
+20d4e3aa7f88e2fd063bff08f8f09ba06710edfb163690b40314089da929d76d  sess_0/node2/link_4f9c/node_id.npy
+9f62485be10a834485f72df7c283320fa5241c3fd62e80b47986ea462f7da447  sess_0/node2/link_4f9c/t.npy
+168d8b24485bb9e03f69998c2e59e23bbac45cbf75ab641a94527f4f715fb284  sess_0/node2/link_64b8/grid.npy
+60a8f1e718e54c976358e01d6ad82c44cf519943208e6b0aeab0cdb82418919d  sess_0/node2/link_64b8/meta.json
+20d4e3aa7f88e2fd063bff08f8f09ba06710edfb163690b40314089da929d76d  sess_0/node2/link_64b8/node_id.npy
+9f62485be10a834485f72df7c283320fa5241c3fd62e80b47986ea462f7da447  sess_0/node2/link_64b8/t.npy

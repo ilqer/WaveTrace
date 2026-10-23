@@ -1,13 +1,49 @@
+import threading
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import Protocol
 
 import numpy as np
+
+from wavetrace import Label
+from wavetrace.domain.link_key import LinkKey
 
 
 class CsiSource(Protocol):
     @abstractmethod
     def frames(self):
         """Yield CsiFrame objects in capture order."""
+
+
+class LinkBatchReceiver(Protocol):
+    @abstractmethod
+    def receive(self) -> dict[LinkKey, list]:
+        """One mesh datagram's CsiFrames per link; {} when the read times out."""
+
+    @abstractmethod
+    def close(self) -> None: ...
+
+
+class LinkCapture(Protocol):
+    @abstractmethod
+    def capture(self, prompt: str, *, countdown_s: int, hint: str) -> dict[LinkKey, list]:
+        """Prompts, waits for the operator, then records every link it hears; each link's CsiFrames at
+        its dominant subcarrier width."""
+
+
+class TimedLinkCapture(Protocol):
+    @abstractmethod
+    def capture_for(self, duration_s: float, *, stop: threading.Event) -> dict[LinkKey, list]:
+        """Records every link it hears for `duration_s`, or until `stop` is set; each link's CsiFrames at
+        its dominant subcarrier width."""
+
+
+class CameraLabelCapture(Protocol):
+    @abstractmethod
+    def record_labels(self, duration_s: float, *, stop: threading.Event,
+                      on_label: Callable[[Label], None]) -> list[Label]:
+        """Labels camera frames live for `duration_s`, or until `stop` is set, calling `on_label` per frame;
+        returns the Labels sorted by timestamp, on the CSI clock. Raises when the camera cannot open."""
 
 
 class RecognitionBackend(Protocol):

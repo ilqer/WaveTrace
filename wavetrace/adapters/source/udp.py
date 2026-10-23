@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import socket
 
 from wavetrace.adapters.source.options import SourceOptions
-from wavetrace.adapters.source.wire_format import parse_batch
-from wavetrace.application.ports import CsiSource
+from wavetrace.adapters.source.wire_format import parse_batch, parse_batch_by_link
+from wavetrace.application.ports import CsiSource, LinkBatchReceiver
 
 
 def bind_udp_socket(port, *, timeout_s=None):
@@ -22,6 +22,23 @@ def bind_udp_socket(port, *, timeout_s=None):
     if timeout_s is not None:
         udp_socket.settimeout(timeout_s)
     return udp_socket
+
+
+class UdpLinkBatchReceiver(LinkBatchReceiver):
+    """Binds 0.0.0.0:port; `receive` blocks at most `timeout_s`."""
+
+    def __init__(self, port, *, timeout_s):
+        self._socket = bind_udp_socket(port, timeout_s=timeout_s)
+
+    def receive(self):
+        try:
+            payload, _ = self._socket.recvfrom(65535)
+        except socket.timeout:
+            return {}
+        return parse_batch_by_link(payload)
+
+    def close(self):
+        self._socket.close()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
