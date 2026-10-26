@@ -11,7 +11,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from wavetrace.domain.calibration import CalibrationResult
-from wavetrace.domain.contracts import DEFAULT_TARGET_SAMPLE_RATE_HZ
+from wavetrace.domain.contracts import (
+    DEFAULT_MIN_SAMPLE_RATE_FRACTION, DEFAULT_TARGET_SAMPLE_RATE_HZ, require_valid_min_sample_rate_fraction,
+)
+from wavetrace.domain.rules import SampleRateMustBeWithinTolerance
 
 _UNCALIBRATED_REFERENCE = (0.0, ())
 
@@ -19,14 +22,13 @@ _UNCALIBRATED_REFERENCE = (0.0, ())
 @dataclass(frozen=True, slots=True)
 class HealthMeterOptions:
     target_sample_rate_hz: float = DEFAULT_TARGET_SAMPLE_RATE_HZ
-    min_sample_rate_fraction: float = 0.8
+    min_sample_rate_fraction: float = DEFAULT_MIN_SAMPLE_RATE_FRACTION
     rolling_window_frames: int = 200
 
     def __post_init__(self) -> None:
         if self.target_sample_rate_hz <= 0:
             raise ValueError("target_sample_rate_hz must be positive")
-        if not 0.0 < self.min_sample_rate_fraction <= 1.0:
-            raise ValueError("min_sample_rate_fraction must be in (0, 1]")
+        require_valid_min_sample_rate_fraction(self.min_sample_rate_fraction)
         if self.rolling_window_frames <= 0:
             raise ValueError("rolling_window_frames must be positive")
 
@@ -41,7 +43,8 @@ class NodeHealthMeter:
                  calibration_by_node: Mapping[int, CalibrationResult] | None = None,
                  default_calibration: CalibrationResult | None = None):
         self.target_sample_rate_hz = options.target_sample_rate_hz
-        self.min_sample_rate_hz = options.target_sample_rate_hz * options.min_sample_rate_fraction
+        self._sample_rate_rule = SampleRateMustBeWithinTolerance(options.target_sample_rate_hz,
+                                                                 options.min_sample_rate_fraction)
         self.rolling_window_frames = options.rolling_window_frames
         self._wall_receive_times_s = defaultdict(lambda: deque(maxlen=self.rolling_window_frames))
         self._mean_amplitudes = defaultdict(lambda: deque(maxlen=self.rolling_window_frames))
@@ -92,7 +95,7 @@ class NodeHealthMeter:
                 "node_id": node_id,
                 "band": "5GHz" if node_id >= 100 else "2.4GHz",
                 "hz": round(sample_rate_hz, 1),
-                "hz_ok": sample_rate_hz >= self.min_sample_rate_hz,
+                "hz_ok": self._sample_rate_rule.is_satisfied(sample_rate_hz),
                 "frames": self._frame_counts[node_id],
                 "mean_amp": round(mean_amplitude, 4),
                 "snr_db": round(snr_db, 1),

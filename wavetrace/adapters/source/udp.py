@@ -15,20 +15,30 @@ def bind_udp_socket(port, *, timeout_s=None):
     kern.ipc.maxsockbuf); the setsockopt failing is non-fatal."""
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
-    except OSError:
-        pass
-    udp_socket.bind(("0.0.0.0", port))
-    if timeout_s is not None:
-        udp_socket.settimeout(timeout_s)
+        try:
+            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
+        except OSError:
+            pass
+        udp_socket.bind(("0.0.0.0", port))
+        if timeout_s is not None:
+            udp_socket.settimeout(timeout_s)
+    except BaseException:
+        udp_socket.close()
+        raise
     return udp_socket
 
 
 class UdpLinkBatchReceiver(LinkBatchReceiver):
-    """Binds 0.0.0.0:port; `receive` blocks at most `timeout_s`."""
+    """Binds 0.0.0.0:port; `receive` blocks at most `timeout_s`. Leaving its `with` block closes the socket."""
 
     def __init__(self, port, *, timeout_s):
         self._socket = bind_udp_socket(port, timeout_s=timeout_s)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception_info):
+        self.close()
 
     def receive(self):
         try:

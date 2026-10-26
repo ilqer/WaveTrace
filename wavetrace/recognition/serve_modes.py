@@ -5,6 +5,10 @@ rx node while features stay per link, keeping all N(N-1) views."""
 import numpy as np
 
 from wavetrace.application.serve_mesh import LinkScore
+from wavetrace.domain.rules import (
+    HeadsMustShareClassOrdering, HeadsMustShareSampleRate, SubcarrierWidthMustCoverCalibration,
+    SubcarrierWidthMustMatchContract, require,
+)
 from wavetrace.recognition.count import count_name
 from wavetrace.recognition.link import accuracy_weights
 from wavetrace.recognition.serving import last_window_proba, load_presence_node_servers
@@ -28,8 +32,8 @@ def _format_binary_verdict(positive_proba, positive_label, negative_label):
 
 
 def _read_banner_sample_rate_hz(nodes):
-    # banner only: every head is trained at the same rate today (not enforced)
-    return next(iter(nodes.values())).session.head.contract.target_sample_rate_hz
+    # every head shares one rate: `load` rejects a mix
+    return next(iter(nodes.values())).target_sample_rate_hz
 
 
 def _format_node_weights(nodes):
@@ -37,12 +41,27 @@ def _format_node_weights(nodes):
 
 
 def _read_shared_class_ids(nodes):
-    # every head shares one class ordering: the loaders reject a mix
+    # every head shares one class ordering: `load` rejects a mix
     return next(iter(nodes.values())).classes if nodes else []
 
 
+def _require_loaded_nodes_servable(nodes):
+    """Refuses at load what serving would drop or misscore: heads trained at different sample rates, a
+    calibration indexing past its model's capture width, or one made from another width. A model or
+    calibration that records no width is not checked on it."""
+    require(HeadsMustShareSampleRate(), [node.target_sample_rate_hz for node in nodes.values()], "the heads")
+    for node_key, node in nodes.items():
+        if node.trained_subcarrier_width is None:
+            continue
+        require(SubcarrierWidthMustCoverCalibration(node.min_num_subcarriers), node.trained_subcarrier_width,
+                f"node {node_key}")
+        if node.calibrated_subcarrier_width is not None:
+            require(SubcarrierWidthMustMatchContract(node.trained_subcarrier_width),
+                    node.calibrated_subcarrier_width, f"node {node_key}'s calibration")
+
+
 def _serve_last_window(node, frames):
-    return last_window_proba(frames, node.session.head.contract.target_sample_rate_hz, node.calibration,
+    return last_window_proba(frames, node.target_sample_rate_hz, node.calibration,
                              node.gain_lock, node.config, node.should_use_intercarrier, node.pick_input,
                              node.session)
 
@@ -78,10 +97,8 @@ class PresenceServeMode:
                                     if logo_accuracy is not None})
         for node_id, node in nodes.items():
             node.weight = weights.get(node_id, 1.0)
-        # blending raw proba vectors is only valid when the heads share a class ordering
-        orders = {tuple(node.classes) for node in nodes.values()}
-        if len(orders) > 1:
-            raise ValueError(f"per-node heads disagree on class ordering {orders}; retrain consistently")
+        require(HeadsMustShareClassOrdering(), [node.classes for node in nodes.values()], "the presence heads")
+        _require_loaded_nodes_servable(nodes)
         return cls(nodes)
 
     def select_node(self, link_key):
@@ -133,6 +150,7 @@ class CountServeMode:
             # rescale accuracy so 1/k chance maps to 0 and perfect to 1; no LOGO number means 1.0
             node.weight = (max(logo_accuracy - chance, 0.0) / max(1.0 - chance, 1e-9)
                            if logo_accuracy is not None else 1.0)
+        _require_loaded_nodes_servable(nodes)
         return cls(nodes, class_ids, max_count)
 
     def select_node(self, link_key):
@@ -187,13 +205,15 @@ class WeaponServeMode:
 
     @classmethod
     def load(cls, calibration_root, model_root):
-        return cls(load_weapon_links(calibration_root, model_root))
+        nodes = load_weapon_links(calibration_root, model_root)
+        _require_loaded_nodes_servable(nodes)
+        return cls(nodes)
 
     def select_node(self, link_key):
         return find_weapon_entry(self.nodes, *link_key)
 
     def score_link(self, link_key, node, frames):
-        proba, window_view = dwell_proba(frames, node.session.head.contract.target_sample_rate_hz, node)
+        proba, window_view = dwell_proba(frames, node.target_sample_rate_hz, node)
         if proba is None:
             return None
         weapon_proba = _read_positive_proba(proba, node.positive_class_index)

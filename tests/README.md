@@ -3,7 +3,7 @@
 Automated test suite. All tests run on synthetic or recorded data — no hardware required.
 
 ```bash
-pytest tests/ -q    # run everything; expect 631 tests, all passing
+pytest tests/ -q    # run everything; expect 681 tests, all passing
 ```
 
 ## Layout
@@ -26,7 +26,8 @@ none on purpose: its tests import their replay helpers as top-level modules (`fr
 | `unit/native/core/test_core.py`, `unit/native/hardware/test_frame_parser.py` | C++ `CsiFrame` type and UDP datagram parsing |
 | `unit/native/signal/test_preprocess.py`, `unit/native/signal/test_features.py` | Conjugate multiply, Hampel filter, phase unwrap, gain lock, NBVI, feature extraction |
 | `unit/native/signal/test_gain_lock.py` | Gain lock apply / relock / coefficient-of-variation fallback |
-| `unit/domain/test_calibration.py` | Save/load calibration, NBVI subcarrier selection |
+| `unit/domain/test_calibration.py` | NBVI subcarrier selection, the recorded capture width |
+| `unit/adapters/store/test_calibration_store.py` | Save/load calibration, the capture width in `meta.json` and the older `meta.json` without it |
 | `unit/domain/dsp/test_resample.py`, `unit/native/signal/test_subcarrier_select.py` | Timing-jitter resampler, subcarrier ranking |
 | `unit/native/signal/test_spectrogram.py` | Spectrogram builder shape and values |
 | `unit/recognition/test_recognition.py`, `integration/test_pipeline.py` | Presence model train + infer on synthetic data |
@@ -39,7 +40,10 @@ none on purpose: its tests import their replay helpers as top-level modules (`fr
 | `unit/recognition/test_weapon_per_link.py` | Per-link weapon heads and link health metrics |
 | `unit/recognition/test_serving.py` | Per-link serving math: calibration width and the single last-window prediction |
 | `unit/domain/groundtruth/test_ground_truth.py`, `unit/groundtruth/test_segmentation_labeler.py`, `unit/groundtruth/test_vision_labeler.py` | Camera labeler and dataset builder |
-| `unit/groundtruth/test_webcam.py` | Webcam frame recording and offline label streaming with a stub detector |
+| `unit/groundtruth/test_webcam.py` | Webcam frame recording and offline label streaming with a stub detector; ffmpeg reaped after a read, after no first frame and after an ignored terminate, and `stop` ending a stalled read |
+| `unit/test_rate_gate_flags.py` | `--rate-gate` and `--min-rate-fraction` reaching `ServeMeshUseCase` from the three live scripts, and `--min-rate-fraction` reaching the single-node window stream from the CLI `run` mode |
+| `unit/domain/test_rules.py`, `unit/application/test_rule_violations.py` | The named business rules and their violation messages; violation counts per rule, the rate-limited log line and its level |
+| `unit/adapters/source/test_udp_socket_ownership.py`, `unit/adapters/source/test_nexmon_live_capture.py`, `unit/entrypoints/api/test_device_hub.py`, `unit/entrypoints/api/test_camera_feed.py` | Handles released on errors: a failed bind and the receiver's `with` block close the socket; tcpdump, flash or ssh commands and the serial monitor are stopped and reaped; the camera feed's YOLO model cache |
 | `unit/recognition/test_heatmap_training.py` | Heatmap trainer pairs each mask with its own window |
 | `unit/native/signal/test_presence_segment.py` | Motion-segment gate used inside the voter |
 | `unit/domain/test_localize.py`, `unit/domain/dsp/test_frontend_extensions.py` | Localization scaffold and frontend extensions |

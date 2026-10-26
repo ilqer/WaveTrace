@@ -149,6 +149,9 @@ def test_timed_capture_raises_the_bind_error_itself(monkeypatch):
         def bind(self, address):
             raise OSError(48, "Address already in use")
 
+        def close(self):
+            pass
+
     monkeypatch.setattr(socket, "socket", lambda *args, **kwargs: _PortInUseSocket())
     with pytest.raises(OSError, match="Address already in use"):
         UdpTimedLinkCapture(5599, [1]).capture_for(1.0, stop=threading.Event())

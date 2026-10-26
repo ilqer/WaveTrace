@@ -10,6 +10,7 @@ import sys
 import numpy as np
 
 from wavetrace.adapters.source import build_csi_source, parse_time_spans, save_recording
+from wavetrace.domain.contracts import DEFAULT_MIN_SAMPLE_RATE_FRACTION
 from wavetrace.output import JsonlPublisher
 from wavetrace.pipeline import calibrate_source, collect_source, localize_source, run_inference
 from wavetrace.recognition import train_presence, train_weapon
@@ -95,6 +96,10 @@ def main(argv=None) -> int:
     run_parser.add_argument("--out", default=None, help="JSONL output file (default stdout)")
     run_parser.add_argument("--vote", action="store_true", help="also emit a final soft-vote verdict")
     run_parser.add_argument("--guard", action="store_true", help="enable AlertGuard debounce + DriftMonitor advisory")
+    run_parser.add_argument("--min-rate-fraction", type=float, default=DEFAULT_MIN_SAMPLE_RATE_FRACTION,
+                             dest="min_rate_fraction",
+                             help="skip a window delivered below this fraction of the head's target sample rate, "
+                                  "in (0, 1] (default: %(default)s)")
 
     args = parser.parse_args(argv)
 
@@ -143,7 +148,8 @@ def main(argv=None) -> int:
         publisher = JsonlPublisher(args.out, mode=args.head_mode)
         with publisher:
             results = run_inference(build_csi_source(args), args.calibration, args.model,
-                                     args.head_mode, publisher, vote=args.vote, guard=args.guard)
+                                     args.head_mode, publisher, vote=args.vote, guard=args.guard,
+                                     min_sample_rate_fraction=args.min_rate_fraction)
         print(f"published {len(results)} verdict(s)", file=sys.stderr)
     print('\a', end='', flush=True)
     return 0

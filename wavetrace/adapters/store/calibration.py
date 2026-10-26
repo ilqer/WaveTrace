@@ -21,6 +21,8 @@ def save_calibration(result: CalibrationResult, out_dir) -> Path:
         "image_subcarriers": [int(subcarrier) for subcarrier in result.image_subcarriers],
         "numBaseline": int(result.num_baseline),
     }
+    if result.subcarrier_width is not None:
+        meta["subcarrier_width"] = int(result.subcarrier_width)
     with open(directory / "meta.json", "w") as meta_file:
         json.dump(meta, meta_file, indent=2)
     return directory
@@ -40,6 +42,7 @@ def load_calibration(calibration_dir) -> tuple[CalibrationResult, GainLock | Non
         num_baseline=int(meta.get("numBaseline", meta.get("num_baseline"))),
         baseline_mag=np.load(directory / "baseline_mag.npy"),
         baseline_diff=np.load(directory / "baseline_diff.npy"),
+        subcarrier_width=int(meta["subcarrier_width"]) if "subcarrier_width" in meta else None,
     )
     gain_lock = None
     if not np.isnan(reference_scale):

@@ -85,7 +85,7 @@ Calibrate on an empty-room recording before collecting labeled data. Calibration
 Output goes to `output/calib/`:
 - `baseline_mag.npy` — mean amplitude per subcarrier in the empty baseline
 - `baseline_diff.npy` — mean conjugate-phase difference across antennas
-- `meta.json` — the K NBVI subcarrier indices + `image_subcarriers` (all noise-gate-passing indices, used for spectrograms; different set from NBVI K)
+- `meta.json` — the K NBVI subcarrier indices + `image_subcarriers` (all noise-gate-passing indices, used for spectrograms; different set from NBVI K) + `subcarrier_width` (the raw capture width the baseline was made from; absent in older calibrations, which then skip the width checks against the stream and the head)
 
 ### Feature window loop
 
@@ -408,6 +408,8 @@ python scripts/run_live_mesh.py --root data/2g4_ht40
 ```
 
 Expected output: `PRESENT` or `absent` printed every ~1.5 s, with a per-link breakdown and confidence bar. Votes from all active links are combined into one verdict weighted by each node's LOGO accuracy.
+
+A link that delivers too slowly is left out of the fuse. `--rate-gate target` (default) drops a link below `--min-rate-fraction` (default 0.8) of its head's target rate; `--rate-gate peers` drops it below that fraction of the median delivered rate of the live links, so links that stay in step with each other survive even when all of them run slower than the target (nothing is dropped while fewer than 2 links are measured). `run_weapon.py` and `run_count.py` take the same two flags; the dashboard keeps the defaults. The single-node path (`wavetrace run --min-rate-fraction`) skips a window whose frames were delivered below that fraction of the head's target rate. Each drop is counted under `SampleRateMustBeWithinTolerance` or `SampleRateMustKeepPaceWithPeers` and logged at most once per 10 s.
 
 ---
 

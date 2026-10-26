@@ -70,8 +70,8 @@ class DeviceHub:
         except Exception as error:
             self._publish(source, f"open failed: {error}", level="error")
             return
-        self._publish(source, f"opened {port} @ {baud}", level="system")
         try:
+            self._publish(source, f"opened {port} @ {baud}", level="system")
             while not stop_event.is_set():
                 try:
                     raw_line = serial_connection.readline()
@@ -111,18 +111,26 @@ class DeviceHub:
         return {"status": "not_found"}
 
     def _stream(self, source: str, process_id: str, argv: list[str], cwd: str | None = None) -> int:
+        """Blocks until the process exits. An error while relaying its output kills it and propagates; either
+        way the process is reaped and leaves `_processes`."""
         try:
             process = subprocess.Popen(
                 argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 stdin=subprocess.PIPE, text=True, bufsize=1)
-            self._processes[process_id] = process
         except Exception as error:
             self._publish(source, f"spawn failed: {error}", level="error")
             return -1
-        for line in process.stdout:  # type: ignore[union-attr]
-            self._publish(source, line)
-        code = process.wait()
-        self._processes.pop(process_id, None)
+        with process:
+            self._processes[process_id] = process
+            try:
+                for line in process.stdout:  # type: ignore[union-attr]
+                    self._publish(source, line)
+                code = process.wait()
+            except BaseException:
+                process.kill()
+                raise
+            finally:
+                self._processes.pop(process_id, None)
         self._publish(source, f"exit code {code}",
                       level="system" if code == 0 else "error")
         return code

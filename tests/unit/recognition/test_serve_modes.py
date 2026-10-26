@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from wavetrace.application.serve import WindowView
+from wavetrace.domain.rules import BusinessRuleViolationError
 from wavetrace.recognition import serve_modes
 from wavetrace.recognition.serve_modes import CountServeMode, PresenceServeMode, WeaponServeMode
 from wavetrace.recognition.serving import discover_node_dirs
@@ -12,9 +13,9 @@ WINDOW_VIEW = WindowView(features=np.zeros(9), image=np.zeros((1, 4)), intercarr
 
 
 def _node(**fields):
-    session = SimpleNamespace(head=SimpleNamespace(contract=SimpleNamespace(target_sample_rate_hz=100.0)))
-    return SimpleNamespace(**{"session": session, "calibration": None, "gain_lock": None, "config": None,
-                              "should_use_intercarrier": False, "pick_input": None, "weight": 1.0, **fields})
+    return SimpleNamespace(**{"target_sample_rate_hz": 100.0, "session": None, "calibration": None,
+                              "gain_lock": None, "config": None, "should_use_intercarrier": False,
+                              "pick_input": None, "weight": 1.0, **fields})
 
 
 def _frames(*timestamps):
@@ -147,3 +148,95 @@ def test_weapon_exposes_class_ids_and_one_calibration_per_rx_node(monkeypatch):
     assert mode.class_ids == [0, 1]
     assert mode.calibration_by_rx_node == {1: "cal1", 2: "cal2"}
     assert mode.score_link(("4f:9c", 1), per_link, _frames(0.0, 0.01, 0.02)).window_view is WINDOW_VIEW
+
+
+def _loadable_node(classes=(0, 1), min_num_subcarriers=10, trained_subcarrier_width=None,
+                   calibrated_subcarrier_width=None, target_sample_rate_hz=100.0):
+    return _node(classes=list(classes), min_num_subcarriers=min_num_subcarriers,
+                 trained_subcarrier_width=trained_subcarrier_width,
+                 calibrated_subcarrier_width=calibrated_subcarrier_width,
+                 target_sample_rate_hz=target_sample_rate_hz)
+
+
+def _load_presence_nodes_as(monkeypatch, nodes):
+    monkeypatch.setattr(serve_modes, "load_presence_node_servers",
+                        lambda calibration_root, model_root: (nodes, dict.fromkeys(nodes, None)))
+
+
+def test_presence_load_refuses_heads_with_different_class_orderings(monkeypatch):
+    _load_presence_nodes_as(monkeypatch, {1: _loadable_node(classes=(0, 1)), 2: _loadable_node(classes=(1, 0))})
+    with pytest.raises(BusinessRuleViolationError, match="HeadsMustShareClassOrdering"):
+        PresenceServeMode.load("cal", "model")
+
+
+@pytest.mark.parametrize("mode_type", [PresenceServeMode, CountServeMode])
+def test_load_refuses_a_calibration_wider_than_the_model_capture(monkeypatch, mode_type):
+    _load_presence_nodes_as(monkeypatch, {3: _loadable_node(min_num_subcarriers=130, trained_subcarrier_width=128)})
+    with pytest.raises(BusinessRuleViolationError, match="SubcarrierWidthMustCoverCalibration violated by node 3"):
+        mode_type.load("cal", "model")
+
+
+def test_weapon_load_refuses_a_calibration_wider_than_the_model_capture(monkeypatch):
+    nodes = {("4f9c", 3): _loadable_node(min_num_subcarriers=130, trained_subcarrier_width=128)}
+    monkeypatch.setattr(serve_modes, "load_weapon_links", lambda calibration_root, model_root: nodes)
+    with pytest.raises(BusinessRuleViolationError, match=r"violated by node \('4f9c', 3\)"):
+        WeaponServeMode.load("cal", "model")
+
+
+@pytest.mark.parametrize("trained_subcarrier_width", [None, 128])
+def test_load_keeps_a_legacy_or_fitting_model(monkeypatch, trained_subcarrier_width):
+    nodes = {3: _loadable_node(min_num_subcarriers=128, trained_subcarrier_width=trained_subcarrier_width)}
+    _load_presence_nodes_as(monkeypatch, nodes)
+    assert PresenceServeMode.load("cal", "model").nodes == nodes
+
+
+def _load_weapon_nodes_as(monkeypatch, nodes):
+    monkeypatch.setattr(serve_modes, "load_weapon_links", lambda calibration_root, model_root: nodes)
+
+
+@pytest.mark.parametrize("mode_type", [PresenceServeMode, CountServeMode])
+def test_presence_and_count_load_refuse_heads_trained_at_different_sample_rates(monkeypatch, mode_type):
+    _load_presence_nodes_as(monkeypatch, {1: _loadable_node(target_sample_rate_hz=100.0),
+                                          2: _loadable_node(target_sample_rate_hz=50.0)})
+    with pytest.raises(BusinessRuleViolationError,
+                       match=r"HeadsMustShareSampleRate.*\[50.0, 100.0\] Hz differ"):
+        mode_type.load("cal", "model")
+
+
+def test_weapon_load_refuses_heads_trained_at_different_sample_rates(monkeypatch):
+    _load_weapon_nodes_as(monkeypatch, {("4f9c", 1): _loadable_node(target_sample_rate_hz=100.0),
+                                        (None, 2): _loadable_node(target_sample_rate_hz=50.0)})
+    with pytest.raises(BusinessRuleViolationError, match="HeadsMustShareSampleRate"):
+        WeaponServeMode.load("cal", "model")
+
+
+def test_load_keeps_heads_sharing_one_sample_rate(monkeypatch):
+    nodes = {1: _loadable_node(target_sample_rate_hz=50.0), 2: _loadable_node(target_sample_rate_hz=50.0)}
+    _load_presence_nodes_as(monkeypatch, nodes)
+    assert PresenceServeMode.load("cal", "model").nodes == nodes
+
+
+@pytest.mark.parametrize("mode_type", [PresenceServeMode, CountServeMode])
+def test_load_refuses_a_calibration_made_from_another_width_than_the_model_was_trained_on(monkeypatch, mode_type):
+    _load_presence_nodes_as(monkeypatch, {3: _loadable_node(trained_subcarrier_width=192,
+                                                            calibrated_subcarrier_width=128)})
+    with pytest.raises(BusinessRuleViolationError,
+                       match="SubcarrierWidthMustMatchContract violated by node 3.*128 subcarriers.*trained on 192"):
+        mode_type.load("cal", "model")
+
+
+def test_weapon_load_refuses_a_calibration_made_from_another_width_than_the_model_was_trained_on(monkeypatch):
+    _load_weapon_nodes_as(monkeypatch, {(None, 3): _loadable_node(trained_subcarrier_width=192,
+                                                                  calibrated_subcarrier_width=128)})
+    with pytest.raises(BusinessRuleViolationError, match="SubcarrierWidthMustMatchContract"):
+        WeaponServeMode.load("cal", "model")
+
+
+@pytest.mark.parametrize("trained_subcarrier_width, calibrated_subcarrier_width",
+                         [(None, 128), (192, None), (None, None), (192, 192)])
+def test_load_keeps_a_model_and_calibration_that_agree_or_leave_a_width_unrecorded(
+        monkeypatch, trained_subcarrier_width, calibrated_subcarrier_width):
+    nodes = {3: _loadable_node(min_num_subcarriers=100, trained_subcarrier_width=trained_subcarrier_width,
+                               calibrated_subcarrier_width=calibrated_subcarrier_width)}
+    _load_presence_nodes_as(monkeypatch, nodes)
+    assert PresenceServeMode.load("cal", "model").nodes == nodes

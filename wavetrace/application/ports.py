@@ -43,7 +43,8 @@ class CameraLabelCapture(Protocol):
     def record_labels(self, duration_s: float, *, stop: threading.Event,
                       on_label: Callable[[Label], None]) -> list[Label]:
         """Labels camera frames live for `duration_s`, or until `stop` is set, calling `on_label` per frame;
-        returns the Labels sorted by timestamp, on the CSI clock. Raises when the camera cannot open."""
+        returns the Labels sorted by timestamp, on the CSI clock. Raises when the camera cannot open. Must
+        return once `stop` is set: the runner joins its thread without a timeout."""
 
 
 class RecognitionBackend(Protocol):

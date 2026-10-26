@@ -12,6 +12,7 @@ from wavetrace.adapters.store.model_runs import METRICS_FILE_NAME, MODEL_FILE_NA
 from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
 from wavetrace.domain.recognition.input_plan import plan_input
+from wavetrace.domain.rules import HeadsMustShareClassOrdering, require
 from wavetrace.recognition.link import accuracy_weights
 from wavetrace.recognition.serving import (NodeServer, copy_window, discover_node_dirs, load_logo_accuracy,
                                             required_subcarrier_width)
@@ -82,9 +83,7 @@ def load_weapon_links(calibration_root, model_root):
         {key: accuracy for key, accuracy in accuracy_by_key.items() if accuracy is not None})
     for key in entries:
         entries[key].weight = weights.get(key, 1.0)
-    orders = {tuple(entry.classes) for entry in entries.values()}
-    if len(orders) > 1:
-        raise ValueError(f"weapon heads disagree on class ordering {orders}; retrain consistently")
+    require(HeadsMustShareClassOrdering(), [entry.classes for entry in entries.values()], "the weapon heads")
     return entries
 
 

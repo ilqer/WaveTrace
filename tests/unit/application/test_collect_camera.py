@@ -1,4 +1,5 @@
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -201,23 +202,24 @@ def test_no_usable_csi_is_an_error_and_nothing_is_trained():
     assert training.dataset_dirs_by_node == {}
 
 
-class _StuckCamera:
-    """Ignores its stop until the test releases it."""
+class _SlowToStopCamera:
+    """Honours its stop only `stop_delay_s` after it is set."""
 
-    def __init__(self):
-        self.release = threading.Event()
+    def __init__(self, stop_delay_s):
+        self._stop_delay_s = stop_delay_s
+        self.has_returned = False
 
     def record_labels(self, duration_s, *, stop, on_label):
-        self.release.wait()
+        stop.wait()
+        time.sleep(self._stop_delay_s)
+        self.has_returned = True
         return _labels([1])
 
 
-def test_a_camera_still_labelling_after_the_join_timeout_is_an_error_and_nothing_is_written(monkeypatch):
+def test_a_camera_still_labelling_after_the_join_timeout_is_an_error_and_is_joined(monkeypatch):
     monkeypatch.setattr(collect_camera, "_MIN_CAMERA_JOIN_TIMEOUT_S", 0.05)
-    camera = _StuckCamera()
-    try:
-        run = _Run({("aa", 1): _frames(8)}, camera=camera, training=_FakeTraining())
-    finally:
-        camera.release.set()
+    camera = _SlowToStopCamera(stop_delay_s=0.3)
+    run = _Run({("aa", 1): _frames(8)}, camera=camera, training=_FakeTraining())
     assert run.messages[-1].startswith("[ERROR] the camera did not stop within")
     assert run.written == [] and run.heatmap_frames_by_node is None
+    assert camera.has_returned

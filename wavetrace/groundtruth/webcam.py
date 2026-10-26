@@ -11,6 +11,10 @@ keeps the capture loop real-time (no per-frame model latency).
 `WebcamLabelCapture` is the camera-collect adapter: YOLO-seg labels each webcam frame live.
 """
 
+import select
+import shutil
+import subprocess
+import threading
 import time
 from dataclasses import dataclass
 
@@ -32,6 +36,10 @@ class WebcamOptions:
             raise ValueError("width and height must be positive")
 
 
+_PIPE_POLL_S = 0.1
+_TERMINATE_GRACE_S = 2.0
+
+
 class WebcamCapture:
     """ffmpeg-based webcam wrapper yielding (timestamp_s, RGB ndarray).
     Uses ffmpeg subprocess for capture (avoids macOS AVFoundation run-loop
@@ -39,16 +47,18 @@ class WebcamCapture:
     On macOS, ffmpeg triggers the system permission dialog on first run—no
     manual Terminal camera grant needed.
     `clock` is injectable (defaults to wall-clock `time.time`, matching the CSI
-    ntp_ms stamp so labels and CSI windows align). Use as a context manager."""
+    ntp_ms stamp so labels and CSI windows align). Once `stop` is set a read returns None within
+    _PIPE_POLL_S, even from a stalled ffmpeg. Use as a context manager: it owns the ffmpeg process."""
 
-    def __init__(self, options: WebcamOptions = WebcamOptions(), *, clock=time.time):
+    def __init__(self, options: WebcamOptions = WebcamOptions(), *, clock=time.time,
+                 stop: threading.Event | None = None):
         self._index = options.index
         self._width, self._height = options.width, options.height
         self._clock = clock
+        self._stop = stop
         self._ffmpeg_process = None
 
     def open(self) -> "WebcamCapture":
-        import shutil, subprocess
         ffmpeg_path = shutil.which("ffmpeg")
         if ffmpeg_path is None:
             raise RuntimeError(
@@ -65,12 +75,16 @@ class WebcamCapture:
             "-pix_fmt", "rgb24",
             "-",
         ]
+        # unbuffered, so select() on the pipe sees every byte ffmpeg wrote
         self._ffmpeg_process = subprocess.Popen(
-            ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        first_frame = self._frame_bytes()
+            ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+        try:
+            first_frame = self._frame_bytes()
+        except BaseException:
+            self.close()
+            raise
         if first_frame is None:
-            self._ffmpeg_process.terminate()
-            self._ffmpeg_process = None
+            self.close()
             raise RuntimeError(
                 f"cannot open webcam index {self._index} via ffmpeg "
                 "(grant camera permission in System Settings → Privacy → Camera)"
@@ -78,16 +92,24 @@ class WebcamCapture:
         self._first_frame = first_frame  # buffer the first frame so read() can return it
         return self
 
-    def _frame_bytes(self) -> bytes | None:
-        """Read exactly one raw RGB frame from the ffmpeg pipe, or None on EOF/error."""
-        frame_size_bytes = self._width * self._height * 3
-        received_bytes = b""
-        while len(received_bytes) < frame_size_bytes:
-            chunk = self._ffmpeg_process.stdout.read(frame_size_bytes - len(received_bytes))
-            if not chunk:
+    def _frame_bytes(self) -> bytearray | None:
+        """Exactly one raw RGB frame from the ffmpeg pipe, or None on EOF or once `stop` is set. Fills one
+        new frame buffer in place, O(frame bytes). select() on a pipe is POSIX-only, as is avfoundation."""
+        frame = bytearray(self._width * self._height * 3)
+        frame_view = memoryview(frame)
+        pipe = self._ffmpeg_process.stdout
+        num_received_bytes = 0
+        while num_received_bytes < len(frame):
+            if self._stop is not None and self._stop.is_set():
                 return None
-            received_bytes += chunk
-        return received_bytes
+            is_readable, _, _ = select.select([pipe], [], [], _PIPE_POLL_S)
+            if not is_readable:
+                continue
+            num_read_bytes = pipe.readinto(frame_view[num_received_bytes:])
+            if not num_read_bytes:
+                return None
+            num_received_bytes += num_read_bytes
+        return frame
 
     def read(self):
         """Grab one frame → (timestamp_s, RGB ndarray) or None on failure."""
@@ -105,13 +127,19 @@ class WebcamCapture:
         return self._clock(), rgb_frame
 
     def close(self) -> None:
-        if self._ffmpeg_process is not None:
-            self._ffmpeg_process.terminate()
+        """Terminates ffmpeg, kills it if it outlives _TERMINATE_GRACE_S, and reaps it either way."""
+        ffmpeg_process, self._ffmpeg_process = self._ffmpeg_process, None
+        if ffmpeg_process is None:
+            return
+        try:
+            ffmpeg_process.terminate()
             try:
-                self._ffmpeg_process.wait(timeout=2)
-            except Exception:
-                self._ffmpeg_process.kill()
-            self._ffmpeg_process = None
+                ffmpeg_process.wait(timeout=_TERMINATE_GRACE_S)
+            except subprocess.TimeoutExpired:
+                ffmpeg_process.kill()
+                ffmpeg_process.wait()
+        finally:
+            ffmpeg_process.stdout.close()
 
     def __enter__(self):
         return self.open()
@@ -194,6 +222,6 @@ class WebcamLabelCapture(CameraLabelCapture):
         self._frame_rate_hz = frame_rate_hz
 
     def record_labels(self, duration_s, *, stop, on_label):
-        with WebcamCapture(WebcamOptions(index=self._camera_index)) as webcam:
+        with WebcamCapture(WebcamOptions(index=self._camera_index), stop=stop) as webcam:
             return record_labels_online(webcam.read, self._labeler, duration_s, frame_rate_hz=self._frame_rate_hz,
                                         stop=stop, on_label=on_label)

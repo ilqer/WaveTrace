@@ -467,16 +467,17 @@ class WaveTraceRunner:
         rx_node_ids = tuple(calibration_by_rx_node)
         health_meter = NodeHealthMeter(calibration_by_node=calibration_by_rx_node)
         dashboard = self._build_dashboard(mode, serve_mode.class_ids, health_meter, heatmap_head, None)
-        receiver = HealthObservedReceiver(UdpLinkBatchReceiver(port, timeout_s=0.5), health_meter)
         use_case = ServeMeshUseCase(serve_mode, clock=time.time, chunk_s=CHUNK_S, link_timeout_s=LINK_TIMEOUT_S,
                                     buffer_s=BUFFER_S)
-        self.log("Stream started.")
-        with contextlib.closing(use_case.iter_fused(receiver)) as fused_verdicts:
-            for fused_verdict in fused_verdicts:
-                if not self.is_running:
-                    break
-                if fused_verdict is not None and fused_verdict.blended_proba is not None:
-                    _publish_fused_verdict(dashboard, fused_verdict, rx_node_ids)
+        with UdpLinkBatchReceiver(port, timeout_s=0.5) as udp_receiver:
+            receiver = HealthObservedReceiver(udp_receiver, health_meter)
+            self.log("Stream started.")
+            with contextlib.closing(use_case.iter_fused(receiver)) as fused_verdicts:
+                for fused_verdict in fused_verdicts:
+                    if not self.is_running:
+                        break
+                    if fused_verdict is not None and fused_verdict.blended_proba is not None:
+                        _publish_fused_verdict(dashboard, fused_verdict, rx_node_ids)
         self.log("Stream ended.")
 
     def _serve_single_node(self, source, calibration_dir: str, model_path: str, mode: str, heatmap_head) -> None:
@@ -497,6 +498,8 @@ class WaveTraceRunner:
             for verdict in verdicts:
                 if not self.is_running:
                     break
+                if verdict is None:
+                    continue
                 # a recording or synthetic source yields faster than real time, so pace it to its timestamps
                 if last_window_timestamp_s > 0:
                     window_gap_s = verdict.timestamp_s - last_window_timestamp_s

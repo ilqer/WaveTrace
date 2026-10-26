@@ -16,6 +16,7 @@ from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
 from wavetrace.domain.model_config import ModelConfig
 from wavetrace.domain.recognition.input_plan import plan_input
+from wavetrace.domain.rules import SubcarrierWidthMustCoverCalibration
 
 
 @dataclass(slots=True)
@@ -36,11 +37,24 @@ class NodeServer:
     accuracy: float = 1.0
     weight: float = 1.0
 
+    @property
+    def trained_subcarrier_width(self) -> int | None:
+        """The raw capture width the head was trained on; None for a model saved before it was recorded."""
+        return self.session.head.contract.subcarrier_width
+
+    @property
+    def calibrated_subcarrier_width(self) -> int | None:
+        """The raw capture width the calibration was made from; None for one saved before it was recorded."""
+        return self.calibration.subcarrier_width
+
+    @property
+    def target_sample_rate_hz(self) -> float:
+        return self.session.head.contract.target_sample_rate_hz
+
 
 def required_subcarrier_width(result):
     """Subcarrier width the calibration needs = highest index it references + 1."""
-    subcarrier_indices = [int(i) for i in list(result.subcarriers) + list(result.image_subcarriers)]
-    return 1 + max(subcarrier_indices)
+    return SubcarrierWidthMustCoverCalibration.for_calibration(result).required_width
 
 
 def discover_node_dirs(calibration_root, model_root):

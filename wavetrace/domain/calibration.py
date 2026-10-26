@@ -20,6 +20,8 @@ class CalibrationResult:
     baseline_diff: np.ndarray    # mean CFO-free differential channel H(k)·conj(H(k-1)), complex, (S-1,)
     # ALL noise-gate-passing subcarriers, ascending — the CNN image rows
     image_subcarriers: list[int] = field(default_factory=list)
+    # raw capture width the baseline was made from; None for a calibration saved before it was recorded
+    subcarrier_width: int | None = None
 
 
 def reflection_signature(grid, result: CalibrationResult):
@@ -116,4 +118,5 @@ class Calibration:
             num_baseline=len(self._amplitudes),
             baseline_mag=amplitudes.mean(axis=0),
             baseline_diff=np.stack(self._differential_channels).mean(axis=0),
+            subcarrier_width=int(amplitudes.shape[1]),
         )

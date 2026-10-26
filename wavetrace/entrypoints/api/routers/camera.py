@@ -4,35 +4,16 @@ segfaults on a background thread. cv2 is used only for YOLO annotation."""
 import asyncio
 import shutil
 import subprocess
-import threading
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-if TYPE_CHECKING:
-    from ultralytics import YOLO
+from wavetrace.entrypoints.api.dashboard_state import Dashboard
 
 router = APIRouter()
 
 JPEG_START_OF_IMAGE = b"\xff\xd8"
 JPEG_END_OF_IMAGE = b"\xff\xd9"
-
-_yolo_cache: dict[str, "YOLO | None"] = {}
-_yolo_lock = threading.Lock()
-_camera_active = False
-
-
-def _load_yolo(weights: str = "yolov8n-seg.pt"):
-    with _yolo_lock:
-        if weights not in _yolo_cache:
-            try:
-                from ultralytics import YOLO
-                _yolo_cache[weights] = YOLO(weights)
-            except Exception as error:
-                _yolo_cache[weights] = None   # cache the failure so we don't retry on every frame
-                print(f"[YOLO] load failed: {error}")
-    return _yolo_cache.get(weights)
 
 
 def _annotate_frame(model, frame, weapon_class_ids=(43,)):
@@ -103,21 +84,20 @@ async def camera_check(cam_index: int = 0):
 
 
 @router.post("/api/camera/stop")
-def stop_camera():
-    global _camera_active
-    _camera_active = False
+def stop_camera(dashboard: Dashboard):
+    dashboard.camera.is_streaming = False
     return {"ok": True}
 
 
 @router.get("/api/camera/stream")
-async def camera_stream(request: Request, index: int = 0, annotate: bool = False,
+async def camera_stream(request: Request, dashboard: Dashboard, index: int = 0, annotate: bool = False,
                         weights: str = "yolov8n-seg.pt"):
     """ffmpeg's mjpeg output is one continuous byte stream, so frames are cut at the JPEG
     SOI/EOI markers and sent as multipart/x-mixed-replace chunks."""
-    global _camera_active
-    _camera_active = True
+    camera = dashboard.camera
+    camera.is_streaming = True
 
-    yolo_model = await asyncio.to_thread(_load_yolo, weights) if annotate else None
+    yolo_model = await asyncio.to_thread(camera.load_model, weights) if annotate else None
 
     async def _generate():
         try:
@@ -146,7 +126,7 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
         frame_index = 0
 
         try:
-            while _camera_active:
+            while camera.is_streaming:
                 if await request.is_disconnected():
                     break
 
@@ -190,6 +170,7 @@ async def camera_stream(request: Request, index: int = 0, annotate: bool = False
                 ffmpeg_process.kill()
             except ProcessLookupError:
                 pass
+            await ffmpeg_process.wait()
 
     return StreamingResponse(_generate(),
                              media_type="multipart/x-mixed-replace; boundary=frame")

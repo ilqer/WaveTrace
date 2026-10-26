@@ -61,14 +61,15 @@ Under `wavetrace/entrypoints/api/`:
 | File | What it does |
 |---|---|
 | `app.py` | Builds the FastAPI app: the lifespan (one `DashboardState`, the Foxglove bridge, one broadcast task per channel, stopping the runner on shutdown), CORS, the five routers in route order, and the static UI mount last |
-| `dashboard_state.py` | `DashboardState` (the six channels, `DeviceHub`, the current runner and its task), stored on `app.state` and handed to routes by `Depends(get_dashboard_state)` (the `Dashboard` annotation); `BroadcastChannel` — one queue sent to every WebSocket client of one channel (inference and stream also go to Foxglove first) |
+| `dashboard_state.py` | `DashboardState` (the six channels, `DeviceHub`, the current runner and its task, the `CameraFeed`), stored on `app.state` and handed to routes by `Depends(get_dashboard_state)` (the `Dashboard` annotation); `BroadcastChannel` — one queue sent to every WebSocket client of one channel (inference and stream also go to Foxglove first) |
 | `routers/pipeline.py` | `StartRequest`, `/api/action/start`, `/api/action/stop`, `/api/pipeline/state` and the five pipeline sockets (`/ws/inference`, `/ws/stream`, `/ws/logs`, `/ws/training`, `/ws/telemetry`) |
 | `routers/model.py` | `/api/model/weights`, `/api/fusion/weights`, `/api/model/upload` (paths confined to `output/`), `/api/weapon/litmus`, `/api/calib/info` |
 | `routers/paths.py` | `/api/paths/scan`, `/api/paths/browse` |
 | `routers/device.py` | The serial, flash, Pi, script and device-process routes, and `/ws/device` |
-| `routers/camera.py` | `/api/camera/check`, `/api/camera/stream`, `/api/camera/stop` (ffmpeg frames, optional YOLO annotation) |
+| `routers/camera.py` | `/api/camera/check`, `/api/camera/stream`, `/api/camera/stop` (ffmpeg frames, optional YOLO annotation; ffmpeg is killed and reaped when the stream ends) |
+| `camera_feed.py` | `CameraFeed` — whether the camera stream is on (`/api/camera/stop` clears it) and the YOLO models loaded so far, one per weights file; a failed load is remembered as no model |
 | `streamer.py` | `WaveTraceRunner` — drives the WaveTrace pipeline in a worker thread and pushes results to the queues; inference consumes `ServeMeshUseCase.iter_fused` (mesh) or `iter_window_verdicts` (one node); camera collection translates the request into `pipeline.collect_camera` (the same use-case and messages as `scripts/collect_camera.py`, 5 Hz labels, subject `cam`, no training, root `train_data`; an older flat calibration dir counts as node 0), and `stop` ends it within a second; training translates the request onto `train_every_node` and the collect scripts' training policies (see Train below) |
-| `device_ctl.py` | `DeviceHub` — serial monitor, firmware flash, Pi SSH, local script runner |
+| `device_ctl.py` | `DeviceHub` — serial monitor, firmware flash, Pi SSH, local script runner; a command whose output cannot be relayed is killed, and every command is reaped |
 | `foxglove.py` | Optional Foxglove Studio integration for 3D visualization |
 | `ws_publisher.py` | `WsPublisher` — `Publisher` that serializes each result and puts it on an asyncio queue from a background thread |
 | `server_options.py` | `WebServerOptions` — uvicorn host, port and reload settings; validates the port range |

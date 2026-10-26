@@ -3,12 +3,13 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from fastapi import Depends, WebSocket, WebSocketDisconnect
 from starlette.requests import HTTPConnection
 
+from wavetrace.entrypoints.api.camera_feed import CameraFeed
 from wavetrace.entrypoints.api.device_ctl import DeviceHub
 from wavetrace.entrypoints.api.streamer import WaveTraceRunner
 
@@ -58,6 +59,7 @@ class DashboardState:
     device_hub: DeviceHub
     runner: WaveTraceRunner | None = None
     runner_task: asyncio.Task | None = None
+    camera: CameraFeed = field(default_factory=CameraFeed)
 
 
 def get_dashboard_state(connection: HTTPConnection) -> DashboardState:

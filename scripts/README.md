@@ -56,6 +56,17 @@ python scripts/run_live_mesh.py    --root data/2g4_ht40
 
 `collect_presence.py` walks you through it — it prompts you to keep the room empty, then to walk around. It trains after each session pair. `run_live_mesh.py` loads whatever model is there and runs live; expect `PRESENT` / `absent` printed every ~1.5 s.
 
+The three live scripts (`run_live_mesh.py`, `run_weapon.py`, `run_count.py`) leave a slow link out of a fuse by one of two rules, chosen with `--rate-gate`:
+
+- `target` (default): drop a link delivering under `--min-rate-fraction` (default 0.8) of its head's target rate (100 Hz by default).
+- `peers`: drop a link delivering under `--min-rate-fraction` of the median delivered rate of the live links, so links that keep step with each other are kept even when all of them run at, say, 30 Hz. With fewer than 2 measurable links nothing is dropped.
+
+```bash
+python scripts/run_live_mesh.py --root data/2g4_ht40 --rate-gate peers --min-rate-fraction 0.8
+```
+
+Drops are counted per rule and logged (at most one warning per rule every 10 s). The dashboard keeps the defaults.
+
 ### 2b. Weapon
 
 ```bash

@@ -83,7 +83,9 @@ class CollectCameraUseCase:
 
     def _capture_with_camera(self, duration_s, stop):
         """(links, labels), or None after logging why the camera gave no labels. The camera labels on a
-        worker thread while this one records the CSI; the capture's end stops it."""
+        worker thread while this one records the CSI; the capture's end stops it, and the thread is always
+        joined before this returns: a camera still running after the join timeout is logged as an error,
+        then waited for."""
         camera_result = {}
         camera_stop = threading.Event()
         progress = {"num_labels": 0, "num_positive": 0}
@@ -104,16 +106,19 @@ class CollectCameraUseCase:
 
         self._log(f"   [CAPTURING] {duration_s:g}s of camera labels and mesh CSI...")
         camera_join_timeout_s = max(_MIN_CAMERA_JOIN_TIMEOUT_S, 0.1 * duration_s)
-        camera_thread = threading.Thread(target=record_labels, daemon=True)
+        camera_thread = threading.Thread(target=record_labels)
         camera_thread.start()
         try:
             links = self._capture.capture_for(duration_s, stop=stop)
         finally:
             camera_stop.set()
             camera_thread.join(timeout=camera_join_timeout_s)
+            has_camera_overrun = camera_thread.is_alive()
+            if has_camera_overrun:
+                self._log(f"[ERROR] the camera did not stop within {camera_join_timeout_s:g}s of the capture.")
+                camera_thread.join()
         self._on_capture_end()
-        if camera_thread.is_alive():
-            self._log(f"[ERROR] the camera did not stop within {camera_join_timeout_s:g}s of the capture.")
+        if has_camera_overrun:
             return None
         if "error" in camera_result:
             self._log(f"[ERROR] webcam: {camera_result['error']}")

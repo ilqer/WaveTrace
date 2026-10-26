@@ -61,6 +61,10 @@ class NexmonSource(CsiSource):
         raw_timestamps_s = getattr(reader, "sec", None)
         timestamps_s = (np.asarray(raw_timestamps_s, dtype=float)
                         if raw_timestamps_s is not None else np.arange(len(csi)) / 100.0)
+        # csiread's `sec` holds whole seconds; `usec` carries the fraction
+        microseconds = getattr(reader, "usec", None)
+        if raw_timestamps_s is not None and microseconds is not None:
+            timestamps_s = timestamps_s + np.asarray(microseconds, dtype=float) * 1e-6
         for i in range(len(csi)):
             frame = CsiFrame(1, csi.shape[1])
             frame.grid[0, :] = csi[i].astype(np.complex64)
@@ -70,26 +74,30 @@ class NexmonSource(CsiSource):
 
     def _decode_live(self):
         import subprocess, tempfile, os, time as _time
-        live_pcap_path = tempfile.NamedTemporaryFile(suffix=".pcap", delete=False).name
-        tcpdump_process = subprocess.Popen(
-            ["tcpdump", "-i", self._interface, "-w", live_pcap_path, "dst port 5500"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        count = 0
+        pcap_file_descriptor, live_pcap_path = tempfile.mkstemp(suffix=".pcap")
+        os.close(pcap_file_descriptor)
         try:
-            while self._max_frames is None or count < self._max_frames:
-                _time.sleep(0.3)
-                if os.path.getsize(live_pcap_path) < 64:
-                    continue
-                self._pcap_path = live_pcap_path
-                for frame in self._decode_file():
-                    yield frame
-                    count += 1
-                    if self._max_frames is not None and count >= self._max_frames:
-                        return
-                open(live_pcap_path, "wb").close()    # truncate consumed chunk
+            # leaving the `with` waits for the terminated tcpdump, so no zombie outlives the generator
+            with subprocess.Popen(
+                ["tcpdump", "-i", self._interface, "-w", live_pcap_path, "dst port 5500"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ) as tcpdump_process:
+                count = 0
+                try:
+                    while self._max_frames is None or count < self._max_frames:
+                        _time.sleep(0.3)
+                        if os.path.getsize(live_pcap_path) < 64:
+                            continue
+                        self._pcap_path = live_pcap_path
+                        for frame in self._decode_file():
+                            yield frame
+                            count += 1
+                            if self._max_frames is not None and count >= self._max_frames:
+                                return
+                        open(live_pcap_path, "wb").close()    # truncate consumed chunk
+                finally:
+                    tcpdump_process.terminate()
         finally:
-            tcpdump_process.terminate()
             try:
                 os.unlink(live_pcap_path)
             except OSError:

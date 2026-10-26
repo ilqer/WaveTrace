@@ -35,6 +35,7 @@ def test_calibration_locks_gain_and_selects_subcarriers():
 
     assert isinstance(result, CalibrationResult)
     assert result.num_baseline == frame_count
+    assert result.subcarrier_width == subcarrier_count
     assert result.reference_scale > 0
     assert informative in result.subcarriers
     assert len(result.subcarriers) <= 6

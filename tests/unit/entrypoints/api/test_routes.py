@@ -292,3 +292,38 @@ def test_camera_stream_without_ffmpeg_is_an_empty_multipart_body(client, monkeyp
     assert (response.status_code, response.content) == (200, b"")
     assert response.headers["content-type"] == "multipart/x-mixed-replace; boundary=frame"
     assert client.post("/api/camera/stop").json() == {"ok": True}
+
+
+class _FakeFfmpegProcess:
+    """An asyncio subprocess whose stdout holds one JPEG frame, then EOF."""
+
+    def __init__(self):
+        self.stdout = asyncio.StreamReader()
+        self.stdout.feed_data(b"junk\xff\xd8frame-bytes\xff\xd9")
+        self.stdout.feed_eof()
+        self.calls = []
+
+    def kill(self):
+        self.calls.append("kill")
+
+    async def wait(self):
+        self.calls.append("wait")
+        return -9
+
+
+def test_camera_stream_cuts_jpeg_frames_and_reaps_ffmpeg(client, monkeypatch):
+    processes = []
+
+    async def spawn(*command, **kwargs):
+        processes.append(_FakeFfmpegProcess())
+        return processes[-1]
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/opt/ffmpeg")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    response = client.get("/api/camera/stream")
+    assert response.content == (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 15\r\n\r\n"
+                                b"\xff\xd8frame-bytes\xff\xd9\r\n")
+    assert processes[0].calls == ["kill", "wait"]
+    assert client.app.state.dashboard.camera.is_streaming is True
+    assert client.post("/api/camera/stop").json() == {"ok": True}
+    assert client.app.state.dashboard.camera.is_streaming is False

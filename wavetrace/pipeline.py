@@ -23,10 +23,10 @@ from wavetrace.application.collect_mesh import CollectMeshUseCase, CollectMode, 
 from wavetrace.application.ports import CameraLabelCapture
 from wavetrace.application.localize import localize
 from wavetrace.application.serve import infer_windows
-from wavetrace.application.serve_mesh import ServeMeshUseCase, ServeMode
+from wavetrace.application.serve_mesh import RateGate, ServeMeshUseCase, ServeMode
 from wavetrace.domain.calibration import Calibration
 from wavetrace.domain.contracts import (
-    DEFAULT_HOP_FRAMES, DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES,
+    DEFAULT_HOP_FRAMES, DEFAULT_MIN_SAMPLE_RATE_FRACTION, DEFAULT_TARGET_SAMPLE_RATE_HZ, DEFAULT_WINDOW_FRAMES,
 )
 from wavetrace.domain.groundtruth.dataset import build_stacked_dataset
 from wavetrace.domain.guard import DriftMonitor
@@ -60,10 +60,12 @@ def collect_source(source, calibration_dir, out_dir, spans, *, stage="presence",
     return save_dataset(dataset, out_dir), dataset
 
 
-def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=False, guard=False):
+def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=False, guard=False,
+                  min_sample_rate_fraction=DEFAULT_MIN_SAMPLE_RATE_FRACTION):
     """mode: 'presence' or 'weapon', picks the head loader. guard adds recalibration advisories
     (O(S) extra per frame) and, in weapon mode only, debounced weapon alerts; vote appends one soft-vote verdict over the
-    stream. Returns the published verdicts."""
+    stream; a window delivered below min_sample_rate_fraction of the head's target rate is skipped. Returns the
+    published verdicts."""
     calibration_result, gain_lock = load_calibration(calibration_dir)
     session = open_session(mode, model_path)
     behaviours = []
@@ -73,17 +75,20 @@ def run_inference(source, calibration_dir, model_path, mode, publisher, *, vote=
     if vote:
         behaviours.append(SegmentVoteBehaviour(SegmentVoter()))
     return infer_windows(source, calibration_result, gain_lock, session, mode, publisher,
-                         behaviours=behaviours)
+                         behaviours=behaviours, min_sample_rate_fraction=min_sample_rate_fraction)
 
 
-def serve_mesh(mode: ServeMode, port):
+def serve_mesh(mode: ServeMode, port, *, rate_gate=RateGate.TARGET,
+               min_sample_rate_fraction=DEFAULT_MIN_SAMPLE_RATE_FRACTION):
     """Prints `mode`'s banner, then one fused verdict per CHUNK_S from the mesh on udp/`port` until
-    Ctrl-C."""
+    Ctrl-C. rate_gate and min_sample_rate_fraction pick which links a fuse leaves out as too slow."""
     banner = mode.format_banner(port)
-    receiver = UdpLinkBatchReceiver(port, timeout_s=0.5)
-    print(banner)
-    ServeMeshUseCase(mode, clock=time.time, chunk_s=CHUNK_S, link_timeout_s=LINK_TIMEOUT_S,
-                     buffer_s=BUFFER_S).run(receiver)
+    use_case = ServeMeshUseCase(mode, clock=time.time, chunk_s=CHUNK_S, link_timeout_s=LINK_TIMEOUT_S,
+                                buffer_s=BUFFER_S, rate_gate=rate_gate,
+                                min_sample_rate_fraction=min_sample_rate_fraction)
+    with UdpLinkBatchReceiver(port, timeout_s=0.5) as receiver:
+        print(banner)
+        use_case.run(receiver)
 
 
 def collect_mesh(mode: CollectMode, *, port, calibration_root, node_id, num_sessions, max_frames_per_link):

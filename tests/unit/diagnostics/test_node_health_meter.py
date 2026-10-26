@@ -3,7 +3,7 @@ import pytest
 
 from fixtures.synthetic_csi import calibrate_quiet_baseline, generate_quiet_baseline
 from wavetrace.domain.calibration import CalibrationResult
-from wavetrace.diagnostics import NodeHealthMeter
+from wavetrace.diagnostics import HealthMeterOptions, NodeHealthMeter, telemetry
 
 NUM_ANTENNAS = 2
 NUM_SUBCARRIERS = 64
@@ -104,3 +104,33 @@ def test_zero_reference_amplitude_reports_no_drift():
     health = _health_of(meter, 3)
     assert health["gain_drift"] is None
     assert health["subcarriers"] == [4, 9]
+
+
+class _SteppingWallClock:
+    def __init__(self, step_s):
+        self.now_s = 0.0
+        self.step_s = step_s
+
+    def __call__(self):
+        self.now_s += self.step_s
+        return self.now_s
+
+
+@pytest.mark.parametrize("delivered_rate_hz, is_rate_ok", [(80.5, True), (209.5, True), (79.5, False)])
+def test_rate_is_ok_down_to_eighty_percent_of_the_target(monkeypatch, delivered_rate_hz, is_rate_ok):
+    monkeypatch.setattr(telemetry.time, "time", _SteppingWallClock(1.0 / delivered_rate_hz))
+    meter = NodeHealthMeter()
+    _feed_quiet_room(meter, node_id=3)
+
+    health = _health_of(meter, 3)
+    assert health["hz"] == pytest.approx(delivered_rate_hz, abs=0.1)
+    assert health["hz_ok"] is is_rate_ok
+
+
+@pytest.mark.parametrize("delivered_rate_hz, is_rate_ok", [(8.0, True), (7.5, False)])
+def test_rate_is_ok_down_to_the_configured_fraction_of_the_target(monkeypatch, delivered_rate_hz, is_rate_ok):
+    monkeypatch.setattr(telemetry.time, "time", _SteppingWallClock(1.0 / delivered_rate_hz))
+    meter = NodeHealthMeter(HealthMeterOptions(target_sample_rate_hz=80.0, min_sample_rate_fraction=0.1))
+    _feed_quiet_room(meter, node_id=3)
+
+    assert _health_of(meter, 3)["hz_ok"] is is_rate_ok

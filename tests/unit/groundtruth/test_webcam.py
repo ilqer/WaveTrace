@@ -1,9 +1,16 @@
+import os
+import shutil
+import subprocess
 import threading
+import time
+
+import numpy as np
+import pytest
 
 from wavetrace.groundtruth.vision_labeler import VisionLabeler, Detection, LabelerOptions
 from wavetrace.domain.groundtruth.labeler import presence_label_function, weapon_label_function
-from wavetrace.groundtruth.webcam import (record_frames, record_labels_online, stream_labels,
-                                          COCO_WEAPON_CLASSES)
+from wavetrace.groundtruth.webcam import (WebcamCapture, WebcamOptions, record_frames, record_labels_online,
+                                          stream_labels, COCO_WEAPON_CLASSES)
 
 
 def _stub_detector(image):
@@ -79,3 +86,93 @@ def test_record_labels_online_labels_live_and_calls_back():
 
 def test_coco_weapon_default_is_knife():
     assert 43 in COCO_WEAPON_CLASSES
+
+
+TINY_WEBCAM = WebcamOptions(index=0, width=2, height=1)
+FRAME_SIZE_BYTES = 2 * 1 * 3
+
+
+class _FakeFfmpeg:
+    """A Popen whose stdout is a real pipe the test writes raw RGB bytes into."""
+
+    def __init__(self, command, *, stdout, stderr, bufsize, ignores_terminate=False):
+        read_fd, self.write_fd = os.pipe()
+        self.stdout = os.fdopen(read_fd, "rb", buffering=bufsize)
+        self.calls = []
+        self._ignores_terminate = ignores_terminate
+
+    def send(self, data):
+        os.write(self.write_fd, data)
+
+    def hang_up(self):
+        os.close(self.write_fd)
+
+    def terminate(self):
+        self.calls.append("terminate")
+
+    def kill(self):
+        self.calls.append("kill")
+
+    def wait(self, timeout=None):
+        self.calls.append("wait")
+        if self._ignores_terminate and "kill" not in self.calls:
+            raise subprocess.TimeoutExpired("ffmpeg", timeout)
+        return 0
+
+
+@pytest.fixture
+def spawn_ffmpeg(monkeypatch):
+    """Returns spawn(first_bytes, **fake_options) -> the fake ffmpeg the next WebcamCapture.open starts."""
+    monkeypatch.setattr(shutil, "which", lambda name: "/opt/ffmpeg")
+    processes = []
+
+    def spawn(first_bytes, **fake_options):
+        def start(command, **popen_options):
+            process = _FakeFfmpeg(command, **popen_options, **fake_options)
+            if first_bytes is None:
+                process.hang_up()
+            else:
+                process.send(first_bytes)
+            processes.append(process)
+            return process
+        monkeypatch.setattr(subprocess, "Popen", start)
+        return processes
+
+    return spawn
+
+
+def test_webcam_reads_whole_frames_and_reaps_ffmpeg_on_close(spawn_ffmpeg):
+    processes = spawn_ffmpeg(bytes(range(6)))
+    with WebcamCapture(TINY_WEBCAM, clock=lambda: 12.5) as webcam:
+        process = processes[0]
+        process.send(bytes(range(6, 9)))
+        process.send(bytes(range(9, 12)))
+        first, second = webcam.read(), webcam.read()
+    assert first[0] == 12.5 and first[1].tolist() == [[[0, 1, 2], [3, 4, 5]]]
+    assert np.array_equal(second[1].ravel(), np.arange(6, 12))
+    assert process.calls == ["terminate", "wait"] and process.stdout.closed
+
+
+def test_a_webcam_that_sends_no_frame_is_reaped_before_the_error(spawn_ffmpeg):
+    processes = spawn_ffmpeg(None)
+    with pytest.raises(RuntimeError, match="cannot open webcam index 0"):
+        WebcamCapture(TINY_WEBCAM).open()
+    assert processes[0].calls == ["terminate", "wait"] and processes[0].stdout.closed
+
+
+def test_close_kills_an_ffmpeg_that_ignores_terminate_and_still_waits(spawn_ffmpeg):
+    processes = spawn_ffmpeg(bytes(FRAME_SIZE_BYTES), ignores_terminate=True)
+    WebcamCapture(TINY_WEBCAM).open().close()
+    assert processes[0].calls == ["terminate", "wait", "kill", "wait"]
+
+
+def test_a_stop_ends_a_read_from_a_stalled_ffmpeg(spawn_ffmpeg):
+    processes = spawn_ffmpeg(bytes(FRAME_SIZE_BYTES))
+    stop = threading.Event()
+    with WebcamCapture(TINY_WEBCAM, stop=stop) as webcam:
+        webcam.read()
+        threading.Timer(0.05, stop.set).start()
+        read_start_s = time.monotonic()
+        assert webcam.read() is None
+        assert time.monotonic() - read_start_s < 2.0
+    processes[0].hang_up()

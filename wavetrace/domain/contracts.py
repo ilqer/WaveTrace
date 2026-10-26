@@ -4,8 +4,16 @@ from typing import Literal
 from wavetrace.domain.model_config import ModelConfig
 
 DEFAULT_TARGET_SAMPLE_RATE_HZ: float = 100.0
+DEFAULT_MIN_SAMPLE_RATE_FRACTION: float = 0.8
 DEFAULT_WINDOW_FRAMES: int = 128
 DEFAULT_HOP_FRAMES: int = 32
+
+
+
+def require_valid_min_sample_rate_fraction(min_sample_rate_fraction: float) -> None:
+    if not 0.0 < min_sample_rate_fraction <= 1.0:
+        raise ValueError("min_sample_rate_fraction must be in (0, 1]")
+
 
 # Bump only when PipelineContract's field set or types change.
 SCHEMA_VERSION: int = 1
