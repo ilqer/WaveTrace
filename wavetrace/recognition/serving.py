@@ -9,6 +9,7 @@ import numpy as np
 from wavetrace import GainLock
 from wavetrace.adapters.recognition.session import InferenceSession, open_session
 from wavetrace.adapters.store.calibration import load_calibration
+from wavetrace.adapters.store.model_runs import METRICS_FILE_NAME, MODEL_FILE_NAME, resolve_run_dir
 from wavetrace.application.serve import WindowView
 from wavetrace.domain.calibration import CalibrationResult
 from wavetrace.domain.dsp.frontend import iter_windows
@@ -56,14 +57,15 @@ def discover_node_dirs(calibration_root, model_root):
 
 def load_presence_node_servers(calibration_root, model_root):
     """({rx node_id: NodeServer}, {rx node_id: LOGO accuracy or None}) for every node with a calibration
-    and a `model.joblib` presence head (a count head is a multi-class presence head). `weight` stays
-    1.0 for the caller to set."""
+    and a `model.joblib` presence head (a count head is a multi-class presence head), each head and its
+    metrics read from the node's current run. `weight` stays 1.0 for the caller to set."""
     nodes = {}
     logo_accuracy_by_node = {}
     for node_id, model_dir, calibration_dir in discover_node_dirs(calibration_root, model_root):
-        model_path = os.path.join(model_dir, "model.joblib")
-        if not os.path.exists(model_path):
+        run_dir = resolve_run_dir(model_dir)
+        if run_dir is None:
             continue
+        model_path = run_dir / MODEL_FILE_NAME
         calibration, gain_lock = load_calibration(calibration_dir)
         session = open_session("presence", model_path)
         should_apply_lock, intercarrier, pick = plan_input("presence", session.head)
@@ -74,7 +76,7 @@ def load_presence_node_servers(calibration_root, model_root):
             config=session.head.config, min_num_subcarriers=required_subcarrier_width(calibration),
             classes=classes, positive_class_index=classes.index(1) if 1 in classes else -1,
         )
-        logo_accuracy_by_node[node_id] = load_logo_accuracy(os.path.join(model_dir, "metrics.json"))
+        logo_accuracy_by_node[node_id] = load_logo_accuracy(run_dir / METRICS_FILE_NAME)
     return nodes, logo_accuracy_by_node
 
 

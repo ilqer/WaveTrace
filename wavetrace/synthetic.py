@@ -1,6 +1,6 @@
-"""Synthetic CSI and paired labels, behind `wavetrace.cli`'s `--synthetic` mode. The raw wire-format
-helpers (`encode_frame` / `generate_raw_frames`) live in `fixtures/synthetic_csi.py` and are used only
-by tests.
+"""Synthetic CSI and paired labels, behind `wavetrace.entrypoints.cli`'s `--synthetic` mode. The raw
+wire-format helpers (`encode_frame` / `generate_raw_frames`) live in `fixtures/synthetic_csi.py` and are
+used only by tests.
 
   - CSI side  → a CsiFrame stream (`generate_stream`); frame.timestamp = the TRUE world time on the
                 CSI host clock. Validates the DSP pipeline only — it cannot fake real posture/weapon

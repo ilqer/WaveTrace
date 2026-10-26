@@ -11,7 +11,9 @@ import numpy as np
 
 from wavetrace.adapters.recognition import DEFAULT_BACKEND_BY_FEATURE_MODE
 from wavetrace.adapters.recognition.heads import build_presence_head, build_weapon_head
-from wavetrace.adapters.store.dataset import load_dataset
+from wavetrace.adapters.store.dataset import list_dataset_files, load_dataset
+from wavetrace.adapters.store.model_runs import METRICS_FILE_NAME, MODEL_FILE_NAME, write_model_run
+from wavetrace.adapters.store.run_manifest import RunProvenance, build_run_manifest
 from wavetrace.domain.groundtruth.dataset import Dataset
 from wavetrace.domain.model_config import ModelConfig
 from wavetrace.domain.recognition import PresenceHead, WeaponHead
@@ -47,6 +49,21 @@ def _logo_metrics(X, y, session_ids, subject_ids, make_head) -> dict:
     return metrics
 
 
+def _save_run(model_dir, head: PresenceHead | WeaponHead, metrics: dict, dataset_dirs,
+              run_provenance: RunProvenance | None) -> None:
+    """model.joblib, metrics.json and the run manifest as one run of `model_dir`: a crash mid-write leaves
+    the previous run current, never a model without its metrics."""
+    dataset_files = [path for dataset_dir in dataset_dirs for path in list_dataset_files(dataset_dir)]
+
+    def write_files(run_dir):
+        head.save(run_dir / MODEL_FILE_NAME)
+        with open(run_dir / METRICS_FILE_NAME, "w") as metrics_file:
+            json.dump(metrics, metrics_file, indent=2)
+
+    manifest = build_run_manifest(head.config, head.contract, dataset_files, run_provenance)
+    write_model_run(model_dir, manifest, write_files)
+
+
 def concat_datasets(datasets) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     recordings = list(datasets)
     if not recordings:
@@ -77,10 +94,13 @@ def train_presence(
     dataset_dirs,
     out_dir="models/presence",
     backend: str | None = None,
+    run_provenance: RunProvenance | None = None,
 ) -> tuple[PresenceHead, dict]:
-    """Writes `model.joblib` and `metrics.json` into out_dir. backend None trains `ModelConfig`'s default."""
-    if isinstance(dataset_dirs, (str, Path)):
-        dataset_dirs = [dataset_dirs]
+    """Writes model.joblib, metrics.json and run_manifest.json as a new current run of out_dir. backend None
+    trains `ModelConfig`'s default. run_provenance: the one a training call shares across its heads; None
+    reads the code state for this head alone."""
+    # a list, as both loading and the manifest's hash read it: a generator would hash nothing
+    dataset_dirs = [dataset_dirs] if isinstance(dataset_dirs, (str, Path)) else list(dataset_dirs)
     loaded: list[Dataset] = [load_dataset(dataset_dir) for dataset_dir in dataset_dirs]
     X, y, session_ids, subject_ids = concat_datasets(loaded)
     metadata = loaded[0].meta
@@ -117,10 +137,7 @@ def train_presence(
         "logo": _logo_metrics(X, y, session_ids, subject_ids, lambda: build_presence_head(config)),
         "fit_seconds": round(fit_duration_s, 3),
     }
-    model_dir = Path(out_dir)
-    head.save(model_dir / "model.joblib")
-    with open(model_dir / "metrics.json", "w") as metrics_file:
-        json.dump(metrics, metrics_file, indent=2)
+    _save_run(out_dir, head, metrics, dataset_dirs, run_provenance)
     return head, metrics
 
 
@@ -131,9 +148,11 @@ def train_weapon(
     feature_mode: str = "ic27",
     report=None,
     backend: str | None = None,
+    run_provenance: RunProvenance | None = None,
 ) -> tuple[WeaponHead, dict]:
-    """Writes `model.joblib` and `metrics.json` into out_dir. backend: used only without a config; None
-    trains the feature mode's default backend.
+    """Writes model.joblib, metrics.json and run_manifest.json as a new current run of out_dir. backend:
+    used only without a config; None trains the feature mode's default backend. run_provenance: as in
+    `train_presence`.
 
     feature_mode:
     - 'ic27': inter-carrier block (variance/mlp/svm).
@@ -143,8 +162,8 @@ def train_weapon(
         raise ValueError(
             f"feature_mode must be one of {sorted(DEFAULT_BACKEND_BY_FEATURE_MODE)}, got {feature_mode!r}"
         )
-    if isinstance(dataset_dirs, (str, Path)):
-        dataset_dirs = [dataset_dirs]
+    # a list, as both loading and the manifest's hash read it: a generator would hash nothing
+    dataset_dirs = [dataset_dirs] if isinstance(dataset_dirs, (str, Path)) else list(dataset_dirs)
     loaded: list[Dataset] = [load_dataset(dataset_dir) for dataset_dir in dataset_dirs]
     X_features, y, session_ids, subject_ids = concat_datasets(loaded)
 
@@ -199,8 +218,5 @@ def train_weapon(
         "subtract_ic_baseline": bool(config.subtract_ic_baseline),
         "fit_seconds": round(fit_duration_s, 3),
     }
-    model_dir = Path(out_dir)
-    head.save(model_dir / "model.joblib")
-    with open(model_dir / "metrics.json", "w") as metrics_file:
-        json.dump(metrics, metrics_file, indent=2)
+    _save_run(out_dir, head, metrics, dataset_dirs, run_provenance)
     return head, metrics

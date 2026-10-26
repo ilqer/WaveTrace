@@ -97,6 +97,13 @@ def load_dataset_labels(dataset_dir) -> DatasetLabels:
     return _labels_from_manifest(_read_manifest(dataset_dir), _read_meta(dataset_dir))
 
 
+def list_dataset_files(dataset_dir) -> list[Path]:
+    """Every file `load_dataset` reads from `dataset_dir`; features_ic.npy only where it was saved."""
+    dataset_dir = Path(dataset_dir)
+    file_names = [FEATURES_FILE_NAME, "images.npy", "features_ic.npy", "manifest.jsonl", "meta.json"]
+    return [dataset_dir / file_name for file_name in file_names if (dataset_dir / file_name).exists()]
+
+
 def load_dataset(dataset_dir) -> "Dataset":
     dataset_dir = Path(dataset_dir)
     X_features = np.load(dataset_dir / FEATURES_FILE_NAME)

@@ -8,6 +8,7 @@ import pytest
 from fixtures.synthetic_csi import generate_quiet_baseline
 from scripts import collect_camera as collect_camera_script
 from wavetrace import Label, pipeline
+from wavetrace.adapters.store.model_runs import HEATMAP_FILE_NAME, resolve_run_dir
 from wavetrace.pipeline import calibrate_source, collect_camera
 from wavetrace.synthetic import generate_paired_recording
 
@@ -128,8 +129,8 @@ def test_presence_training_writes_only_the_camera_model_root(tmp_path, replayed_
     _run_script(monkeypatch, tmp_path)
     assert capsys.readouterr().out.count("\a") == 1
     for rx_node_id in RX_NODE_IDS:
-        assert (tmp_path / "model_camera" / f"node{rx_node_id}" / "model.joblib").exists()
-    assert (tmp_path / "model_camera" / "heatmap.joblib").exists()
+        assert resolve_run_dir(tmp_path / "model_camera" / f"node{rx_node_id}") is not None
+    assert resolve_run_dir(tmp_path / "model_camera", HEATMAP_FILE_NAME) is not None
     assert not (tmp_path / "model").exists() and not (tmp_path / "model_weapon").exists()
 
 
@@ -140,6 +141,6 @@ def test_weapon_training_joins_the_weapon_pool_and_writes_only_the_weapon_model_
     for rx_node_id in RX_NODE_IDS:
         pool_dir = tmp_path / "weapon_ds" / f"node{rx_node_id}"
         assert sorted(path.name for path in pool_dir.iterdir()) == ["cam_cam_s0_link4f9c", "cam_cam_s0_link64b8"]
-        assert (tmp_path / "model_weapon" / f"node{rx_node_id}" / "model.joblib").exists()
+        assert resolve_run_dir(tmp_path / "model_weapon" / f"node{rx_node_id}") is not None
     assert not (tmp_path / "model").exists() and not (tmp_path / "model_camera").exists()
     assert not (tmp_path / "cam_ds" / "weapon").exists()

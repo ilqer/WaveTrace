@@ -120,7 +120,53 @@ Presence and weapon each train a separate head. They don't share the same featur
 - `mlp`, `svm` — full 27-feature IC head.
 - `cnn` — trains on `X_image` instead.
 
-Each run saves `output/model/model.pkl` and `metrics.json` with LOGO accuracy.
+### Model storage
+
+Every training run, and every model uploaded through `/api/model/upload`, writes one run dir,
+`<model_dir>/<run_id>/`, holding the head (`model.joblib`, or `heatmap.joblib` for the heatmap head),
+`metrics.json` with LOGO accuracy (trained runs only) and `run_manifest.json`. The run id is the UTC creation time
+plus a random suffix (`20261026T153012Z-a1b2c3`), so run dirs sort by time. The dir is written in full under a
+hidden temp name (`.<run_id>.partial`) and renamed into place; only then does the pointer switch to it. On macOS
+and Linux the pointer is the `<model_dir>/current` symlink, swapped with `os.replace`; on Windows, and wherever a
+symlink cannot be made, it is a `CURRENT` text file holding the run id, also replaced atomically (Windows cannot
+rename onto a directory symlink, so a symlink copied there is dropped just before `CURRENT` replaces it). The
+new pointer is complete before the old one changes, so a crash or Ctrl+C mid-train leaves the previous run
+current, never a model without its metrics; a pointer move that fails raises and leaves no temp file behind.
+Only two windows leave no pointer at all (loaders then serve the flat files, if any): between moving a copied
+`current` dir aside and the final rename, and, on Windows, between dropping a copied-in `current` symlink and
+the replace; both happen only on the first retrain of such a copy. Old runs are kept; nothing prunes them.
+
+Copying a model dir with `shutil.copytree`, `scp` or `zip` follows the symlink, so the copy holds a real
+`current` dir. Loaders serve the run dir it duplicates (the one run of its creation second with a byte-equal
+`run_manifest.json`), so a retrain cannot split one load across two runs; when that run was not copied along,
+the `current` dir itself is served. The next training run in the copy renames it to
+`current.copied-<new run_id>` (kept, never deleted) before pointing `current` at the new run.
+
+Loaders take the `current` symlink (or a copied `current` dir), then the `CURRENT` file, then the flat
+`<model_dir>/model.joblib` that every model trained before runs has. A pointer naming a run that no longer exists
+logs one warning per process naming the pointer and the missing run, then falls back to the flat file. A path
+written as `<model_dir>/model.joblib` (`--model`, dashboard paths) loads the current run, and each load reads the
+head and its `metrics.json` from that one run. A current run hides any flat file beside it, so one model dir
+holds one head kind (the heatmap's model root holds the per-node heads only in its `node<id>/` subdirs).
+
+`run_manifest.json` records where the run came from. Its keys are a file format and never change:
+`origin` (`"trained"` or `"uploaded"`), `git_commit` and `has_uncommitted_changes` (tracked files only; null
+outside a checkout), `config_hash` (sha256 of the `ModelConfig`'s canonical JSON), `dataset_hash` (sha256 over
+every dataset file the run read, sorted by relative path, each path hashed with its size and bytes), `seed`,
+`library_versions` (`python`, `numpy`, `scikit_learn`, `torch`, `wavetrace`), `contract` (the
+`PipelineContract`), `created_timestamp_s` (UTC Unix seconds) and `schema_version`. Dataset files that cannot
+be hashed (unreadable, or pooled from two Windows drives) leave `dataset_hash` null with a warning; the fitted
+head is still saved. An uploaded run knows only its origin and creation time; every other key is null. An
+upload's `dest` must name a file inside `output/`; a `dest` inside a run dir or through `current` uploads a new
+run of that model dir. One training call (a `wavetrace train`, a collect
+script's training, a dashboard Train) reads the git state and library versions once for all the heads it
+trains, and each head hashes only the dataset files it trained on.
+
+Presence, weapon and heatmap heads check their saved `schema_version` on load: a head without one loads as
+legacy version 1 with a warning (once per file per process, however the path is spelled or linked), and any
+version other than the code's
+`SCHEMA_VERSION` fails with `SchemaVersionMismatchError`, which names the file, both versions and how to
+retrain it into its model dir (the `wavetrace train` command for presence and weapon heads).
 
 ### Serving
 
@@ -199,13 +245,13 @@ native/             C++ signal processing (compiled into the wavetrace package v
 └── util/           radix-2 FFT, ring buffers
 
 wavetrace/          the Python library
-├── cli.py          `wavetrace` CLI: capture / calibrate / collect-data / train / localize / run
+├── entrypoints/    composition roots, imported by nothing: cli/main.py (the `wavetrace` CLI: capture / calibrate / collect-data / train / localize / run) and api/ (the dashboard backend, below)
 ├── synthetic.py    synthetic CSI + paired labels for `--synthetic` mode
 ├── domain/         pure pipeline descriptions, no I/O: PipelineContract, ModelConfig, LinkKey, Calibration (gain-lock scale, NBVI mask, quiet baseline), presence/weapon heads, `recognition/input_plan.py` (`plan_input`), `groundtruth/` (`alignment.py`: timestamp alignment; `labeler.py`: `Labeler`, `ScriptedLabeler`, label functions; `dataset.py`: `Dataset`, `build_dataset`, `build_stacked_dataset`), SegmentVoter, AlertGuard/DriftMonitor (guard.py), `localize.py` (AoA/delay MUSIC `Localizer`), `tracking.py` (Kalman `Tracker`), dsp/ (resampling and frontend.py, the shared pipeline loop: source → preprocess → features → emit windows)
 ├── application/    use-cases (calibrate, collect, localize, serve, plus the live mesh loops serve_mesh, collect_mesh and collect_camera behind per-mode strategies in recognition/) on loaded values, no concrete I/O (console output through print, or collect_camera's injected log) + ports (the Protocols adapters implement) + behaviours/ (the serving guard and vote, composed by `pipeline.run_inference` from `--guard` / `--vote`)
 ├── pipeline.py     directory-based entry points (calibrate_source, collect_source, run_inference, localize_source, serve_mesh, collect_mesh, collect_camera): load → use-case → save
 ├── adapters/       behind the ports: source/ (CSI frame sources: live UDP, serial, Pi, recorded file, synthetic;
-│                   wire-format parsers), store/ (save/load the calibration dir; `dataset.py`: `save_dataset`, `load_dataset`; `localization.py`: `save_localization`; `scripted_spans.py`: `load_scripted_spans`) and recognition/ (MLP, SVM, CNN, variance backends; head construction; `session.py`: `InferenceSession`, `open_session`)
+│                   wire-format parsers), store/ (save/load the calibration dir; `dataset.py`: `save_dataset`, `load_dataset`; `localization.py`: `save_localization`; `scripted_spans.py`: `load_scripted_spans`; `model_runs.py`: the atomic `<model_dir>/<run_id>/` + `current` model layout; `run_manifest.py`: `build_run_manifest`, `build_upload_manifest`, `RunProvenance`) and recognition/ (MLP, SVM, CNN, variance backends; head construction; `session.py`: `InferenceSession`, `open_session`)
 ├── source.py       compatibility path for the old `wavetrace.source` imports (the golden test uses it)
 ├── recognition/    heads (presence, people-count, occupancy heatmap, weapon) + training, multi-node fusion, evaluation, CIR; `infer.py` holds only `measure_latency`
 ├── groundtruth/    concrete labelers, one per file: `vision_labeler.py`, `segmentation_labeler.py`, `yolo_labeler.py`
@@ -230,15 +276,21 @@ experiments/          offline analysis scripts — run after you have data, not 
 ├── weapon_litmus.py      σ²[p] PDF go/no-go check: do the clear and weapon distributions actually separate?
 └── weapon_experiments.py model bake-off (per-node vs per-link vs combined CNN) with LOGO evaluation
 
-web/
+wavetrace/entrypoints/api/   the dashboard's FastAPI backend
 ├── app.py            FastAPI app: lifespan, CORS, the routers, the static UI (port 8000)
 ├── dashboard_state.py  DashboardState (channels, DeviceHub, runner) and BroadcastChannel
 ├── routers/          HTTP and WebSocket routes: pipeline, model, paths, device, camera
 ├── streamer.py       WaveTraceRunner — drives the pipeline in a worker thread
-├── device_ctl.py     DeviceHub — serial monitor, firmware flash, Pi SSH, script runner
+└── device_ctl.py     DeviceHub — serial monitor, firmware flash, Pi SSH, script runner
+
+web/
 └── ui/               React + Vite + TypeScript dashboard
 
-tests/                pytest suite (609 tests; all offline on synthetic data — no hardware needed)
+tests/                pytest suite (631 tests; all offline on synthetic data — no hardware needed)
+├── unit/             one module per test file, mirroring the source tree (unit/domain/dsp/ tests wavetrace/domain/dsp/)
+├── integration/      several layers end to end: calibrate → collect → train → serve
+├── contract/         adapters match their ports; no dumping-ground names (util(s), helper(s), common, misc, manager(s))
+└── golden/           characterization tests with committed fixtures and expected output
 data/                 git-ignored; created by the collect scripts
 ```
 
@@ -375,7 +427,7 @@ Do not skip to weapon mode if presence is not working. The pipeline is identical
 ### I. Web dashboard (optional)
 
 ```bash
-python web/app.py       # FastAPI backend on port 8000 — keep this running
+python -m wavetrace.entrypoints.api.app   # FastAPI backend on port 8000 — keep this running
 ```
 
 In a separate terminal:
@@ -523,7 +575,7 @@ Do not report accuracy from a random within-session split.
 - Full C++ signal processing pipeline: frame parsing, conjugate-multiply, Hampel filter, phase unwrap, EMA detrend, gain lock, NBVI subcarrier selection, FFT, 9-feature extractor, inter-subcarrier σ²[p], spectrogram builder.
 - Full Python presence pipeline: calibration, dataset builder, MLP/SVM training, LOGO evaluation, live inference, per-node voting, multi-node fusion, result publishing.
 - People-count pipeline: a standalone path (`collect_count.py` + `run_count.py`) with a four-class head per node and live voting across all links. On real hardware it reaches 53–61% accuracy against a 25% random baseline (see projectProgress.md §9.10). It runs today; more sessions raise the score.
-- Occupancy-heatmap pipeline: a camera-supervised CNN (`HeatmapHead`, trained with BCE plus soft-Dice), a `SegmentationLabeler` that turns YOLO masks into a 16×16 occupancy grid, temporal smoothing in `occupancy.py` (a per-cell Bayesian grid plus a 2D Kalman tracker that follows the hottest cell without jumping), `collect_camera.py --train`, live serving in `web/streamer.py`, and the `OccupancyHeatmap` and `OccupancyGrid3D` panels in the dashboard. All parts are built and covered by unit tests across the vision-labeler, segmentation, webcam, and ground-truth (alignment and dataset) suites. The one thing left is a full webcam-to-model run on real hardware; until a model is trained the live path uses an energy-based estimate (see projectProgress.md §9.11).
+- Occupancy-heatmap pipeline: a camera-supervised CNN (`HeatmapHead`, trained with BCE plus soft-Dice), a `SegmentationLabeler` that turns YOLO masks into a 16×16 occupancy grid, temporal smoothing in `occupancy.py` (a per-cell Bayesian grid plus a 2D Kalman tracker that follows the hottest cell without jumping), `collect_camera.py --train`, live serving in `wavetrace/entrypoints/api/streamer.py`, and the `OccupancyHeatmap` and `OccupancyGrid3D` panels in the dashboard. All parts are built and covered by unit tests across the vision-labeler, segmentation, webcam, and ground-truth (alignment and dataset) suites. The one thing left is a full webcam-to-model run on real hardware; until a model is trained the live path uses an energy-based estimate (see projectProgress.md §9.11).
 - Automatic camera labeling: `collect_camera.py` captures every link's CSI and the MacBook webcam at the same time, runs a YOLO segmentation model live on each frame, and time-aligns the labels to each link's CSI windows. This produces labeled per-link datasets and a heatmap dataset in one pass, with no hand-labeling. The camera is used only for collection; the deployed detector needs no camera. The script and the dashboard's camera collection run the same use-case (`CollectCameraUseCase`, through `pipeline.collect_camera`) and print the same messages; the dashboard labels at 5 Hz, uses subject `cam`, writes under its `train_data` path and never trains. Each run is the next free session, `<subject>_cam_s<n>`, so runs accumulate. Every (tx->rx) link is resampled and written on its own, like every other collect path: presence datasets go to `<root>/cam_ds/presence/node<rx>/link_<tag>/<session>`, and `--train` trains one presence head per node on that node's whole camera pool into `<root>/model_camera/node<id>` (never `<root>/model`, so camera heads cannot overwrite the live presence heads). With `--stage weapon` the datasets join `collect_weapon.py`'s cumulative pool as `<root>/weapon_ds/node<rx>/<session>_link<tag>` (the session's `cam` is the pool's carry position), and `--train` trains the ic27 heads exactly as `collect_weapon.py` does, into `<root>/model_weapon`. The heatmap dataset (`<root>/cam_ds/heatmap/<session>`) is the one deliberate exception: like calibration it merges each node's links into one stream before resampling, because the heatmap head takes one channel per node; its head (`heatmap.joblib`) is trained next to the stage's heads. The dashboard loads `heatmap.joblib` from beside the model it serves, so a camera-trained heatmap is used only when it serves `<root>/model_camera` (presence) or `<root>/model_weapon` (weapon); serving `<root>/model` falls back to the variance-based occupancy estimate.
 - Weapon pipeline: σ²[p] variance baseline, sklearn head, CNN head, `SegmentVoter`, `tier_verdict` gate.
 - Extra recognition tools built and tested, used by the dashboard and the fusion path: model explainability (`explain.py` — CNN channel-ablation importance, permutation importance for MLP/SVM, confusion matrices), per-link decision fusion with automatic blockage recovery (`link.py` — a link that loses sight of the target drops its own weight so the others take over), learned late fusion across radio bands (`stack.py`), and label-free in-room adaptation (`adapt.py` — refresh input statistics and recalibrate without retraining weights).
@@ -532,7 +584,7 @@ Do not report accuracy from a random within-session split.
 - CLI: `wavetrace capture / calibrate / collect-data / train / localize / run`.
 - Web dashboard: spectrograms, node health, live predictions, and Train, which trains the same pools into the same model dirs as the `collect_*.py` scripts.
 - Pi 5 GHz node: `firmware/pi/` is implemented and tested against `wavetrace/adapters/source/wire_format.py` via `test_pi_publisher.py`. Not yet validated on real Pi hardware.
-- All 573 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
+- All 631 pytest tests pass offline (`pytest tests/ -q` from repo root with venv active).
 
 ### What to Verify on Real Hardware Before Trusting Results
 
@@ -600,7 +652,7 @@ The illuminator is not running or the Mac is not associated to modem B. An idle 
 
 ### Web dashboard shows no data
 
-1. Make sure `python web/app.py` is running (port 8000).
+1. Make sure `python -m wavetrace.entrypoints.api.app` is running (port 8000).
 2. Check that port 8000 is not blocked. Both the backend and the browser must be on the same machine, or the browser must be able to reach port 8000 on the Mac.
 
 ---
@@ -632,7 +684,7 @@ source .venv/bin/activate
 pytest tests/ -q
 ```
 
-All tests run on synthetic data. No hardware needed. Expected: 609 passed. If a test fails after a code change, fix the test and the code in the same commit.
+All tests run on synthetic data. No hardware needed. Expected: 631 passed. `tests/README.md` maps each folder (`unit/`, `integration/`, `contract/`, `golden/`) and test file to what it covers. If a test fails after a code change, fix the test and the code in the same commit.
 
 Tests import `fixtures.synthetic_csi` and the operator scripts as `scripts.<name>`; `pythonpath = ["."]` in `pyproject.toml` puts the repo root on the test path for both `pytest` and `python -m pytest`.
 
@@ -704,7 +756,7 @@ If you add hardware with a different bandwidth (e.g. HT80 on the Pi), create a n
 | Python library — modules and subfolders | [`wavetrace/README.md`](wavetrace/README.md) |
 | Web dashboard endpoints and startup | [`web/README.md`](web/README.md) |
 | Data directory layout | [`data/README.md`](data/README.md) |
-| CLI flags (all subcommands) | [`wavetrace/cli.py`](wavetrace/cli.py) |
+| CLI flags (all subcommands) | [`wavetrace/entrypoints/cli/main.py`](wavetrace/entrypoints/cli/main.py) |
 | Development history and design decisions | `projectProgress.md` |
 | Next radio front end (UWB) — hardware research | `docs/HARDWARE_SELECTION.md` (local only: `docs/` is gitignored) |
 

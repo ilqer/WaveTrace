@@ -1,0 +1,1 @@
+"""The `wavetrace` console command."""

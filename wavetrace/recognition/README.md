@@ -6,7 +6,7 @@ Machine learning for WaveTrace. Takes feature vectors or spectrograms from the p
 
 | File | What it does |
 |---|---|
-| `train.py` | Trains a presence or weapon head from a `.npy` dataset; saves `model.joblib` |
+| `train.py` | Trains a presence or weapon head from a `.npy` dataset; saves `model.joblib`, `metrics.json` and `run_manifest.json` as a new current run of the model dir |
 | `evaluate.py` | LOGO cross-validation (leave-one-session-out, leave-one-subject-out); reports confusion matrix and per-tier verdicts |
 | `infer.py` | `measure_latency` (budget 8 ms per window) |
 | `fusion.py` | `fuse()` — concatenates per-node feature vectors; O(m) for m nodes |

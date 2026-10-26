@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass
+from typing import Literal
 
 from wavetrace.domain.model_config import ModelConfig
 
@@ -40,6 +41,39 @@ class PipelineContract:
     @classmethod
     def from_dict(cls, data: dict) -> "PipelineContract":
         return cls(**data)
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryVersions:
+    python: str
+    numpy: str
+    scikit_learn: str
+    wavetrace: str | None  # None when wavetrace runs from a source tree that was never installed
+    torch: str | None = None  # None when PyTorch is not installed
+
+
+@dataclass(frozen=True, slots=True)
+class RunManifest:
+    """Where one model run came from, saved beside its model. `origin` is "trained" or "uploaded"; nothing is
+    known of an uploaded run's making, so every other field but `created_timestamp_s` is None for it.
+    `git_commit` and `has_uncommitted_changes` are also None outside a git checkout, and the latter counts
+    tracked files only. Both hashes are hex sha256: `config_hash` of the ModelConfig's canonical JSON,
+    `dataset_hash` streamed over every dataset file the run read, each with its relative path (None when
+    those files could not be read). `created_timestamp_s` is UTC Unix seconds."""
+
+    origin: Literal["trained", "uploaded"]
+    git_commit: str | None
+    has_uncommitted_changes: bool | None
+    config_hash: str | None
+    dataset_hash: str | None
+    seed: int | None
+    library_versions: LibraryVersions | None
+    contract: PipelineContract | None
+    created_timestamp_s: int
+    schema_version: int | None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 def derive_pipeline_contract(

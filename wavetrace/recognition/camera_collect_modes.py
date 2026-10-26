@@ -6,8 +6,11 @@ its stacked heatmap dataset under <root>/cam_ds/heatmap/<session>."""
 import glob
 from pathlib import Path
 
-from wavetrace.adapters.store.dataset import load_dataset
+from wavetrace.adapters.store.dataset import list_dataset_files, load_dataset
+from wavetrace.adapters.store.model_runs import HEATMAP_FILE_NAME, write_model_run
+from wavetrace.adapters.store.run_manifest import RunProvenance, build_run_manifest
 from wavetrace.application.collect_mesh import HeadTrainingReport, LinkDatasetRequest
+from wavetrace.domain.contracts import derive_pipeline_contract
 from wavetrace.recognition.collect_modes import (
     PresenceCollectMode, WeaponTrainingPolicy, default_model_root, group_dirs_by_node, weapon_pool_dataset_dir,
 )
@@ -70,16 +73,20 @@ def next_camera_session_id(root, subject_id) -> str:
         session_index += 1
 
 
-def train_heatmap_head(dataset_dir, model_root, *, report=None) -> HeadTrainingReport:
-    """Trains the heatmap head on one stacked camera dataset into <model_root>/heatmap.joblib, or skips a
-    dataset without camera masks. report: the per-epoch callback."""
-    head_path = f"{model_root}/heatmap.joblib"
+def train_heatmap_head(dataset_dir, model_root, *, report=None,
+                       run_provenance: RunProvenance | None = None) -> HeadTrainingReport:
+    """Trains the heatmap head on one stacked camera dataset as a new current run of `model_root`, served as
+    <model_root>/heatmap.joblib, or skips a dataset without camera masks. report: the per-epoch callback;
+    run_provenance: the one the training call shares across its heads, None for this head alone."""
+    head_path = f"{model_root}/{HEATMAP_FILE_NAME}"
     dataset = load_dataset(dataset_dir)
     try:
         head, num_masked_windows = train_heatmap(dataset, report=report)
     except ValueError as error:  # no window has a camera mask
         return HeadTrainingReport(f"   [SKIP] heatmap: {error}", None)
-    head.save(head_path)
+    manifest = build_run_manifest(head.config, derive_pipeline_contract(head.config), list_dataset_files(dataset_dir),
+                                  run_provenance)
+    write_model_run(model_root, manifest, lambda run_dir: head.save(run_dir / HEATMAP_FILE_NAME))
     return HeadTrainingReport(f"   [OK]   heatmap ({head.grid}x{head.grid}, {num_masked_windows} masks) -> "
                               f"{head_path}", "heatmap", {"grid": head.grid, "n": num_masked_windows})
 
@@ -91,7 +98,9 @@ class CameraPresenceTrainingPolicy:
     def __init__(self, *, root, model_root, backend=None):
         self._root = root
         self.model_root = model_root
-        self._presence_training = PresenceCollectMode(root=root, model_root=model_root, backend=backend)
+        self._run_provenance = RunProvenance()
+        self._presence_training = PresenceCollectMode(root=root, model_root=model_root, backend=backend,
+                                                      run_provenance=self._run_provenance)
 
     def find_dataset_dirs_by_node(self) -> dict[int, list[str]]:
         return group_dirs_by_node(self._root, _presence_dataset_dir(glob.escape(self._root), "*", "*", "*"))
@@ -138,7 +147,7 @@ class CameraPresenceMode(CameraPresenceTrainingPolicy):
         return super().train_node(node_id, self.find_node_dataset_dirs(node_id))
 
     def train_heatmap(self, dataset_dir):
-        return train_heatmap_head(dataset_dir, self.model_root)
+        return train_heatmap_head(dataset_dir, self.model_root, run_provenance=self._run_provenance)
 
 
 class CameraWeaponMode(WeaponTrainingPolicy):
@@ -170,4 +179,4 @@ class CameraWeaponMode(WeaponTrainingPolicy):
         return super().train_node(node_id, self.find_node_dataset_dirs(node_id))
 
     def train_heatmap(self, dataset_dir):
-        return train_heatmap_head(dataset_dir, self.model_root)
+        return train_heatmap_head(dataset_dir, self.model_root, run_provenance=self._run_provenance)

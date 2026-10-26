@@ -62,8 +62,8 @@ The modes are independent. There is no gate between them.
 | `wavetrace/` | Python library: calibration, pipeline, training, inference, CLI |
 | `scripts/` | terminal scripts: calibrate, collect data, run live detection (see [scripts/README.md](scripts/README.md)) |
 | `experiments/` | offline analysis: σ²[p] litmus check, model bake-off |
-| `web/` | FastAPI backend and React dashboard |
-| `tests/` | pytest suite (371 tests, all offline) |
+| `web/` | React dashboard; its FastAPI backend is `wavetrace/entrypoints/api/` |
+| `tests/` | pytest suite (631 tests, all offline) |
 | `data/` | captured data, models, calibration (git-ignored) |
 
 ## Tests

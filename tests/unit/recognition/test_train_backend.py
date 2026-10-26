@@ -4,6 +4,7 @@ import numpy as np
 
 from wavetrace import Label
 from wavetrace.adapters.store.dataset import save_dataset
+from wavetrace.adapters.store.model_runs import resolve_run_dir
 from wavetrace.domain.groundtruth.dataset import Dataset
 from wavetrace.recognition.train import train_presence, train_weapon
 
@@ -32,7 +33,7 @@ def _save_two_class_dataset(dataset_dir, seed):
 def test_presence_trains_the_chosen_backend_at_the_datasets_cadence(tmp_path):
     head, metrics = train_presence([_save_two_class_dataset(tmp_path / "ds", 1)], out_dir=tmp_path / "m",
                                    backend="svm")
-    assert metrics["backend"] == json.loads((tmp_path / "m" / "metrics.json").read_text())["backend"] == "svm"
+    assert metrics["backend"] == json.loads((resolve_run_dir(tmp_path / "m") / "metrics.json").read_text())["backend"] == "svm"
     assert (head.config.backend, head.config.window, head.config.hop, head.config.k) == ("svm", 48, 24, 2)
 
 

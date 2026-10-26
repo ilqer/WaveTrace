@@ -11,6 +11,9 @@ from pathlib import Path
 import numpy as np
 
 from fixtures.synthetic_csi import generate_quiet_baseline
+from wavetrace.adapters.store.model_runs import (
+    CURRENT_FILE_NAME, CURRENT_LINK_NAME, MANIFEST_FILE_NAME, find_current_run_dir, is_run_id,
+)
 from wavetrace.domain.groundtruth.labeler import ScriptedLabeler
 from wavetrace.pipeline import calibrate_source, collect_source
 from wavetrace.recognition import train_presence, train_weapon
@@ -234,17 +237,34 @@ def live_datagrams(live_frames):
     return [None] * IDLE_TIMEOUTS + interleaved
 
 
+def _find_served_path(path):
+    """`path` as model loaders serve it: a file of a model dir's current run at `<model_dir>/<file>`; None
+    for the run pointer, an older run and the run manifest (training time, repo state, library versions)."""
+    for i, part in enumerate(path.parts):
+        if part == CURRENT_LINK_NAME:
+            return None
+        if is_run_id(part):
+            run_dir = Path(*path.parts[:i + 1])
+            if path.name == MANIFEST_FILE_NAME or find_current_run_dir(run_dir.parent) != run_dir:
+                return None
+            return Path(*path.parts[:i], *path.parts[i + 1:])
+    return None if path.name == CURRENT_FILE_NAME else path
+
+
 def hash_tree(root):
-    """One 'sha256  relative/path' line per file under `root`; metrics.json is hashed without
-    `fit_seconds`, its only wall-clock field."""
-    lines = []
-    for path in sorted(Path(root).rglob("*")):
-        if path.is_dir():
+    """One 'sha256  relative/path' line per file under `root` as the loaders serve it (each model dir's
+    current run at the model dir's own path); metrics.json is hashed without `fit_seconds`, its only
+    wall-clock field."""
+    lines_by_path = {}
+    for path in Path(root).rglob("*"):
+        served_path = None if path.is_dir() else _find_served_path(path)
+        if served_path is None:
             continue
         content = path.read_bytes()
         if path.name == "metrics.json":
             metrics = json.loads(content)
             metrics.pop("fit_seconds", None)
             content = json.dumps(metrics, sort_keys=True).encode()
-        lines.append(f"{hashlib.sha256(content).hexdigest()}  {path.relative_to(root).as_posix()}")
-    return "\n".join(lines) + "\n"
+        relative_path = served_path.relative_to(root).as_posix()
+        lines_by_path[served_path] = f"{hashlib.sha256(content).hexdigest()}  {relative_path}"
+    return "\n".join(lines_by_path[path] for path in sorted(lines_by_path)) + "\n"

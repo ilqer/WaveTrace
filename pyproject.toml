@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "scikit-learn>=1.3"]
 
 [project.scripts]
-wavetrace = "wavetrace.cli:main"
+wavetrace = "wavetrace.entrypoints.cli.main:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
@@ -71,21 +71,21 @@ exclude = [
 ]
 
 [tool.importlinter]
-root_packages = ["wavetrace", "web", "scripts", "fixtures", "experiments"]
+root_packages = ["wavetrace", "scripts", "fixtures", "experiments"]
 
 [[tool.importlinter.contracts]]
-# The CSI-only recognition package must not reach into the web dashboard, the operator scripts,
-# its own test-data generators, or the research scripts around it.
-name = "wavetrace does not depend on web, scripts, fixtures or experiments"
+# The CSI-only recognition package, its CLI and dashboard API included, must not reach into the
+# operator scripts, its own test-data generators, or the research scripts around it.
+name = "wavetrace does not depend on scripts, fixtures or experiments"
 type = "forbidden"
 source_modules = ["wavetrace"]
-forbidden_modules = ["web", "scripts", "fixtures", "experiments"]
+forbidden_modules = ["scripts", "fixtures", "experiments"]
 
 [[tool.importlinter.contracts]]
-# The delivery layer must not reach sideways into operator scripts or throwaway experiments.
-name = "web does not depend on scripts or experiments"
+# The dashboard API must not reach sideways into operator scripts or throwaway experiments.
+name = "the dashboard API does not depend on scripts or experiments"
 type = "forbidden"
-source_modules = ["web"]
+source_modules = ["wavetrace.entrypoints.api"]
 forbidden_modules = ["scripts", "experiments"]
 
 [[tool.importlinter.contracts]]
@@ -111,23 +111,29 @@ modules = [
 ]
 
 [[tool.importlinter.contracts]]
-# `wavetrace.cli` is the composition root; nothing else imports it.
-name = "nothing outside cli.py imports the wavetrace.cli entrypoint"
+# `wavetrace.entrypoints` holds the composition roots; nothing else imports them.
+name = "nothing outside wavetrace.entrypoints imports it"
 type = "forbidden"
 # "wavetrace.*", not the bare "wavetrace" package: import-linter's forbidden contract silently
-# skips a source/forbidden pair that overlaps as packages, so "wavetrace" against "wavetrace.cli"
-# would check nothing. Only "wavetrace.cli" itself overlaps, and is correctly skipped.
-source_modules = ["wavetrace.*", "web", "scripts"]
-forbidden_modules = ["wavetrace.cli"]
+# skips a source/forbidden pair that overlaps as packages, so "wavetrace" against
+# "wavetrace.entrypoints" would check nothing. Only "wavetrace.entrypoints" itself overlaps, and is
+# correctly skipped.
+source_modules = ["wavetrace.*", "scripts", "fixtures", "experiments"]
+forbidden_modules = ["wavetrace.entrypoints"]
 
 [[tool.importlinter.contracts]]
-# cli > outer ring > application > domain; indirect chains count. The outer ring is adapters plus every package
-# not in another layer; exhaustive = true fails an unplaced top-level module.
-name = "wavetrace layers: cli > outer ring > application > domain"
+name = "the CLI and the dashboard API do not import each other"
+type = "independence"
+modules = ["wavetrace.entrypoints.cli", "wavetrace.entrypoints.api"]
+
+[[tool.importlinter.contracts]]
+# entrypoints > outer ring > application > domain; indirect chains count. The outer ring is adapters plus
+# every package not in another layer; exhaustive = true fails an unplaced top-level module.
+name = "wavetrace layers: entrypoints > outer ring > application > domain"
 type = "layers"
 containers = ["wavetrace"]
 layers = [
-    "cli",
+    "entrypoints",
     "adapters : diagnostics : groundtruth : output : pipeline : recognition : source : synthetic",
     "application",
     "domain",

@@ -1,12 +1,14 @@
-# `web/` — dashboard backend
+# `web/` — dashboard
 
-FastAPI backend that streams live CSI data and model predictions to the React frontend over WebSockets.
+The React frontend of the dashboard. Its FastAPI backend, which streams live CSI data and model predictions
+over WebSockets, is the Python package [`wavetrace/entrypoints/api/`](../wavetrace/entrypoints/api/); this folder
+holds the frontend (`ui/`).
 
 ## Run
 
 ```bash
-# start the backend (port 8000)
-python web/app.py
+# start the backend (port 8000), from the repo root: the UI mount and reload dirs are relative to it
+python -m wavetrace.entrypoints.api.app
 
 # start the frontend (separate terminal)
 cd web/ui && npm install && npm run dev
@@ -35,7 +37,7 @@ cd web/ui && npm install && npm run dev
 | `POST` | `/api/script/run` | Run a local script by name |
 | `POST` | `/api/device/stop` | Stop a running device process |
 | `POST` | `/api/device/input` | Send stdin input to a running device process |
-| `POST` | `/api/model/upload` | Receive a base64-encoded model.joblib and write it to `output/` |
+| `POST` | `/api/model/upload` | Receive a base64-encoded model.joblib and write it to `output/` as a new current run of the destination's model dir |
 | `GET` | `/api/camera/check` | One-frame camera probe via ffmpeg |
 | `GET` | `/api/camera/stream` | MJPEG webcam stream (optional YOLO annotation) |
 | `POST` | `/api/camera/stop` | Stop the camera stream |
@@ -53,6 +55,8 @@ During inference `/ws/telemetry` sends one health entry per node. `gain_drift` i
 Warning: `/api/script/run` passes the script name and args to the shell via `device_hub.run_script`. Do not expose this server to untrusted users.
 
 ## Files
+
+Under `wavetrace/entrypoints/api/`:
 
 | File | What it does |
 |---|---|

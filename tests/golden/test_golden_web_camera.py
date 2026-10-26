@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 from camera_replay import DURATION_S, capture_datagrams, patch_camera, patch_mesh, present_person, visible_knife
 from mesh_replay import calibrate_nodes, hash_tree
-from web.streamer import WaveTraceRunner
+from wavetrace.entrypoints.api.streamer import WaveTraceRunner
 
 EXPECTED = Path(__file__).parent / "expected"
 WEB_FRAME_RATE_HZ = 5.0

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from wavetrace.domain.model_config import ModelConfig
 from wavetrace.recognition import camera_collect_modes, collect_modes
 from wavetrace.recognition.camera_collect_modes import (
     CameraPresenceMode, CameraPresenceTrainingPolicy, default_camera_model_root, find_heatmap_capture_root,
@@ -57,6 +58,7 @@ def test_only_a_camera_sessions_heatmap_dataset_has_a_capture_root(dataset_dir, 
 
 class _FakeHeatmapHead:
     grid = 4
+    config = ModelConfig(stage="presence", k=1)
 
     def save(self, path):
         self.saved_path = path
@@ -71,8 +73,11 @@ def test_a_heatmap_head_trains_with_the_epoch_report_and_carries_its_metrics(mon
 
     monkeypatch.setattr(camera_collect_modes, "load_dataset", lambda dataset_dir: f"loaded {dataset_dir}")
     monkeypatch.setattr(camera_collect_modes, "train_heatmap", train_heatmap)
+    model_roots = []
+    monkeypatch.setattr(camera_collect_modes, "write_model_run",
+                        lambda model_root, manifest, write_files: model_roots.append(model_root))
     report = train_heatmap_head("ds", "m", report=print)
-    assert calls == [("loaded ds", print)]
+    assert calls == [("loaded ds", print)] and model_roots == ["m"]
     assert (report.line, report.trained_head_key, report.metrics) == (
         "   [OK]   heatmap (4x4, 7 masks) -> m/heatmap.joblib", "heatmap", {"grid": 4, "n": 7})
 
@@ -90,7 +95,7 @@ def test_a_heatmap_dataset_without_masks_is_skipped(monkeypatch):
 def test_the_camera_presence_policy_trains_the_datasets_it_is_given_and_a_session_its_whole_pool(monkeypatch, tmp_path):
     calls = []
 
-    def train_presence(dataset_dirs, *, out_dir, backend):
+    def train_presence(dataset_dirs, *, out_dir, backend, run_provenance):
         calls.append((list(dataset_dirs), out_dir))
         return None, {"n_samples": 1, "class_counts": {}, "train_accuracy": 1.0, "logo": {}}
 

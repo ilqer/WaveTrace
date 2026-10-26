@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from wavetrace.adapters.recognition import get_backend_class
+from wavetrace.adapters.store.run_manifest import RunProvenance
 from wavetrace.application.collect_mesh import CaptureCondition, HeadTrainingReport, LinkDatasetRequest
 from wavetrace.domain.groundtruth.labeler import ScriptedLabeler
 from wavetrace.recognition.count import count_name
@@ -93,12 +94,13 @@ def _format_binary_logo(logo):
 
 class PresenceCollectMode:
     """A session's part A and part B join into one recording per link, labelled present over part B.
-    backend None trains `train_presence`'s default."""
+    backend None trains `train_presence`'s default; run_provenance None starts this policy's own."""
 
-    def __init__(self, *, root, model_root, backend=None):
+    def __init__(self, *, root, model_root, backend=None, run_provenance=None):
         self._root = root
         self.model_root = model_root
         self._backend = backend
+        self._run_provenance = RunProvenance() if run_provenance is None else run_provenance
 
     def format_banner(self, node_ids):
         return f"training nodes: {node_ids} (calibrated)"
@@ -135,7 +137,8 @@ class PresenceCollectMode:
     def train_node(self, node_id, dataset_dirs):
         if not dataset_dirs:
             return [HeadTrainingReport(f"   [SKIP] node {node_id}: no usable sessions.", None)]
-        _, metrics = train_presence(dataset_dirs, out_dir=f"{self.model_root}/node{node_id}", backend=self._backend)
+        _, metrics = train_presence(dataset_dirs, out_dir=f"{self.model_root}/node{node_id}", backend=self._backend,
+                                    run_provenance=self._run_provenance)
         line = _format_trained_line(f"node {node_id}", metrics)
         logo = metrics.get("logo", {}).get("session")
         if logo:
@@ -159,6 +162,7 @@ class CountCollectMode:
         self.model_root = model_root
         self._backend = backend
         self._labels = [count_name(count, max_count) for count in range(max_count + 1)]  # index == class_id
+        self._run_provenance = RunProvenance()
 
     def format_banner(self, node_ids):
         return f"training nodes: {node_ids}; count classes: {self._labels}"
@@ -197,7 +201,8 @@ class CountCollectMode:
     def train_node(self, node_id, dataset_dirs):
         if not dataset_dirs:
             return [HeadTrainingReport(f"   [SKIP] node {node_id}: no usable segments.", None)]
-        _, metrics = train_presence(dataset_dirs, out_dir=f"{self.model_root}/node{node_id}", backend=self._backend)
+        _, metrics = train_presence(dataset_dirs, out_dir=f"{self.model_root}/node{node_id}", backend=self._backend,
+                                    run_provenance=self._run_provenance)
         line = _format_trained_line(f"node {node_id}", metrics)
         logo = metrics.get("logo", {}).get("session")
         if logo:
@@ -233,6 +238,7 @@ class WeaponTrainingPolicy:
         self._feature_mode = "ic27" if backend is None else get_backend_class(backend).feature_mode
         self._report = report
         self._head_unit_label = "per-link (tx->rx)" if is_per_link else "per-node"
+        self._run_provenance = RunProvenance()
 
     def find_dataset_dirs_by_node(self) -> dict[int, list[str]]:
         return group_dirs_by_node(self._root, weapon_pool_dataset_dir(glob.escape(self._root), "*", "*"))
@@ -264,7 +270,8 @@ class WeaponTrainingPolicy:
             return HeadTrainingReport(f"   [SKIP] {label}: no datasets in pool.", None)
         try:
             _, metrics = train_weapon(dataset_dirs, out_dir=out_dir, feature_mode=self._feature_mode,
-                                      backend=self._backend, report=self._report)
+                                      backend=self._backend, report=self._report,
+                                      run_provenance=self._run_provenance)
         except ValueError as error:  # WeaponHead.fit needs BOTH classes in the pool
             return HeadTrainingReport(f"   [SKIP] {label}: {error}", None)
         logo = metrics.get("logo", {})

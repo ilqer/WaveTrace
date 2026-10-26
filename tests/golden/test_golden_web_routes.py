@@ -16,7 +16,7 @@ from starlette.routing import Mount, Route
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)  # foxglove_websocket imports the legacy websockets API
-    from web.app import app
+    from wavetrace.entrypoints.api.app import app
 
 EXPECTED = Path(__file__).parent / "expected"
 

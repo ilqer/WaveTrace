@@ -7,8 +7,7 @@ Reads CSI frames from a source, runs calibration, builds labeled datasets, train
 | File | What it does |
 |---|---|
 | `source.py` | Compatibility path only: re-exports `adapters/source/` and `domain/dsp/` under the old `wavetrace.source` name, which the golden test imports. New code imports the new paths. |
-| `cli.py` | `wavetrace` CLI: `capture`, `calibrate`, `collect-data`, `train`, `localize`, `run` subcommands. |
-| `pipeline.py` | Directory-based entry points (`calibrate_source`, `collect_source`, `run_inference`, `localize_source`): load from disk, run an `application/` use-case, save to disk; `serve_mesh` binds the mesh UDP port and runs `ServeMeshUseCase` with the live tunables (`CHUNK_S`, `LINK_TIMEOUT_S`, `BUFFER_S`); `collect_mesh` finds the calibrated nodes and runs `CollectMeshUseCase` over `UdpLinkCapture`, writing each link's recording and dataset through `write_link_dataset` (`save_recording` + `collect_source`); `collect_camera` picks the stage's camera mode and the next free session and runs `CollectCameraUseCase` over `UdpTimedLinkCapture` and an injected `CameraLabelCapture`, stacking the heatmap dataset with `build_stacked_dataset`. The CLI, `web/` and `scripts/` call these. |
+| `pipeline.py` | Directory-based entry points (`calibrate_source`, `collect_source`, `run_inference`, `localize_source`): load from disk, run an `application/` use-case, save to disk; `serve_mesh` binds the mesh UDP port and runs `ServeMeshUseCase` with the live tunables (`CHUNK_S`, `LINK_TIMEOUT_S`, `BUFFER_S`); `collect_mesh` finds the calibrated nodes and runs `CollectMeshUseCase` over `UdpLinkCapture`, writing each link's recording and dataset through `write_link_dataset` (`save_recording` + `collect_source`); `collect_camera` picks the stage's camera mode and the next free session and runs `CollectCameraUseCase` over `UdpTimedLinkCapture` and an injected `CameraLabelCapture`, stacking the heatmap dataset with `build_stacked_dataset`. The CLI, the dashboard API and `scripts/` call these. |
 | `synthetic.py` | Synthetic CSI stream and paired camera observations with a skewed clock, behind the CLI's `--synthetic` mode. |
 | `_wavetrace.pyi` | Type stubs for the native `_wavetrace` extension. |
 
@@ -20,7 +19,7 @@ All machine learning: training, evaluation, inference, and fusion.
 
 | File | What it does |
 |---|---|
-| `train.py` | Trains a presence or weapon head from a dataset; saves `model.joblib` |
+| `train.py` | Trains a presence or weapon head from a dataset; saves `model.joblib`, `metrics.json` and `run_manifest.json` as a new current run of the model dir |
 | `evaluate.py` | Leave-one-session-out and leave-one-subject-out cross-validation; `tier_verdict` gate |
 | `infer.py` | `measure_latency` (budget 8 ms per window) |
 | `fusion.py` | `fuse()` — concatenates per-node feature vectors for multi-node inference |
@@ -73,7 +72,7 @@ Pure descriptions of the pipeline's shape, no I/O. `adapters/` and `recognition/
 
 | File | What it does |
 |---|---|
-| `contracts.py` | `PipelineContract`: a trained model's resample rate, window/hop framing and subcarrier width, declared once |
+| `contracts.py` | `PipelineContract`: a trained model's resample rate, window/hop framing and subcarrier width, declared once; `RunManifest` / `LibraryVersions`: where a trained or uploaded model run came from |
 | `link_key.py` | `LinkKey` value object for one directed (tx, rx) link |
 | `calibration.py` | Empty-room calibration: `Calibration` (gain-lock scale, NBVI subcarrier selection, quiet baseline), `CalibrationResult`, `reflection_signature`, `build_image_baseline` |
 | `localize.py` | AoA spatial heatmap: `Localizer` (MUSIC/Bartlett angle spectrum, joint delay-angle room map) and `Localization`. Parked: needs ≥ 2 phase-coherent antennas; the ESP32-S3 has one receive chain |
@@ -119,9 +118,21 @@ Concrete implementations of the ports in `application/ports.py`.
 | `store/calibration.py` | `save_calibration` / `load_calibration`: the calibration dir (`baseline_mag.npy`, `baseline_diff.npy`, `meta.json`); `discover_calibrated_node_ids` lists the `<cal>/node<id>` dirs, `find_node_calibration_dirs` maps each id to its dir |
 | `store/localization.py` | `save_localization`: the aggregate room-map dir (`heatmap.npy`, `angles.npy`, `ranges.npy`, `meta.json`) |
 | `store/scripted_spans.py` | `load_scripted_spans`: reads the JSON span sidecar (`{"spans": [{"start", "end", "present"}]}`) that `ScriptedLabeler` takes |
+| `store/model_runs.py` | `write_model_run`: writes a run dir `<model_dir>/<run_id>/` atomically and points `<model_dir>/current` (the `CURRENT` file on Windows or without symlinks) at it; `resolve_run_dir` / `resolve_model_path`: the current run, else the flat layout of models trained before runs; `find_model_dir`: the model dir a run dir belongs to |
+| `store/run_manifest.py` | `build_run_manifest`: the `RunManifest` saved as `run_manifest.json` (git state, config and dataset sha256, seed, library versions, contract); `build_upload_manifest` for an uploaded model; `RunProvenance`: the git state and library versions one training call reads once; `hash_files` streams in 1 MiB chunks |
 | `recognition/heads.py` | The only place a recognition head is built or loaded from the backend registry |
 | `recognition/mlp_backend.py` | Default backend: `StandardScaler` + a single-hidden-layer `MLPClassifier` |
 | `recognition/svm_backend.py` | SVM backend from the CSI-sensing literature |
 | `recognition/cnn_backend.py` | Small 2D-CNN over the CSI image (subcarriers x window) |
 | `recognition/variance_backend.py` | Weapon baseline: one threshold over an inter-carrier variance feature |
 | `recognition/_sklearn_pipeline.py` | Shared scaler + sklearn-classifier plumbing for the `mlp` and `svm` backends |
+
+### `entrypoints/`
+
+The composition roots: each wires adapters into the use-cases. Nothing else imports this package (checked by
+`lint-imports`).
+
+| File | What it does |
+|---|---|
+| `cli/main.py` | `wavetrace` CLI: `capture`, `calibrate`, `collect-data`, `train`, `localize`, `run` subcommands. |
+| `api/` | The web dashboard's FastAPI backend (`app.py`, the routers, `WaveTraceRunner`, `DeviceHub`); its routes and files are listed in [`web/README.md`](../web/README.md). |

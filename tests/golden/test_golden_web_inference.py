@@ -31,7 +31,7 @@ from mesh_replay import (
 from wavetrace.pipeline import calibrate_source, collect_source
 from wavetrace.recognition import train_presence
 from wavetrace.synthetic import generate_paired_recording
-from web.streamer import WaveTraceRunner
+from wavetrace.entrypoints.api.streamer import WaveTraceRunner
 
 EXPECTED = Path(__file__).parent / "expected"
 

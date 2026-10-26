@@ -8,6 +8,7 @@ import numpy as np
 
 from wavetrace.adapters.recognition.session import open_session
 from wavetrace.adapters.store.calibration import load_calibration
+from wavetrace.adapters.store.model_runs import METRICS_FILE_NAME, MODEL_FILE_NAME, resolve_run_dir
 from wavetrace.domain.dsp.frontend import iter_windows
 from wavetrace.domain.dsp.resample import resample_uniform
 from wavetrace.domain.recognition.input_plan import plan_input
@@ -41,10 +42,10 @@ def dwell_proba(frames, sample_rate_hz, entry):
 
 def load_weapon_links(calibration_root, model_root):
     """Discover weapon heads -> {(tx_tag|None, rx_node): entry}. Two layouts, auto-detected per node:
-      * PER-LINK: model_weapon/node<id>/link<link_tag>/model.joblib -> one entry per directed
+      * PER-LINK: model_weapon/node<id>/link<link_tag>/ holding a head -> one entry per directed
         (tx->rx) view, keyed (link_tag, node_id). The weapon signal is per-direction; this lets each
         NLOS-scatter link vote on its own merit instead of being pooled (and sign-flipped) per node.
-      * PER-NODE (fallback): model_weapon/node<id>/model.joblib -> a single (None, node_id) entry
+      * PER-NODE (fallback): model_weapon/node<id>/ holding a head -> a single (None, node_id) entry
         that serves ANY tx into that node. Used when a node wasn't trained --per-link.
     Calibration is per RX node (shared across that node's link heads). Each entry carries a static
     LinkVoter `weight` from its OWN LOGO accuracy (accuracy_weights; chance->0 so a weak direction
@@ -52,18 +53,17 @@ def load_weapon_links(calibration_root, model_root):
     entries = {}
     accuracy_by_key = {}
     for node_id, model_dir, calibration_dir in discover_node_dirs(calibration_root, model_root):
-        link_models = sorted(glob.glob(os.path.join(model_dir, "link*", "model.joblib")))
-        if link_models:
-            found = [
-                (os.path.basename(os.path.dirname(path))[len("link"):], path) for path in link_models
-            ]
-        elif os.path.exists(os.path.join(model_dir, "model.joblib")):
-            found = [(None, os.path.join(model_dir, "model.joblib"))]
-        else:
-            continue
+        link_run_dirs = [(os.path.basename(link_dir)[len("link"):], resolve_run_dir(link_dir))
+                         for link_dir in sorted(glob.glob(os.path.join(glob.escape(model_dir), "link*")))]
+        found = [(link_tag, run_dir) for link_tag, run_dir in link_run_dirs if run_dir is not None]
+        if not found:
+            node_run_dir = resolve_run_dir(model_dir)
+            if node_run_dir is None:
+                continue
+            found = [(None, node_run_dir)]
         result, gain_lock = load_calibration(calibration_dir)
-        for link_tag, model_path in found:
-            session = open_session("weapon", model_path)
+        for link_tag, run_dir in found:
+            session = open_session("weapon", run_dir / MODEL_FILE_NAME)
             should_apply_lock, intercarrier, pick = plan_input("weapon", session.head)
             classes = [int(class_id) for class_id in session.head.classes_]
             # rebuilt from the node's calibration, so serving subtracts the baseline training did
@@ -77,8 +77,7 @@ def load_weapon_links(calibration_root, model_root):
                 classes=classes, positive_class_index=classes.index(1) if 1 in classes else -1,
                 intercarrier_baseline=intercarrier_baseline,
             )
-            accuracy_by_key[key] = load_logo_accuracy(
-                os.path.join(os.path.dirname(model_path), "metrics.json"))
+            accuracy_by_key[key] = load_logo_accuracy(run_dir / METRICS_FILE_NAME)
     weights = accuracy_weights(
         {key: accuracy for key, accuracy in accuracy_by_key.items() if accuracy is not None})
     for key in entries:

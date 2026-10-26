@@ -14,6 +14,9 @@ from pathlib import Path
 import joblib
 import numpy as np
 
+from wavetrace.adapters.recognition.heads import check_schema_version
+from wavetrace.adapters.store.model_runs import find_model_dir, resolve_model_path
+from wavetrace.domain.contracts import SCHEMA_VERSION
 from wavetrace.domain.model_config import ModelConfig
 
 
@@ -110,13 +113,19 @@ class HeatmapHead:
             "state": {name: weights.cpu().numpy() for name, weights in self._net.state_dict().items()},
             "norm": self._norm,
             "image_shape": tuple(self._image_shape),
+            "schema_version": SCHEMA_VERSION,
         }, output_path)
         return output_path
 
     @classmethod
     def load(cls, path) -> "HeatmapHead":
+        """`path` may name `<model_root>/heatmap.joblib` flat; it loads the current run's copy. Raises
+        SchemaVersionMismatchError for another schema_version."""
         torch = _torch()
+        path = resolve_model_path(path)
         blob = joblib.load(path)
+        check_schema_version(blob, path, f"train the heatmap backend on a camera session dir "
+                                         f"(<root>/cam_ds/heatmap/<session>) into {find_model_dir(path.parent)}")
         head = cls(ModelConfig(**blob["config"]), grid=blob["grid"])
         head._norm = blob["norm"]
         head._image_shape = tuple(blob["image_shape"])

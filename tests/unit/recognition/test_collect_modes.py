@@ -26,7 +26,7 @@ class _RecordedTraining:
         self._failing_out_dirs = failing_out_dirs
         self.calls = []
 
-    def __call__(self, dataset_dirs, *, out_dir, **options):
+    def __call__(self, dataset_dirs, *, out_dir, run_provenance, **options):
         self.calls.append((list(dataset_dirs), out_dir, options))
         if out_dir in self._failing_out_dirs:
             raise ValueError("needs both classes")

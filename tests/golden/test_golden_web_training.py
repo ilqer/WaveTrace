@@ -25,7 +25,7 @@ from mesh_replay import (
 )
 from wavetrace.pipeline import collect_source, write_link_dataset
 from wavetrace.recognition.collect_modes import CountCollectMode, PresenceCollectMode, WeaponCollectMode
-from web.streamer import WaveTraceRunner
+from wavetrace.entrypoints.api.streamer import WaveTraceRunner
 
 EXPECTED = Path(__file__).parent / "expected"
 QUEUE_NAMES = ("inference", "stream", "logs", "training", "telemetry")
