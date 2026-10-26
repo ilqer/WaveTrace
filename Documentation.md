@@ -75,6 +75,78 @@ Every ESP32 burst is decoded into a `CsiFrame` by `wavetrace/adapters/source/wir
 
 `save_recording` writes these to disk as `grid.npy` (F, A, S), `t.npy` (F,), `node_id.npy` (F,), `meta.json`.
 
+**Column is not tone.** A `grid` column is a position in the radio's buffer, not a signed OFDM tone.
+`wavetrace/domain/tone_layout.py` holds one `ToneLayout` per capture layout (Δf = 312.5 kHz for all):
+
+| Layout | Width | Fields (columns → signed tones, carrying) |
+|---|---|---|
+| `esp32s3_ht20` | 128 | `l_ltf` cols 0..63 FFT order (0..31, −32..−1), ±1..±26; `ht_ltf` cols 64..127 FFT order, ±1..±28 |
+| `esp32s3_ht40` | 192 | `l_ltf` cols 0..63 centred (col c = primary-relative tone c−32), ±1..±26; `ht_ltf` cols 64..191 FFT order on the 128-point grid, ±2..±58 |
+| `nexmon_vht80` | 256 | `vht_ltf` one field, FFT order assumed; carrying set not measured yet, so every non-DC tone counts |
+
+The ESP32 carrying sets match the always-zero columns measured on `data/2g4_ht20` and `data/2g4_ht40`.
+Anything working in the delay domain must use the signed tone: `select_field(csi, layout)` returns the
+carrying tones of the layout's `default_field` (`ht_ltf` on ESP32, `vht_ltf` on Nexmon) sorted by tone, plus their indices, for `cir_from_csi(subcarrier_indices=...)`, and
+`Localizer(tone_layout=...)` (also `localize_source(tone_layout=...)`) uses them for the range profile
+and joint delay-angle MUSIC. With a layout, `Localizer` refuses a `subcarrier_spacing_hz` other than the
+layout's and a frame whose width is not the layout's `num_columns`. Without a layout `Localizer` treats
+columns as contiguous tones (synthetic grids only). Adjacent-column products (calibration, conjugate multiply) are unaffected: every FFT wrap
+and field seam sits between null columns.
+
+`save_recording(..., tone_layout=...)` writes `"tone_layout": "<name>"` into `meta.json`;
+`load_tone_layout(recording_dir)` reads it back. A recording without the key (every recording made
+before 2026-10-26, all ESP32-S3) gets its layout from its width (128 → HT20, 192 → HT40) with one warning.
+
+**UWB CIR taps.** The UWB shield (NXP SR150, 2 RX chains, one LO) sends the CIR itself: per packet, per
+RX, N complex taps (tap spacing ≈ 1 ns, unverified), one `window_start_index` and a per-RX
+`first_path_index` counted in the chip's whole CIR. The window start moves between packets, so the
+same path lands on different taps. All of these take and return plain numpy arrays:
+
+- `recognition/cir.py` `cir_from_taps(taps, tap_spacing_s)`: the same statistics as `cir_from_csi`
+  (dominant tap and its basin ratio, RMS delay spread, active taps) without the ISTA step;
+  `subcarrier_spacing_hz` is 1/(N·tap_spacing_s), the FFT bin spacing of the taps.
+- `domain/dsp/cir_alignment.py` `reanchor_taps(taps, first_path_columns, anchor_column, out=None)`:
+  shifts each RX row so column `first_path_index − window_start_index` lands on `anchor_column`, edges
+  zero-filled. Use it before any per-tap feature. O(R·N); residual jitter ≤ ½ tap.
+- `cross_spectrum(taps, out=None)`: X_r[k] = H_r[k]·conj(H_0[k]) with H_r = fft(taps_r), on the taps
+  as received. A common window shift (whole or fractional) and the shared-LO phase cancel. Exact only
+  while no path leaves the window; per-path delay is lost. O(R·N log N).
+
+**UWB CIR wire format (v4).** The Portenta C33 repacks the SR150's CIR notification into one UDP datagram
+(default port 9879) per batch. `adapters/source/uwb_wire_format.py` `parse_cir_batch` is the reference
+parser; it raises `ValueError` naming the field on any length or value violation. All integers are
+little-endian. A datagram is one header followed by `num_records` records, with no padding and no
+trailing bytes.
+
+| Field | Type | Unit / meaning |
+|---|---|---|
+| **Header (13 bytes)** | | |
+| `magic` | u8 | `0x57` |
+| `version` | u8 | `4` (v2/v3 are the CSI formats) |
+| `node` | u8 | node id |
+| `ntp_ms` | u64 | NTP-synced wall clock, ms |
+| `num_records` | u16 | records that follow |
+| **Per record, in this order** | | |
+| `peer_short_addr` | u16 | UWB short address of the peer |
+| `ts_us` | u32 | device timestamp, µs |
+| `num_rx` | u8 | R, RX chains; must be > 0 |
+| `num_taps` | u16 | N, taps per RX; must be > 0 |
+| `tap_spacing_fs` | u32 | tap spacing, femtoseconds (1 ns = 1 000 000) |
+| `window_start_index` | i16 | chip CIR index of tap column 0 |
+| `first_path_index` | i16 x R | per RX, in the chip's whole CIR (not the window) |
+| `distance_cm` | u16 | cm |
+| `aoa_azimuth_q9_7` | i16 | Q9.7 degrees (value / 128) |
+| `aoa_elevation_q9_7` | i16 | Q9.7 degrees |
+| `pdoa_q9_7` | i16 | Q9.7 degrees |
+| `pdoa_index` | u16 | chip PDoA index |
+| `snr_first_path_db` | u8 x R | dB per RX |
+| `taps` | i16 x R x N x 2 | RX-major, then tap, then **real first, imag second** (ESP32 CSI is imag first) |
+
+A record is `15 + 2R + 10 + R + 4RN` bytes. `parse_cir_batch` returns `domain/cir_record.py` `CirRecord`s;
+`CirRecord.first_path_columns` (`first_path_index − window_start_index`) feeds `reanchor_taps`.
+`UdpCirSource` (`adapters/source/uwb_udp.py`, behind the `CirSource` port) yields them with the same
+idle-timeout behaviour as `UdpSource`.
+
 ### Calibration
 
 Calibrate on an empty-room recording before collecting labeled data. Calibration does two things:
@@ -247,7 +319,7 @@ native/             C++ signal processing (compiled into the wavetrace package v
 wavetrace/          the Python library
 ├── entrypoints/    composition roots, imported by nothing: cli/main.py (the `wavetrace` CLI: capture / calibrate / collect-data / train / localize / run) and api/ (the dashboard backend, below)
 ├── synthetic.py    synthetic CSI + paired labels for `--synthetic` mode
-├── domain/         pure pipeline descriptions, no I/O: PipelineContract, ModelConfig, LinkKey, Calibration (gain-lock scale, NBVI mask, quiet baseline), presence/weapon heads, `recognition/input_plan.py` (`plan_input`), `groundtruth/` (`alignment.py`: timestamp alignment; `labeler.py`: `Labeler`, `ScriptedLabeler`, label functions; `dataset.py`: `Dataset`, `build_dataset`, `build_stacked_dataset`), SegmentVoter, AlertGuard/DriftMonitor (guard.py), `localize.py` (AoA/delay MUSIC `Localizer`), `tracking.py` (Kalman `Tracker`), dsp/ (resampling and frontend.py, the shared pipeline loop: source → preprocess → features → emit windows)
+├── domain/         pure pipeline descriptions, no I/O: PipelineContract, ModelConfig, LinkKey, Calibration (gain-lock scale, NBVI mask, quiet baseline), presence/weapon heads, `recognition/input_plan.py` (`plan_input`), `groundtruth/` (`alignment.py`: timestamp alignment; `labeler.py`: `Labeler`, `ScriptedLabeler`, label functions; `dataset.py`: `Dataset`, `build_dataset`, `build_stacked_dataset`), SegmentVoter, AlertGuard/DriftMonitor (guard.py), `localize.py` (AoA/delay MUSIC `Localizer`), `tone_layout.py` (CSI column → signed tone per capture layout), `tracking.py` (Kalman `Tracker`), dsp/ (resampling and frontend.py, the shared pipeline loop: source → preprocess → features → emit windows)
 ├── application/    use-cases (calibrate, collect, localize, serve, plus the live mesh loops serve_mesh, collect_mesh and collect_camera behind per-mode strategies in recognition/) on loaded values, no concrete I/O (console output through print, or collect_camera's injected log) + ports (the Protocols adapters implement) + behaviours/ (the serving guard and vote, composed by `pipeline.run_inference` from `--guard` / `--vote`)
 ├── pipeline.py     directory-based entry points (calibrate_source, collect_source, run_inference, localize_source, serve_mesh, collect_mesh, collect_camera): load → use-case → save
 ├── adapters/       behind the ports: source/ (CSI frame sources: live UDP, serial, Pi, recorded file, synthetic;
@@ -775,4 +847,4 @@ The following identifiers cross a hardware or wire-format boundary. Renaming one
 - CLI flag names: `--root`, `--node`, `--carry`, `--subject`, `--head-mode`, `--stage`, `--vote`
 - `data/` subdirectory names: `cal/`, `model/`, `model_weapon/`, `model_count/`, `2g4_ht20/`, `2g4_ht40/`, `5g_ht40/`, `5g_ht80/`
 - pybind11 binding names in `native/Bindings.cpp` and `wavetrace/_wavetrace.pyi`
-- UDP ports: 9876 (CSI mesh), 5566 (legacy 1-TX rig), 9877 (health monitor), 9878 (node discovery), 8000 (web dashboard)
+- UDP ports: 9876 (CSI mesh), 5566 (legacy 1-TX rig), 9877 (health monitor), 9878 (node discovery), 9879 (UWB CIR, wire v4), 8000 (web dashboard)

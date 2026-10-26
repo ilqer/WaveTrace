@@ -16,10 +16,12 @@ from wavetrace.adapters.source.recording import RecordingSource
 from wavetrace.adapters.source.serial_reader import SerialReader
 from wavetrace.adapters.source.synthetic import SyntheticSource
 from wavetrace.adapters.source.udp import UdpLinkBatchReceiver, UdpSource
+from wavetrace.adapters.source.uwb_udp import UdpCirSource
 from wavetrace.application import ports
 from wavetrace.application.behaviours.drift import DriftMonitoredSource
 from wavetrace.application.ports import (
     CameraLabelCapture,
+    CirSource,
     CsiSource,
     LinkBatchReceiver,
     LinkCapture,
@@ -35,6 +37,7 @@ PORT_ADAPTERS = [
     (CsiSource, NexmonSource),
     (CsiSource, UdpSource),
     (CsiSource, DriftMonitoredSource),
+    (CirSource, UdpCirSource),
     (LinkBatchReceiver, UdpLinkBatchReceiver),
     (LinkCapture, UdpLinkCapture),
     (TimedLinkCapture, UdpTimedLinkCapture),

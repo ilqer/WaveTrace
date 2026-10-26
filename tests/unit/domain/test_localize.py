@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from wavetrace.domain.localize import Localizer, Localization, SPEED_OF_LIGHT
+from wavetrace.domain.tone_layout import ESP32S3_HT20, NEXMON_VHT80, tone_layout_by_name
 from wavetrace.domain.tracking import Tracker
 from wavetrace.adapters.store.localization import save_localization
 
@@ -219,3 +220,61 @@ def test_single_antenna_rejected():
 def test_music_needs_room_for_noise_subspace():
     with pytest.raises(ValueError):
         Localizer(2, method="music", num_sources=2)  # ANTENNA_COUNT - num_sources = 0, no noise subspace
+
+
+def _fft_order_two_antenna_frame(layout, delay_s, angle_deg=0.0, gain=1.0):
+    """(2, num_columns) FFT-order CSI of one path at `delay_s` from `angle_deg`; nulls are 0."""
+    steering_vector = np.exp(1j * 2 * np.pi * SPACING * np.arange(2) * np.sin(np.deg2rad(angle_deg)))
+    frame = np.zeros((2, layout.num_columns), dtype=np.complex64)
+    for tone_field in layout.fields:
+        columns = tone_field.first_column + np.flatnonzero(tone_field.is_carrying)
+        tones = tone_field.tone_indices[tone_field.is_carrying]
+        frequency_response = gain * np.exp(-2j * np.pi * tones * layout.subcarrier_spacing_hz * delay_s)
+        frame[:, columns] = np.outer(steering_vector, frequency_response)
+    return frame
+
+
+@pytest.mark.parametrize("layout_name", ["esp32s3_ht20", "esp32s3_ht40"])
+def test_range_profile_with_tone_layout_peaks_at_planted_delay(layout_name):
+    layout = tone_layout_by_name(layout_name)
+    delay_s = 45e-9  # off the bin grid: column-as-tone on HT40 peaks 1.3 bins away here
+    localizer = Localizer(2, tone_layout=layout, max_range_m=60.0)
+    ranges_m, profile = localizer.range_profile(_fft_order_two_antenna_frame(layout, delay_s))
+    bin_width_m = ranges_m[1] - ranges_m[0]
+    assert abs(ranges_m[int(np.argmax(profile))] - SPEED_OF_LIGHT * delay_s) <= bin_width_m
+
+
+def test_joint_music_with_tone_layout_recovers_planted_angle_and_range():
+    delay_s, angle_deg = 20e-9, 20.0
+    rng = np.random.default_rng(3)
+    frames = []
+    for i in range(8):
+        gain = complex(rng.standard_normal(), rng.standard_normal())
+        grid = _fft_order_two_antenna_frame(ESP32S3_HT20, delay_s, angle_deg, gain)
+        grid += 0.01 * (rng.standard_normal(grid.shape) + 1j * rng.standard_normal(grid.shape))
+        frames.append(_Frame(grid.astype(np.complex64), float(i)))
+    room_map = Localizer(2, tone_layout=ESP32S3_HT20).aggregate(frames)
+    assert abs(room_map.peak_angle_deg - angle_deg) <= 3.0
+    range_step_m = room_map.ranges_m[1] - room_map.ranges_m[0]
+    assert abs(room_map.peak_range_m - SPEED_OF_LIGHT * delay_s) <= range_step_m
+
+
+def test_tone_layout_uses_its_default_field():
+    localizer = Localizer(2, tone_layout=NEXMON_VHT80)  # no "ht_ltf" field: built only via vht_ltf
+    ranges_m, _ = localizer.range_profile(np.ones((2, 256), dtype=np.complex64))
+    np.testing.assert_allclose(ranges_m[1], SPEED_OF_LIGHT / (256 * NEXMON_VHT80.subcarrier_spacing_hz))
+
+
+def test_subcarrier_spacing_must_match_tone_layout():
+    Localizer(2, tone_layout=ESP32S3_HT20, subcarrier_spacing_hz=312.5e3)
+    with pytest.raises(ValueError, match="subcarrier_spacing_hz"):
+        Localizer(2, tone_layout=ESP32S3_HT20, subcarrier_spacing_hz=625e3)
+
+
+def test_frame_width_must_match_tone_layout():
+    localizer = Localizer(2, tone_layout=ESP32S3_HT20)
+    with pytest.raises(ValueError, match="columns"):
+        localizer.range_profile(np.ones((2, 192), dtype=np.complex64))
+    frames = [_Frame(np.ones((2, 192), dtype=np.complex64), float(i)) for i in range(4)]
+    with pytest.raises(ValueError, match="columns"):
+        localizer.aggregate(frames)

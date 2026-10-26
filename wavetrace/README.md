@@ -25,7 +25,7 @@ All machine learning: training, evaluation, inference, and fusion.
 | `fusion.py` | `fuse()` — concatenates per-node feature vectors for multi-node inference |
 | `link.py` | `accuracy_weights` (LOGO accuracy -> static link priors) and `evaluate_link_fusion` (offline replay of the `LinkVoter` blend) |
 | `stack.py` | Stacks per-node windows into a batch tensor for the CNN path |
-| `cir.py` | Offline CIR super-resolution via L1/ISTA (optional; verify subcarrier pattern on hardware first) |
+| `cir.py` | Offline CIR super-resolution via L1/ISTA (optional; verify subcarrier pattern on hardware first); `cir_from_taps` gives the same statistics for UWB taps without ISTA |
 | `heatmap.py` | Camera-supervised G×G occupancy heatmap head |
 | `adapt.py` | Session adaptation: norm-stat refresh on new calibration data |
 | `explain.py` | Feature importance and CNN channel weight introspection |
@@ -73,15 +73,18 @@ Pure descriptions of the pipeline's shape, no I/O. `adapters/` and `recognition/
 | File | What it does |
 |---|---|
 | `contracts.py` | `PipelineContract`: a trained model's resample rate, window/hop framing and subcarrier width, declared once; `RunManifest` / `LibraryVersions`: where a trained or uploaded model run came from |
+| `cir_record.py` | `CirRecord`: one UWB packet's CIR (R RX chains x N taps, first-path indices, distance, AoA, PDoA) with `first_path_columns` for `reanchor_taps` |
 | `link_key.py` | `LinkKey` value object for one directed (tx, rx) link |
 | `rules.py` | `BusinessRule` and the named serving rules: `SubcarrierWidthMustCoverCalibration`, `SubcarrierWidthMustMatchContract` (a legacy model without a recorded width accepts every width), `SubcarrierWidthMustMatchCalibration` (likewise for a legacy calibration), `SubcarrierWidthMustStayConstantPerLink`, `LinkMustHaveServingHead`, `HeadsMustShareClassOrdering`, `HeadsMustShareSampleRate`, `SampleRateMustBeWithinTolerance` (delivered rate at least `min_sample_rate_fraction` of the head's target rate), `SampleRateMustKeepPaceWithPeers` (at least that fraction of the median delivered rate of the links measured at the same fuse); `measure_delivered_rate_hz` is the one rate measurement both use; `require` raises `BusinessRuleViolationError`, whose message starts with the rule's name |
 | `calibration.py` | Empty-room calibration: `Calibration` (gain-lock scale, NBVI subcarrier selection, quiet baseline), `CalibrationResult` (records the raw capture width it was made from, `subcarrier_width`), `reflection_signature`, `build_image_baseline` |
-| `localize.py` | AoA spatial heatmap: `Localizer` (MUSIC/Bartlett angle spectrum, joint delay-angle room map) and `Localization`. Parked: needs ≥ 2 phase-coherent antennas; the ESP32-S3 has one receive chain |
+| `localize.py` | AoA spatial heatmap: `Localizer` (MUSIC/Bartlett angle spectrum, joint delay-angle room map; `tone_layout=` for FFT-order frames) and `Localization`. Parked: needs ≥ 2 phase-coherent antennas; the ESP32-S3 has one receive chain |
 | `tracking.py` | The Kalman `Tracker` over a `Localization` stream (angle, range), with its `TrackState`. Parked with `localize.py` |
 | `model_config.py` | `ModelConfig`: a trained head's stage, backend, subcarrier count and window/hop framing |
 | `guard.py` | `AlertGuard` and `DriftMonitor`: pure alert-debounce and baseline-drift state machines with their event classes |
+| `tone_layout.py` | `ToneField` / `ToneLayout`: which signed OFDM tone each CSI column holds per capture layout (`ESP32S3_HT20`, `ESP32S3_HT40`, `NEXMON_VHT80`), `tone_layout_by_name`, `select_field` (carrying tones of the layout's `default_field`, sorted by tone), legacy `infer_tone_layout` by width |
 | `dsp/frontend.py` | Shared pipeline loop (`iter_windows`, `iter_stacked_windows`): source → preprocess → features → windows |
 | `dsp/resample.py` | `resample_uniform`: a jittery CsiFrame stream onto a uniform time grid |
+| `dsp/cir_alignment.py` | UWB tap alignment on plain arrays: `reanchor_taps` (each RX's first path onto one column) and `cross_spectrum` (H_r·conj(H_0), cancels a common window shift) |
 | `groundtruth/alignment.py` | `align`: matches label timestamps to CSI window timestamps; `estimate_clock_offset` measures residual clock skew |
 | `groundtruth/labeler.py` | `Labeler` interface, `ScriptedLabeler`, `FrameDetection`, `presence_label_function`, `weapon_label_function` |
 | `groundtruth/dataset.py` | `Dataset`, `build_dataset`, `build_stacked_dataset`: pair CSI windows with labels |
@@ -115,7 +118,7 @@ Concrete implementations of the ports in `application/ports.py`.
 
 | File | What it does |
 |---|---|
-| `source/` | CSI frame sources behind the `CsiSource` port: `udp.py` (`UdpSource`, the mesh backhaul, and `UdpLinkBatchReceiver` behind the `LinkBatchReceiver` port, a context manager that closes its socket), `link_capture.py` (`UdpLinkCapture` behind the `LinkCapture` port, one operator-prompted capture of every link; `UdpTimedLinkCapture` behind the `TimedLinkCapture` port, every link for a fixed time or until stopped; `detect_node_ids`), `serial_reader.py` (`SerialReader`), `nexmon.py` (`NexmonSource`, Pi 5 GHz), `recording.py` (`RecordingSource`, `save_recording`/`load_recording`), `synthetic.py` (`SyntheticSource`, typed `build_synthetic_source`), `wire_format.py` (esp-csi CSV and binary UDP parsers, `parse_batch_by_link`), `options.py` (`SourceOptions`); `build_csi_source` is in `__init__.py` |
+| `source/` | CSI frame sources behind the `CsiSource` port: `udp.py` (`UdpSource`, the mesh backhaul, and `UdpLinkBatchReceiver` behind the `LinkBatchReceiver` port, a context manager that closes its socket), `link_capture.py` (`UdpLinkCapture` behind the `LinkCapture` port, one operator-prompted capture of every link; `UdpTimedLinkCapture` behind the `TimedLinkCapture` port, every link for a fixed time or until stopped; `detect_node_ids`), `serial_reader.py` (`SerialReader`), `nexmon.py` (`NexmonSource`, Pi 5 GHz), `recording.py` (`RecordingSource`, `save_recording`/`load_recording`, `load_tone_layout` from `meta.json`), `synthetic.py` (`SyntheticSource`, typed `build_synthetic_source`), `wire_format.py` (esp-csi CSV and binary UDP parsers, `parse_batch_by_link`), `uwb_wire_format.py` (`parse_cir_batch`, the v4 UWB CIR parser) and `uwb_udp.py` (`UdpCirSource` behind the `CirSource` port, default port 9879), `options.py` (`SourceOptions`); `build_csi_source` is in `__init__.py` |
 | `store/dataset.py` | `save_dataset` / `load_dataset`: the labeled-dataset dir (`features.npy`, `images.npy`, `manifest.jsonl`, `meta.json`); `load_dataset_labels` reads only the manifest and meta (classes and LOGO groups) |
 | `store/calibration.py` | `save_calibration` / `load_calibration`: the calibration dir (`baseline_mag.npy`, `baseline_diff.npy`, `meta.json`, whose `subcarrier_width` is absent in a calibration saved before it was recorded); `discover_calibrated_node_ids` lists the `<cal>/node<id>` dirs, `find_node_calibration_dirs` maps each id to its dir |
 | `store/localization.py` | `save_localization`: the aggregate room-map dir (`heatmap.npy`, `angles.npy`, `ranges.npy`, `meta.json`) |

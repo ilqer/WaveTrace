@@ -26,6 +26,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from wavetrace.domain.tone_layout import ToneLayout
+
 SPEED_OF_LIGHT = 299_792_458.0  # m/s
 
 
@@ -58,11 +60,13 @@ class Localizer:
     """Per-frame AoA + range estimator over a ULA. `spacing` is in wavelengths (0.5 is alias-free to
     ±90°); the azimuth grid spans [-90, 90]. MUSIC needs num_antennas > num_sources (noise-subspace
     dim = A - num_sources); bartlett needs no source count. The range axis is coarse at WiFi
-    bandwidth; range_enabled=False is azimuth-only."""
+    bandwidth; range_enabled=False is azimuth-only. Without `tone_layout`, column s is taken as tone s
+    (contiguous synthetic grids); with one, range and joint MUSIC use the carrying tones of the
+    layout's default field at their signed tone index (ESP32 frames are FFT order, see domain/tone_layout.py)."""
 
     def __init__(self, num_antennas, *, spacing=0.5, method="music", num_sources=1,
                  num_angles=181, subcarrier_spacing_hz=312.5e3, max_range_m=12.0, num_ranges=64,
-                 range_enabled=True):
+                 range_enabled=True, tone_layout: ToneLayout | None = None):
         if num_antennas < 2:
             raise ValueError("Localizer needs >= 2 antennas (no spatial baseline with 1)")
         if method not in ("music", "bartlett"):
@@ -81,6 +85,25 @@ class Localizer:
         antenna_indices = np.arange(self.num_antennas)[:, None]
         sin_theta = np.sin(np.deg2rad(self.angles_deg))[None, :]
         self._steering_matrix = np.exp(1j * 2.0 * np.pi * spacing * antenna_indices * sin_theta)
+        self._tone_layout = tone_layout
+        if tone_layout is not None:
+            if subcarrier_spacing_hz != tone_layout.subcarrier_spacing_hz:
+                raise ValueError(f"Localizer: subcarrier_spacing_hz={subcarrier_spacing_hz} contradicts tone "
+                                 f"layout {tone_layout.name} ({tone_layout.subcarrier_spacing_hz})")
+            tone_field = tone_layout.field_named(tone_layout.default_field)
+            self._carrying_columns = tone_field.carrying_columns
+            self._carrying_tone_indices = tone_field.carrying_tone_indices
+            self._subcarrier_spacing_hz = float(tone_layout.subcarrier_spacing_hz)
+            # tone k sits at FFT bin k mod N; nulls stay 0 in this reused buffer, so ifft of it equals
+            # ifft(ifftshift(centred grid)) without the shift copy
+            num_field_tones = tone_field.tone_indices.size
+            self._range_fft_bins = np.mod(self._carrying_tone_indices, num_field_tones).astype(np.intp)
+            self._range_spectrum = np.zeros(num_field_tones, dtype=np.complex128)
+
+    def _check_layout_width(self, csi_grid: np.ndarray) -> None:
+        if csi_grid.shape[1] != self._tone_layout.num_columns:
+            raise ValueError(f"Localizer: frame has {csi_grid.shape[1]} columns, "
+                             f"tone layout {self._tone_layout.name} has {self._tone_layout.num_columns}")
 
     def angle_spectrum(self, grid) -> np.ndarray:
         """(A, S) complex CSI -> (G,) AoA pseudo-spectrum normalized to [0, 1]. Subcarriers are the
@@ -106,10 +129,15 @@ class Localizer:
 
     def range_profile(self, grid) -> tuple[np.ndarray, np.ndarray]:
         """(A, S) -> (ranges_m, profile) over the delay domain. IFFT across antenna-averaged
-        subcarriers -> a power-vs-delay profile; bin r maps to range c·r/(S·Δf). Coarse (carries an
-        STO offset). O(S log S)."""
+        subcarriers -> a power-vs-delay profile; bin r maps to range c·r/(S·Δf), S = the field's
+        tone-grid size under a tone layout. Coarse (carries an STO offset). O(S log S)."""
         csi_grid = _to_complex_grid(grid)
-        frequency_response = csi_grid.mean(axis=0)                  # (S,) antenna-averaged complex CFR
+        if self._tone_layout is None:
+            frequency_response = csi_grid.mean(axis=0)              # (S,) antenna-averaged complex CFR
+        else:
+            self._check_layout_width(csi_grid)
+            self._range_spectrum[self._range_fft_bins] = csi_grid[:, self._carrying_columns].mean(axis=0)
+            frequency_response = self._range_spectrum
         S = frequency_response.size
         delay_power = np.abs(np.fft.ifft(frequency_response)) ** 2  # (S,) power vs delay bin
         ranges_m = SPEED_OF_LIGHT * np.arange(S) / (S * self._subcarrier_spacing_hz)  # range_r = c·r / (S·Δf)
@@ -149,9 +177,17 @@ class Localizer:
         snapshot of the vectorized (A·S) channel; the steering a(θ, τ)[m, k] = e^{j2π·spacing·m·sinθ}·
         e^{-j2π·Δf·k·τ} spans antennas AND subcarriers JOINTLY (not a separable product). Forward-
         backward averaging decorrelates coherent paths. Returns (ranges_m, P_2d) with P_2d (R, G)
-        normalized to [0, 1]. O(A·S·T + (A·S)³ + A·S·G·R)."""
+        normalized to [0, 1]. Under a tone layout k runs over the carrying tones only (S = K).
+        O(A·S·T + (A·S)³ + A·S·G·R)."""
         A = self.num_antennas
-        S = grids[0].shape[1]
+        if self._tone_layout is None:
+            tone_indices = np.arange(grids[0].shape[1])
+        else:
+            for csi_grid in grids:
+                self._check_layout_width(csi_grid)
+            grids = [csi_grid[:, self._carrying_columns] for csi_grid in grids]
+            tone_indices = self._carrying_tone_indices
+        S = tone_indices.size
         num_joint_elements = A * S
         X = np.stack([csi_grid.reshape(-1) for csi_grid in grids], axis=1)  # (A·S, T) vec(H) snapshots
         R = (X @ X.conj().T) / X.shape[1]  # R = X·X^H / T
@@ -163,7 +199,7 @@ class Localizer:
         ranges = np.linspace(0.0, self._max_range_m, self._num_ranges)
         delays_s = ranges / SPEED_OF_LIGHT
         delay_steering = np.exp(-1j * 2.0 * np.pi * self._subcarrier_spacing_hz
-                                * np.outer(np.arange(S), delays_s))  # (S, R)
+                                * np.outer(tone_indices, delays_s))  # (S, R)
         # a(θ,τ)[m,k] = steering_matrix[m,θ]·delay_steering[k,τ]; build (A,S,G,R) then flatten to
         # (A·S, G·R), col = θ*R+τ
         joint_steering_grid = self._steering_matrix[:, None, :, None] * delay_steering[None, :, None, :]

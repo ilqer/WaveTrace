@@ -75,3 +75,9 @@ class RecognitionBackend(Protocol):
     @classmethod
     def load(cls, blob: dict, config, **backend_options) -> "RecognitionBackend":
         """Reconstruct a fitted backend from a blob fragment produced by `save`."""
+
+
+class CirSource(Protocol):
+    @abstractmethod
+    def records(self):
+        """Yield CirRecord objects in arrival order."""

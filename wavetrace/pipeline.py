@@ -161,13 +161,14 @@ def collect_camera(camera: CameraLabelCapture, *, stage, port, root, calibration
 def localize_source(source, out_dir, *, num_antennas, antenna_spacing_wavelengths=0.5,
                      method="music", num_sources=1, num_angles=181,
                      subcarrier_spacing_hz=312.5e3, max_range_m=12.0, num_ranges=64,
-                     range_enabled=True, filter_track=True, publisher=None):
+                     range_enabled=True, filter_track=True, publisher=None, tone_layout=None):
     """Returns (localization dir, aggregate Localization). Needs >= 2 RX antennas (2-antenna ESP32 /
-    Pi NIC). filter_track=False publishes the raw per-frame fixes instead of the Kalman track."""
+    Pi NIC). filter_track=False publishes the raw per-frame fixes instead of the Kalman track.
+    tone_layout names the frames' column-to-tone map; None treats columns as contiguous tones."""
     localizer = Localizer(num_antennas, spacing=antenna_spacing_wavelengths, method=method,
                           num_sources=num_sources, num_angles=num_angles,
                           subcarrier_spacing_hz=subcarrier_spacing_hz, max_range_m=max_range_m,
-                          num_ranges=num_ranges, range_enabled=range_enabled)
+                          num_ranges=num_ranges, range_enabled=range_enabled, tone_layout=tone_layout)
     tracker = Tracker(range_enabled=range_enabled) if filter_track else None
     room_map = localize(source, localizer, tracker, publisher)
     return save_localization(room_map, out_dir), room_map

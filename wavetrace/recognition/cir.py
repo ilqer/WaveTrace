@@ -103,7 +103,8 @@ def cir_from_csi(H: np.ndarray, *, subcarrier_indices: np.ndarray | None = None,
                  max_iterations: int = 40, convergence_tolerance: float = 1e-4) -> Cir:
     """Recover a super-resolved CIR from one frame's complex CSI H (K,). `subcarrier_indices` = the
     integer tone offsets of the measured subcarriers (default: contiguous 0..K-1; pass real offsets
-    for gapped HT40/pilot-masked bands). Fine grid G = oversample·K. Delays τ_g = g/(G·Δf)."""
+    for gapped HT40/pilot-masked bands). Fine grid G = oversample·K. Delays τ_g = g/(G·Δf).
+    FFT-order frames (ESP32) must go through `tone_layout.select_field` first and pass its tones."""
     H = np.asarray(H, dtype=np.complex64).ravel()
     num_subcarriers = H.shape[0]
     if num_subcarriers == 0:
@@ -119,7 +120,24 @@ def cir_from_csi(H: np.ndarray, *, subcarrier_indices: np.ndarray | None = None,
     taps = estimate_cir_taps(H, phi, lam=lam, max_iterations=max_iterations,
                              convergence_tolerance=convergence_tolerance)
     tap_delays_s = np.arange(num_bins, dtype=np.float64) / (num_bins * subcarrier_spacing_hz)
+    return _cir_statistics(taps, tap_delays_s, float(subcarrier_spacing_hz))
 
+
+def cir_from_taps(taps: np.ndarray, tap_spacing_s: float) -> Cir:
+    """Delay-domain statistics of a CIR that arrives as taps (UWB), tap n at delay n·tap_spacing_s
+    from the window start. `subcarrier_spacing_hz` is set to 1/(N·tap_spacing_s), the bin spacing of
+    the N-point FFT of these taps; no OFDM tone grid exists behind them. O(N) plus O(N·P) basin
+    assignment over P peaks."""
+    taps = np.asarray(taps)
+    if taps.ndim != 1 or taps.size == 0:
+        raise CirError(f"cir_from_taps: expected a non-empty (N,) tap vector, got shape {taps.shape}")
+    if not tap_spacing_s > 0:
+        raise CirError(f"cir_from_taps: tap_spacing_s must be positive, got {tap_spacing_s}")
+    tap_delays_s = np.arange(taps.size, dtype=np.float64) * tap_spacing_s
+    return _cir_statistics(taps, tap_delays_s, 1.0 / (taps.size * tap_spacing_s))
+
+
+def _cir_statistics(taps: np.ndarray, tap_delays_s: np.ndarray, subcarrier_spacing_hz: float) -> Cir:
     power = (taps.real.astype(np.float64) ** 2 + taps.imag.astype(np.float64) ** 2)
     total_power = float(power.sum())
     mean_delay_s = float((tap_delays_s * power).sum() / total_power) if total_power > 0 else 0.0
@@ -144,7 +162,7 @@ def cir_from_csi(H: np.ndarray, *, subcarrier_indices: np.ndarray | None = None,
         best = int(np.argmax(basin_power))
         dominant_bin = int(peaks[best])
         dominant_ratio = float(basin_power[best] / total_power) if total_power > 0 else 0.0
-    return Cir(taps=taps, tap_delays_s=tap_delays_s, subcarrier_spacing_hz=float(subcarrier_spacing_hz),
+    return Cir(taps=taps, tap_delays_s=tap_delays_s, subcarrier_spacing_hz=subcarrier_spacing_hz,
                dominant_bin=dominant_bin, dominant_ratio=dominant_ratio, rms_delay_spread_s=rms_delay_spread_s,
                active_tap_count=active_tap_count)
 
